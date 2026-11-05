@@ -2,7 +2,8 @@
 
 ## Interactive terminal
 
-The `rustytavern` binary opens an interactive conversation by default. The terminal provides a transcript, a message composer, and a status line.
+The `rustytavern` binary opens an interactive conversation by default. The terminal writes the chat history into the native terminal scrollback.
+A live area below the history shows the active reply, the message composer, and a status line. Dialogs use the alternate screen.
 Slash commands open forms and selectors. The forms do not require command flags.
 The existing command surface remains available for scripts.
 
@@ -24,26 +25,25 @@ The existing command surface remains available for scripts.
 The names `/setup`, `/sessions`, and `/models` remain aliases. The `/settings` items also accept direct names: `/worldbook`, `/branch`, `/export`, `/prompt`, `/adopt`, `/profile`, `/plugins`, and `/config`.
 
 The composer sends ordinary text to the active conversation. A command popup opens when the composer starts with `/`.
-Up and Down select a command in the popup. Tab completes the selected command. Enter or a click runs it.
+Up and Down select a command in the popup. Tab completes the selected command. Enter runs it.
 Enter submits text or a form. Alt+Enter inserts a newline.
 Tab changes the active form field. Escape closes a dialog. Typing in a menu filters its items.
-Page Up and Page Down scroll the transcript. Ctrl+C cancels active generation.
+Ctrl+C cancels active generation.
 Ctrl+D closes an idle terminal. An exit during generation requests cancellation and waits for durable completion.
 
-The mouse wheel scrolls the transcript, menus, and documents. A pointer over a menu item selects it. A click activates it.
+The terminal scrolls and selects the chat history with its own controls. The terminal captures the mouse only while a dialog is open.
+In a dialog, the mouse wheel scrolls menus and documents. A pointer over a menu item selects it. A click activates it.
 A click on a form field moves the focus to it. The `[ Apply ]`, `[ Cancel ]`, and `[×]` targets accept clicks.
-The terminal captures the mouse. Hold Shift (Option in some macOS terminals) for native terminal selection.
 
-The transcript shows your messages on the right side. The transcript renders Markdown in all messages.
+The history shows your messages on the right side. The history renders Markdown in all messages. Fenced code blocks with a known language get syntax colors.
 Each message has a rounded bubble. Your message appears at once. The reply bubble shows animated dots until the first text arrives.
-The reply then streams with a cursor at its end. A failed reply shows its error in a red bubble.
-The header shows the character, the persona, the model, and the provider of the open chat. Without a chat, it shows the model for new chats.
+The reply then streams with a cursor at its end in the live area. A saved reply moves into the history. A failed reply shows its error in a red bubble.
+The status line shows the character, the persona, the model, and the provider of the open chat. Without a chat, it shows the model for new chats.
+A chat switch writes the chat name and its recent messages into the history. A retry or a branch change writes the messages after the changed point.
 
 Steps before a reply have their own small gray bubbles: `✻` thinking, `↗` web calls, `⧉` MCP tools (`mcp__` names), and `⚙` other tools.
-A step shows a spinner while it runs and `✓` after its result. A click on a step header expands or collapses it. Ctrl+O toggles all steps.
+A step shows a spinner while it runs and `✓` after its result. Ctrl+O expands or collapses the steps of the active reply. The history keeps the steps collapsed.
 The terminal builds steps from the `reasoning_delta`, `tool_call`, and `tool_result` runtime events. The event `text` holds the delta, the call name with its arguments, or the result.
-
-A drag over the transcript selects text. The release copies the text through OSC 52 and, on macOS, `pbcopy`.
 
 A chat pins its provider settings and plugins. A changed setup stops the next reply. The terminal then offers `/adopt` and keeps the unsent message in the composer.
 
@@ -80,7 +80,7 @@ A Chub card is JSON and has no picture.
 
 The CLI owns rendering, input, and forms. The database keeps the selected chat, character, and persona. The library owns durable records and product operations.
 Slash commands call typed operations without shell conversion. The database remains the history authority.
-The display uses a bounded transcript window and marks truncated text. Exports retain full history.
+The history shows a bounded window of recent messages and marks truncated text. Exports retain full history.
 The request form can write the complete request to a file. The terminal permits one active operation and retains runtime leases.
 The terminal grants a source capability only after an explicit confirmation.
 The setup form saves a pasted key as `api_key` in `config.toml`. A session records only the reference `config:NAME`.

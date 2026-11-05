@@ -312,6 +312,23 @@ fn schemas_mixed_output_and_duplicate_ids_fail() {
     );
 }
 
+#[test]
+fn normalizer_ignores_provider_metadata_in_text_deltas() {
+    let mut n = AgentStreamNormalizer::new(ProviderKind::Custom, true);
+    let delta = json!({"role":"assistant","content":"Hi","refusal":null,"reasoning":"Plan.","reasoning_details":[]});
+    assert!(
+        n.frame(&chunk(delta, Value::Null))
+            .unwrap()
+            .iter()
+            .any(|e| matches!(e, AgentProviderEvent::Text { text } if text == "Hi"))
+    );
+    n.frame(&chunk(json!({}), json!("stop"))).unwrap();
+    assert!(matches!(
+        n.frame("[DONE]").unwrap()[..],
+        [AgentProviderEvent::Complete]
+    ));
+}
+
 #[tokio::test]
 async fn http_cancellation_discards_pending_calls() {
     for read_text in [false, true] {

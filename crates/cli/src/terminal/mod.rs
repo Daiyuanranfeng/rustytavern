@@ -5,13 +5,22 @@ mod view;
 
 use crate::*;
 use crossterm::{
+    cursor::MoveTo,
     event::{
         DisableBracketedPaste, DisableMouseCapture, EnableBracketedPaste, EnableMouseCapture,
-        Event, EventStream, KeyCode, KeyEventKind, KeyModifiers,
+        Event, KeyCode, KeyEventKind, KeyModifiers,
     },
     execute,
+    terminal::{
+        Clear, ClearType, EnterAlternateScreen, LeaveAlternateScreen, disable_raw_mode,
+        enable_raw_mode,
+    },
 };
-use futures_util::StreamExt;
+use ratatui::{
+    DefaultTerminal, Terminal, TerminalOptions, Viewport,
+    prelude::CrosstermBackend,
+    widgets::{Paragraph, Widget},
+};
 use rustytavern::{
     app::PluginManager,
     config::{Application, default_home},
@@ -20,6 +29,7 @@ use rustytavern::{
 };
 use state::{After, Ui};
 use std::io::{IsTerminal, stdout};
+use std::sync::atomic::{AtomicBool, Ordering};
 use tokio::sync::mpsc;
 use tokio_util::sync::CancellationToken;
 
@@ -29,33 +39,99 @@ enum Update {
     Finished(Result<Generation>),
 }
 
+/// The flag records whether a dialog uses the alternate screen.
+static ALTERNATE: AtomicBool = AtomicBool::new(false);
+
 struct TerminalGuard;
 impl Drop for TerminalGuard {
     fn drop(&mut self) {
         restore();
     }
 }
-/// The function sends text to the clipboard through OSC 52 and, on macOS, through pbcopy.
-fn copy(text: &str) {
-    use base64::Engine;
-    use std::io::Write;
-    let encoded = base64::engine::general_purpose::STANDARD.encode(text);
-    let _ = write!(stdout(), "\x1b]52;c;{encoded}\x07");
-    let _ = stdout().flush();
-    #[cfg(target_os = "macos")]
-    if let Ok(mut child) = std::process::Command::new("pbcopy")
-        .stdin(std::process::Stdio::piped())
-        .spawn()
-    {
-        if let Some(mut input) = child.stdin.take() {
-            let _ = input.write_all(text.as_bytes());
-        }
-        let _ = child.wait();
-    }
-}
 fn restore() {
     let _ = execute!(stdout(), DisableBracketedPaste, DisableMouseCapture);
-    ratatui::restore();
+    if ALTERNATE.swap(false, Ordering::SeqCst) {
+        let _ = execute!(stdout(), LeaveAlternateScreen);
+    }
+    let _ = execute!(stdout(), crossterm::cursor::Show);
+    let _ = disable_raw_mode();
+}
+/// The function opens an inline area at the cursor. The chat history stays in the native scrollback above it.
+fn inline(height: u16) -> std::io::Result<DefaultTerminal> {
+    Terminal::with_options(
+        CrosstermBackend::new(stdout()),
+        TerminalOptions {
+            viewport: Viewport::Inline(height),
+        },
+    )
+}
+/// The function reads terminal input on a thread. Each short poll releases the input lock, so cursor queries can run.
+fn input() -> mpsc::UnboundedReceiver<std::io::Result<Event>> {
+    let (sender, receiver) = mpsc::unbounded_channel();
+    std::thread::spawn(move || {
+        while !sender.is_closed() {
+            let event = match crossterm::event::poll(std::time::Duration::from_millis(50)) {
+                Ok(false) => continue,
+                Ok(true) => crossterm::event::read(),
+                Err(error) => Err(error),
+            };
+            let failed = event.is_err();
+            if sender.send(event).is_err() || failed {
+                break;
+            }
+        }
+    });
+    receiver
+}
+/// The function draws one frame. A dialog uses the alternate screen with mouse capture.
+/// The chat uses an inline area below the native scrollback.
+fn present(
+    ui: &mut Ui,
+    terminal: &mut DefaultTerminal,
+    screen: &mut Option<DefaultTerminal>,
+) -> Result<()> {
+    let mut rebuild = false;
+    match (ui.overlay.is_some(), screen.is_some()) {
+        (true, false) => {
+            execute!(
+                stdout(),
+                EnterAlternateScreen,
+                EnableMouseCapture,
+                Clear(ClearType::All)
+            )?;
+            ALTERNATE.store(true, Ordering::SeqCst);
+            *screen = Some(Terminal::new(CrosstermBackend::new(stdout()))?);
+        }
+        (false, true) => {
+            *screen = None;
+            execute!(stdout(), DisableMouseCapture, LeaveAlternateScreen)?;
+            ALTERNATE.store(false, Ordering::SeqCst);
+            rebuild = true;
+        }
+        _ => {}
+    }
+    if let Some(full) = screen {
+        full.draw(|frame| view::draw(frame, ui))?;
+        return Ok(());
+    }
+    terminal.autoresize()?;
+    let (width, rows) = crossterm::terminal::size()?;
+    let height = view::height(ui, width, rows);
+    let area = terminal.get_frame().area();
+    if rebuild || height != area.height {
+        terminal.clear()?;
+        execute!(stdout(), MoveTo(0, area.y))?;
+        *terminal = inline(height)?;
+    }
+    if !ui.history.is_empty() {
+        let lines = view::history(&std::mem::take(&mut ui.history), width, ui.bubbles);
+        let count = lines.len().min(usize::from(u16::MAX)) as u16;
+        terminal.insert_before(count, |buffer| {
+            Paragraph::new(lines).render(buffer.area, buffer)
+        })?;
+    }
+    terminal.draw(|frame| view::draw(frame, ui))?;
+    Ok(())
 }
 
 pub(super) async fn run(path: Option<PathBuf>) -> Result<()> {
@@ -76,32 +152,34 @@ pub(super) async fn run(path: Option<PathBuf>) -> Result<()> {
         previous(info);
     }));
     let _guard = TerminalGuard;
-    let mut terminal = ratatui::try_init()?;
+    enable_raw_mode()?;
+    // The query reads standard input, so it runs before the input thread starts.
     if let Ok(picker) = ratatui_image::picker::Picker::from_query_stdio() {
         ui.picker = picker;
     }
-    execute!(stdout(), EnableBracketedPaste, EnableMouseCapture)?;
+    execute!(stdout(), EnableBracketedPaste)?;
+    let mut terminal = inline(1)?;
+    let mut screen: Option<DefaultTerminal> = None;
     let (sender, mut updates) = mpsc::channel(64);
-    let mut events = EventStream::new();
+    let mut events = input();
     let mut tick = tokio::time::interval(std::time::Duration::from_millis(80));
     let mut job: Option<tokio::task::JoinHandle<()>> = None;
     let mut cancellation = CancellationToken::new();
     let mut picture = false;
     let result: Result<()> = async {
         while !ui.exit || ui.busy {
-            // Graphics protocols draw outside the cell buffer. A full redraw removes a closed picture.
+            // Graphics protocols draw outside the cell buffer. A full redraw removes a hidden picture.
             let shown = matches!(
                 ui.overlay,
                 Some(state::Overlay::Preview { image: Some(_), tab: 0, .. })
             );
-            if std::mem::replace(&mut picture, shown) && !shown {
-                terminal.clear()?;
+            if std::mem::replace(&mut picture, shown)
+                && !shown
+                && let Some(full) = screen.as_mut()
+            {
+                full.clear()?;
             }
-            terminal.draw(|frame| view::draw(frame, &mut ui))?;
-            if let Some(text) = ui.copied.take() {
-                copy(&text);
-                ui.notice = format!("Copied {} characters.", text.chars().count());
-            }
+            present(&mut ui, &mut terminal, &mut screen)?;
             tokio::select! {
                 _ = tick.tick() => { ui.tick = ui.tick.wrapping_add(1); }
                 signal = tokio::signal::ctrl_c() => { signal?; if ui.busy { cancellation.cancel(); } else { ui.exit=true; } }
@@ -118,7 +196,7 @@ pub(super) async fn run(path: Option<PathBuf>) -> Result<()> {
                     }
                     if !ui.busy && let Some(task) = job.take() { let _ = task.await; }
                 }
-                event = events.next() => {
+                event = events.recv() => {
                     let event = event.ok_or_else(|| Error::new("terminal_input", "The terminal input stream closed."))??;
                     match event {
                         Event::Key(key) if key.kind != KeyEventKind::Release => {
@@ -163,6 +241,12 @@ pub(super) async fn run(path: Option<PathBuf>) -> Result<()> {
         }
         ui.save()
     }.await;
+    if screen.take().is_some() {
+        let _ = execute!(stdout(), DisableMouseCapture, LeaveAlternateScreen);
+        ALTERNATE.store(false, Ordering::SeqCst);
+    }
+    let top = terminal.get_frame().area().y;
+    let _ = execute!(stdout(), MoveTo(0, top), Clear(ClearType::FromCursorDown));
     cancellation.cancel();
     updates.close();
     if let Some(task) = job {

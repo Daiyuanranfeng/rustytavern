@@ -1,12 +1,12 @@
 use super::*;
 use crossterm::event::{KeyCode, KeyEvent, KeyModifiers, MouseButton, MouseEvent, MouseEventKind};
 use ratatui::layout::{Position, Rect};
+use ratatui_textarea::TextArea;
 use rustytavern::{
     config::Application,
     session::{Generation, GenerationStatus},
 };
 use serde::{Deserialize, Serialize};
-use tui_textarea::TextArea;
 
 pub(super) const COMMANDS: &[(&str, &str)] = &[
     ("/provider", "Connect or switch a model provider"),
@@ -107,11 +107,8 @@ pub(super) struct Field {
 }
 #[derive(Clone, Copy)]
 pub(super) enum Hit {
-    Transcript,
-    Step(usize),
     Tab(usize),
     Item(usize),
-    Slash(&'static str),
     Apply,
     Close,
 }
@@ -152,10 +149,12 @@ pub(super) struct Step {
     pub done: bool,
     pub open: bool,
 }
+/// A message is one entry of the scrollback. The steps come before an assistant reply.
 pub(super) struct Message {
     pub user: bool,
     pub label: String,
     pub text: String,
+    pub steps: Vec<Step>,
 }
 pub(super) struct Ui {
     pub path: PathBuf,
@@ -164,7 +163,10 @@ pub(super) struct Ui {
     pub preferences: Preferences,
     pub composer: TextArea<'static>,
     pub overlay: Option<Overlay>,
-    pub transcript: Vec<Message>,
+    /// The messages that wait for the terminal to write them into the scrollback.
+    pub history: Vec<Message>,
+    /// The IDs of the stored messages that the scrollback shows for the open chat.
+    pub printed: Vec<String>,
     pub outgoing: String,
     pub names: [String; 2],
     pub reply: String,
@@ -172,7 +174,6 @@ pub(super) struct Ui {
     pub notice: String,
     pub busy: bool,
     pub exit: bool,
-    pub scroll: u16,
     pub tick: usize,
     pub pending: Option<Job>,
     pub new_requested: bool,
@@ -183,10 +184,6 @@ pub(super) struct Ui {
     /// The model and provider of the open chat, or of new chats.
     pub model: Option<[String; 2]>,
     pub failure: Option<String>,
-    /// The anchor and the end of a mouse selection in screen cells.
-    pub selection: Option<(Position, Position)>,
-    pub copy: bool,
-    pub copied: Option<String>,
     /// The picker selects the image protocol of the terminal.
     pub picker: ratatui_image::picker::Picker,
     /// The file browser opens this folder.
@@ -338,7 +335,8 @@ impl Ui {
             preferences,
             composer: editor(""),
             overlay: None,
-            transcript: Vec::new(),
+            history: Vec::new(),
+            printed: Vec::new(),
             outgoing: String::new(),
             names: ["Character".into(), "You".into()],
             reply: String::new(),
@@ -346,7 +344,6 @@ impl Ui {
             notice,
             busy: false,
             exit: false,
-            scroll: 0,
             tick: 0,
             pending: None,
             new_requested: false,
@@ -356,10 +353,7 @@ impl Ui {
             model: None,
             steps: Vec::new(),
             failure: None,
-            selection: None,
-            copy: false,
-            copied: None,
-            picker: ratatui_image::picker::Picker::from_fontsize((10, 20)),
+            picker: ratatui_image::picker::Picker::halfblocks(),
             folder: std::env::var_os("HOME").map_or_else(
                 || std::env::current_dir().unwrap_or_default(),
                 |home| {
@@ -372,6 +366,9 @@ impl Ui {
         if let Err(error) = ui.refresh() {
             ui.notice = error.to_string();
             ui.preferences.session = None;
+        }
+        if ui.preferences.session.is_none() {
+            ui.note("Use /provider to connect a model provider.\nUse /character and /persona to select identities.\nUse /new to start a conversation.\n\nType / to see the commands.");
         }
         Ok(ui)
     }
@@ -392,6 +389,7 @@ impl Ui {
     pub fn refresh(&mut self) -> Result<()> {
         let app = Application::open(&self.path)?;
         let Some(id) = &self.preferences.session else {
+            self.printed.clear();
             self.model = self.preferences.provider.as_ref().and_then(|name| {
                 Some([
                     app.config.providers.get(name)?.settings.model.clone(),
@@ -407,8 +405,18 @@ impl Ui {
         self.model = Some([session.model.clone(), session.provider.clone()]);
         self.names = [text_label(card.name()), text_label(&persona.name)];
         let history = app.store.history(id)?;
+        let common = history
+            .iter()
+            .zip(&self.printed)
+            .take_while(|(message, id)| message.id == **id)
+            .count();
+        if common == 0 {
+            self.note(&format!("{} · {}", card.name(), persona.name));
+        } else if common < self.printed.len() {
+            self.note("The chat continues from an earlier message.");
+        }
         let mut budget = 128 * 1024;
-        self.transcript = history
+        let fresh: Vec<Message> = history[common..]
             .iter()
             .rev()
             .take(100)
@@ -425,24 +433,26 @@ impl Ui {
                     user,
                     label: text_label(label),
                     text,
+                    steps: Vec::new(),
                 })
             })
             .collect();
-        self.transcript.reverse();
-        if self.transcript.len() < history.len() {
-            self.transcript.insert(
-                0,
-                Message {
-                    user: false,
-                    label: "RustyTavern".into(),
-                    text: "The display shows recent messages. The export retains all history."
-                        .into(),
-                },
-            );
+        if fresh.len() < history.len() - common {
+            self.note("The display shows recent messages. The export retains all history.");
         }
+        self.history.extend(fresh.into_iter().rev());
+        self.printed = history.into_iter().map(|message| message.id).collect();
         self.outgoing.clear();
-        self.scroll = 0;
         Ok(())
+    }
+    /// The method queues a note from RustyTavern for the scrollback.
+    pub(super) fn note(&mut self, value: &str) {
+        self.history.push(Message {
+            user: false,
+            label: "RustyTavern".into(),
+            text: text(value),
+            steps: Vec::new(),
+        });
     }
     /// The method returns the composer text while it is a partial slash command.
     pub(super) fn typed_command(&self) -> Option<String> {
@@ -623,8 +633,6 @@ impl Ui {
                     let open = !self.steps.iter().any(|step| step.open);
                     self.steps.iter_mut().for_each(|step| step.open = open);
                 }
-                KeyCode::PageUp => self.scroll = self.scroll.saturating_add(10),
-                KeyCode::PageDown => self.scroll = self.scroll.saturating_sub(10),
                 KeyCode::Up | KeyCode::Down | KeyCode::Tab if self.typed_command().is_some() => {
                     let typed = self.typed_command().unwrap_or_default();
                     let count = slash_matches(&typed).count();
@@ -634,7 +642,7 @@ impl Ui {
                         _ => {
                             if let Some((name, _)) = slash_matches(&typed).nth(self.slash) {
                                 self.composer = editor(name);
-                                self.composer.move_cursor(tui_textarea::CursorMove::End);
+                                self.composer.move_cursor(ratatui_textarea::CursorMove::End);
                                 self.slash = 0;
                             }
                         }
@@ -688,7 +696,7 @@ impl Ui {
         }
         Ok(())
     }
-    /// The wheel scrolls. A pointer over a list item selects it. A left click activates the target.
+    /// The terminal captures the mouse only for dialogs. The wheel scrolls. A pointer over a list item selects it. A left click activates the target.
     pub fn mouse(&mut self, event: MouseEvent) -> Result<()> {
         let hit = self
             .hits
@@ -697,31 +705,6 @@ impl Ui {
             .find(|(area, _)| area.contains(Position::new(event.column, event.row)))
             .map(|(_, hit)| *hit);
         let down = event.kind == MouseEventKind::ScrollDown;
-        let position = Position::new(event.column, event.row);
-        match event.kind {
-            MouseEventKind::Down(MouseButton::Left) if self.overlay.is_none() => {
-                if let Some(Hit::Step(index)) = hit {
-                    if let Some(step) = self.steps.get_mut(index) {
-                        step.open = !step.open;
-                    }
-                    return Ok(());
-                }
-                self.selection = (self.overlay.is_none() && matches!(hit, Some(Hit::Transcript)))
-                    .then_some((position, position));
-            }
-            MouseEventKind::Drag(MouseButton::Left) => {
-                if let Some((_, end)) = &mut self.selection {
-                    *end = position;
-                }
-                return Ok(());
-            }
-            MouseEventKind::Up(MouseButton::Left) => {
-                self.copy = self.selection.is_some_and(|(start, end)| start != end);
-                return Ok(());
-            }
-            MouseEventKind::ScrollUp | MouseEventKind::ScrollDown => self.selection = None,
-            _ => {}
-        }
         match (event.kind, &mut self.overlay) {
             (MouseEventKind::ScrollUp | MouseEventKind::ScrollDown, overlay) => match overlay {
                 Some(Overlay::Menu {
@@ -747,9 +730,7 @@ impl Ui {
                 Some(Overlay::Document { scroll, .. } | Overlay::Preview { scroll, .. }) => {
                     *scroll = scroll.saturating_sub(3)
                 }
-                Some(Overlay::Form { .. }) => {}
-                None if down => self.scroll = self.scroll.saturating_sub(3),
-                None => self.scroll = self.scroll.saturating_add(3),
+                _ => {}
             },
             _ if self.busy => {}
             (MouseEventKind::Moved, Some(Overlay::Menu { selected, .. })) => {
@@ -759,10 +740,6 @@ impl Ui {
             }
             (MouseEventKind::Down(MouseButton::Left), overlay) => match (hit, overlay) {
                 (Some(Hit::Close), _) => self.key(KeyCode::Esc.into())?,
-                (Some(Hit::Slash(name)), _) => {
-                    self.composer = editor("");
-                    self.slash(name)?;
-                }
                 (Some(Hit::Apply), _) => self.key(KeyCode::Enter.into())?,
                 (Some(Hit::Tab(index)), Some(Overlay::Menu { selected, tab, .. })) => {
                     *tab = index;
@@ -1019,6 +996,9 @@ impl Ui {
         let _ = self.refresh();
         match result {
             Ok(generation) if generation.status == GenerationStatus::Completed => {
+                if let Some(reply) = self.history.iter_mut().rev().find(|m| !m.user) {
+                    reply.steps = std::mem::take(&mut self.steps);
+                }
                 self.notice = "The reply is saved.".into();
             }
             Ok(generation) => {

@@ -15,9 +15,9 @@ tokio.workspace = true
 tokio-util.workspace = true
 ratatui.workspace = true
 crossterm.workspace = true
-tui-textarea.workspace = true
+ratatui-textarea.workspace = true
+syntect.workspace = true
 pulldown-cmark.workspace = true
-base64.workspace = true
 unicode-width.workspace = true
 ratatui-image.workspace = true
 image.workspace = true
@@ -27,6 +27,7 @@ tempfile.workspace = true
 [dev-dependencies]
 tempfile.workspace = true
 crc32fast.workspace = true
+base64.workspace = true
 
 [[bin]]
 name = "rustytavern"
