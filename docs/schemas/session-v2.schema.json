@@ -494,9 +494,7 @@
             "kind": {
               "enum": [
                 "openrouter",
-                "open_router",
                 "openai",
-                "open_ai",
                 "anthropic",
                 "gemini",
                 "custom"

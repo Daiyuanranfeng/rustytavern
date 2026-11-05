@@ -168,11 +168,7 @@ async fn generate(
     sender: &mpsc::Sender<Update>,
 ) -> Result<Generation> {
     let app = Application::open(path)?;
-    let registry = app.registry().await?;
-    let credentials = std::sync::Arc::new(app.credentials());
-    let mut manager = PluginManager::open(app.store, registry, &app.config.plugins);
-    manager.restore().await?;
-    let runtime = rustytavern::app::runtime(&manager, credentials).await?;
+    let runtime = rustytavern::app::session_runtime(&app, &session).await?;
     let provider = runtime.provider_config(&session).await?;
     let mut handle = if retry {
         runtime.regenerate(&session, provider).await?

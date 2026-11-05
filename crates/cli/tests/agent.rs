@@ -253,3 +253,52 @@ fn the_agent_calls_an_mcp_tool_with_a_reduced_schema() {
     assert_eq!(result["content"], "echo: hi");
     assert_eq!(events.last().unwrap()["text"], "Done.");
 }
+
+#[test]
+fn session_settings_change_the_plugins_of_one_session() {
+    let directory = tempfile::tempdir().unwrap();
+    let home = directory.path();
+    let id = session(home, "http://127.0.0.1:1/chat", "");
+    let shown = cli(home, &["session", "show", &id, "--json"]);
+    let new = [
+        "session",
+        "new",
+        "--character",
+        shown["session"]["character_id"].as_str().unwrap(),
+        "--persona",
+        shown["session"]["persona_id"].as_str().unwrap(),
+        "--provider",
+        "mock",
+    ];
+    let other = cli(home, &new)["id"].as_str().unwrap().to_owned();
+    let tools = |session: &str| {
+        cli(
+            home,
+            &[
+                "prompt",
+                "inspect",
+                session,
+                "--message",
+                "Hi.",
+                "--request",
+            ],
+        )["prepared"]["body"]
+            .get("tools")
+            .is_some()
+    };
+    assert!(tools(&id) && tools(&other));
+    let set = cli(
+        home,
+        &["session", "set", &id, "plugins.enabled", "[\"agent\"]"],
+    );
+    assert_eq!(set["settings"], json!({"plugins":{"enabled":["agent"]}}));
+    assert!(!tools(&id) && tools(&other));
+    let settings = cli(home, &["session", "settings", &id]);
+    assert_eq!(settings["enabled_plugins"], json!(["agent"]));
+    cli(home, &["session", "unset", &id, "plugins.enabled"]);
+    assert!(tools(&id));
+    assert_eq!(
+        cli(home, &["session", "settings", &id])["settings"],
+        json!({})
+    );
+}

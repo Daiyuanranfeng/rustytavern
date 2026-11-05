@@ -182,6 +182,22 @@ enum PersonaCommand {
 }
 #[derive(Subcommand)]
 enum SessionCommand {
+    /// The command sets one plugins key for this session, for example plugins.enabled '["agent"]'.
+    Set {
+        session: String,
+        key: String,
+        /// The value uses TOML syntax.
+        value: String,
+    },
+    /// The command removes one session setting.
+    Unset {
+        session: String,
+        key: String,
+    },
+    /// The command prints the session settings and the enabled plugins.
+    Settings {
+        session: String,
+    },
     Configure {
         session: String,
         #[arg(long)]

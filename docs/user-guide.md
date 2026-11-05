@@ -134,6 +134,22 @@ assistant_bubble = "magenta"
 
 The `config show` command prints the configuration and hides API keys and MCP environment values.
 
+### Session settings
+
+A session can change the `plugins` settings of `config.toml` for itself. The database stores these settings.
+The key is a dotted `plugins` path. The value uses TOML syntax. An object value merges by key. Any other value replaces the old value.
+
+```sh
+rustytavern session set SESSION_ID plugins.enabled '["agent", "web"]'
+rustytavern session set SESSION_ID plugins.agent.max_steps 4
+rustytavern session settings SESSION_ID
+rustytavern session unset SESSION_ID plugins.enabled
+```
+
+The `session set` and `session unset` commands also adopt the new plugin composition for that session. The session keeps its provider settings.
+The `session settings` command prints the session settings and the enabled plugins. Other sessions keep `config.toml`.
+A session export does not include the session settings.
+
 The CLI prints metadata as JSON. The `--json` flag makes this intent explicit on inspection commands.
 The CLI prints structured errors to stderr. The chat command prints reply text unless the caller selects `--events`.
 A message accepts `--message TEXT` or `--message-file PATH`. A message-file value of `-` reads stdin.

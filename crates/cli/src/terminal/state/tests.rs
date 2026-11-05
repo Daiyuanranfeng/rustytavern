@@ -503,7 +503,7 @@ fn model_lists_have_provider_tabs_and_put_new_models_first() {
     let directory = tempfile::tempdir().unwrap();
     let mut ui = Ui::open(directory.path().into()).unwrap();
     let model = |id: &str, prompt: &str, created: Value| json!({"id":id,"name":null,"advertised":{"context_length":200000,"pricing":{"prompt":prompt,"completion":prompt}},"raw":created});
-    let catalog = |models: Vec<Value>| json!({"provenance":{"protocol":"open_router","endpoint":"https://openrouter.ai/api/v1/models","fetched_at_unix_seconds":1,"evidence":"advertised_unverified"},"models":models,"raw_pages":[]});
+    let catalog = |models: Vec<Value>| json!({"provenance":{"protocol":"openrouter","endpoint":"https://openrouter.ai/api/v1/models","fetched_at_unix_seconds":1,"evidence":"advertised_unverified"},"models":models,"raw_pages":[]});
     ui.complete(
         Ok(vec![
             catalog(vec![

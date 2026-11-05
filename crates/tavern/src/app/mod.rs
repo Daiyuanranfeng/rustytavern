@@ -511,6 +511,26 @@ pub async fn runtime(
         .with_product_composition(manager.composition().await?))
 }
 
+/// The function builds the runtime for one session with its session settings.
+pub async fn session_runtime(app: &config::Application, session: &str) -> Result<Runtime> {
+    let config = app.configuration_for(Some(session))?;
+    let registry = app.registry_with(&config).await?;
+    let mut manager = PluginManager::open(app.store.clone(), registry, &config.plugins);
+    manager.restore().await?;
+    runtime(&manager, Arc::new(app.credentials())).await
+}
+
+/// The function pins the current plugin composition of one session and keeps its provider settings.
+pub async fn adopt_session(
+    app: &config::Application,
+    session: &str,
+) -> Result<crate::session::Session> {
+    let runtime = session_runtime(app, session).await?;
+    let provider = runtime.provider_config(session).await?;
+    let target = app.store.session(session)?;
+    runtime.configure_session(&target, provider).await
+}
+
 fn load_definition(root: &Path) -> Result<PluginDefinition> {
     let bytes = bounded_read(&checked_file(root, MANIFEST)?, 1024 * 1024)?;
     let definition: PluginDefinition = serde_json::from_slice(&bytes)?;

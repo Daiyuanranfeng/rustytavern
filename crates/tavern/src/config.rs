@@ -20,6 +20,8 @@ use crate::{
 
 pub const CONFIG_FILE: &str = "config.toml";
 pub const DATABASE_FILE: &str = "rustytavern.db";
+/// The database namespace of the per-session settings.
+const SESSION_SETTINGS: &str = "rustytavern.session";
 
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
 #[serde(default, deny_unknown_fields)]
@@ -197,6 +199,54 @@ impl Configuration {
     }
 }
 
+/// The function reads one TOML value, such as `["agent"]`, `8`, or `"text"`.
+pub fn parse_value(text: &str) -> Result<Value> {
+    let mut table: serde_json::Map<String, Value> =
+        toml_edit::de::from_str(&format!("value = {text}")).map_err(|error| {
+            Error::new("invalid_input", format!("The value is not TOML: {error}"))
+        })?;
+    Ok(table.remove("value").unwrap_or(Value::Null))
+}
+
+/// The function merges objects by key. Any other value replaces the target value.
+fn merge_json(target: &mut Value, source: &Value) {
+    match (target.as_object_mut(), source.as_object()) {
+        (Some(target), Some(source)) => {
+            for (key, value) in source {
+                merge_json(target.entry(key.clone()).or_insert(Value::Null), value);
+            }
+        }
+        _ => *target = source.clone(),
+    }
+}
+
+/// The function sets one nested value or removes it and its empty parents.
+fn set_path(target: &mut Value, path: &[&str], value: Option<Value>) {
+    let Some((last, parents)) = path.split_last() else {
+        return;
+    };
+    let Some(object) = target.as_object_mut() else {
+        return;
+    };
+    match parents.first() {
+        Some(first) => {
+            let child = object.entry(first.to_string()).or_insert_with(|| json!({}));
+            set_path(child, &path[1..], value);
+            if child.as_object().is_some_and(|c| c.is_empty()) {
+                object.remove(*first);
+            }
+        }
+        None => match value {
+            Some(value) => {
+                object.insert(last.to_string(), value);
+            }
+            None => {
+                object.remove(*last);
+            }
+        },
+    }
+}
+
 /// The function copies `source` into `target` and keeps the decoration of retained items.
 fn merge(target: &mut toml_edit::Item, source: &toml_edit::Item, depth: usize) {
     if let (Some(target), Some(source)) = (target.as_table_like_mut(), source.as_table_like()) {
@@ -272,14 +322,67 @@ impl Application {
             store,
         })
     }
-    /// The method activates the essential plugins with this configuration.
+    /// The method activates the essential plugins of `config.toml`.
     pub async fn registry(&self) -> Result<Arc<tokio::sync::Mutex<crate::plugin::PluginRegistry>>> {
+        self.registry_with(&self.config).await
+    }
+    /// The method activates the essential plugins of a configuration.
+    pub async fn registry_with(
+        &self,
+        config: &Configuration,
+    ) -> Result<Arc<tokio::sync::Mutex<crate::plugin::PluginRegistry>>> {
         crate::plugins::registry(
             &crate::plugins::Environment::new(self.store.clone()),
-            &self.config.plugins.enabled(),
-            &self.config.plugins.essential_configuration(&self.home),
+            &config.plugins.enabled(),
+            &config.plugins.essential_configuration(&self.home),
         )
         .await
+    }
+    /// The method returns the settings that one session adds to `config.toml`.
+    pub fn session_settings(&self, session: &str) -> Result<Value> {
+        Ok(self
+            .store
+            .state_read(SESSION_SETTINGS, session)?
+            .unwrap_or_else(|| json!({})))
+    }
+    /// The method returns `config.toml` with the settings of one session.
+    pub fn configuration_for(&self, session: Option<&str>) -> Result<Configuration> {
+        let Some(session) = session else {
+            return Ok(self.config.clone());
+        };
+        self.merged(&self.session_settings(session)?)
+    }
+    fn merged(&self, settings: &Value) -> Result<Configuration> {
+        let mut value = serde_json::to_value(&self.config)?;
+        merge_json(&mut value, settings);
+        serde_json::from_value(value).map_err(|error| {
+            Error::new(
+                "invalid_session_setting",
+                format!("The session setting is invalid: {error}"),
+            )
+        })
+    }
+    /// The method sets or removes one dotted `plugins` key for one session.
+    pub fn set_session_setting(
+        &self,
+        session: &str,
+        key: &str,
+        value: Option<Value>,
+    ) -> Result<Value> {
+        self.store.session(session)?;
+        let path = key.split('.').collect::<Vec<_>>();
+        if path.len() < 2 || path[0] != "plugins" || path.iter().any(|part| part.is_empty()) {
+            return Err(Error::new(
+                "invalid_session_setting",
+                "A session setting key starts with plugins, for example plugins.enabled.",
+            ));
+        }
+        let mut settings = self.session_settings(session)?;
+        set_path(&mut settings, &path, value);
+        self.merged(&settings)?;
+        self.store
+            .state_write(SESSION_SETTINGS, session, &settings)?;
+        Ok(settings)
     }
     pub fn credentials(&self) -> ConfigCredentials {
         ConfigCredentials::new(&self.config)

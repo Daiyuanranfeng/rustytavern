@@ -1,7 +1,7 @@
 [
   {
     "id": "open_router-text",
-    "kind": "open_router",
+    "kind": "openrouter",
     "status": "200 OK",
     "text": "Hello.",
     "errors": [],
@@ -17,7 +17,7 @@
   },
   {
     "id": "open_ai-text",
-    "kind": "open_ai",
+    "kind": "openai",
     "status": "200 OK",
     "text": "Hello.",
     "errors": [],
@@ -71,7 +71,7 @@
   },
   {
     "id": "open_router-number",
-    "kind": "open_router",
+    "kind": "openrouter",
     "status": "200 OK",
     "text": "Partial",
     "errors": [
@@ -81,7 +81,7 @@
   },
   {
     "id": "open_router-array",
-    "kind": "open_router",
+    "kind": "openrouter",
     "status": "200 OK",
     "text": "Partial",
     "errors": [
@@ -91,7 +91,7 @@
   },
   {
     "id": "open_router-tool",
-    "kind": "open_router",
+    "kind": "openrouter",
     "status": "200 OK",
     "text": "Partial",
     "errors": [
@@ -161,7 +161,7 @@
   },
   {
     "id": "open_ai-response.output_item.added-tool",
-    "kind": "open_ai",
+    "kind": "openai",
     "status": "200 OK",
     "text": "Partial",
     "errors": [
@@ -171,7 +171,7 @@
   },
   {
     "id": "open_ai-response.output_item.added-missing-type",
-    "kind": "open_ai",
+    "kind": "openai",
     "status": "200 OK",
     "text": "Partial",
     "errors": [
@@ -181,7 +181,7 @@
   },
   {
     "id": "open_ai-response.output_item.done-tool",
-    "kind": "open_ai",
+    "kind": "openai",
     "status": "200 OK",
     "text": "Partial",
     "errors": [
@@ -191,7 +191,7 @@
   },
   {
     "id": "open_ai-response.output_item.done-missing-type",
-    "kind": "open_ai",
+    "kind": "openai",
     "status": "200 OK",
     "text": "Partial",
     "errors": [
@@ -335,7 +335,7 @@
   },
   {
     "id": "open_ai-context-code",
-    "kind": "open_ai",
+    "kind": "openai",
     "status": "400 Bad Request",
     "text": "",
     "errors": [
@@ -355,7 +355,7 @@
   },
   {
     "id": "open_router-context-code",
-    "kind": "open_router",
+    "kind": "openrouter",
     "status": "400 Bad Request",
     "text": "",
     "errors": [
@@ -455,7 +455,7 @@
   },
   {
     "id": "open_router-stream-context",
-    "kind": "open_router",
+    "kind": "openrouter",
     "status": "200 OK",
     "text": "Partial",
     "errors": [
@@ -475,7 +475,7 @@
   },
   {
     "id": "open_ai-stream-context",
-    "kind": "open_ai",
+    "kind": "openai",
     "status": "200 OK",
     "text": "Partial",
     "errors": [
@@ -574,7 +574,7 @@
   },
   {
     "id": "open_ai-terminal-output-limit",
-    "kind": "open_ai",
+    "kind": "openai",
     "status": "200 OK",
     "text": "",
     "errors": [

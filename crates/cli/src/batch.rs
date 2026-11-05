@@ -92,8 +92,22 @@ async fn execute(
         None => default_home()?,
     };
     let mut app = Application::open(path)?;
-    let registry = app.registry().await?;
-    let mut manager = PluginManager::open(app.store.clone(), registry.clone(), &app.config.plugins);
+    let session = match &command {
+        Command::Chat { session, .. }
+        | Command::Prompt {
+            command: PromptCommand::Inspect { session, .. },
+        }
+        | Command::Session {
+            command:
+                SessionCommand::Regenerate { session, .. }
+                | SessionCommand::Retry { session, .. }
+                | SessionCommand::Configure { session, .. },
+        } => Some(session.as_str()),
+        _ => None,
+    };
+    let effective = app.configuration_for(session)?;
+    let registry = app.registry_with(&effective).await?;
+    let mut manager = PluginManager::open(app.store.clone(), registry.clone(), &effective.plugins);
     let needs_runtime = matches!(
         &command,
         Command::Chat { .. }
@@ -396,6 +410,26 @@ async fn execute(
             PersonaCommand::List { .. } => output.write(&app.store.list("persona")?)?,
         },
         Command::Session { command } => match command {
+            SessionCommand::Set {
+                session,
+                key,
+                value,
+            } => {
+                let value = rustytavern::config::parse_value(&value)?;
+                let settings = app.set_session_setting(&session, &key, Some(value))?;
+                let adopted = rustytavern::app::adopt_session(&app, &session).await?;
+                output.write(&json!({"settings":settings,"version":adopted.version}))?;
+            }
+            SessionCommand::Unset { session, key } => {
+                let settings = app.set_session_setting(&session, &key, None)?;
+                let adopted = rustytavern::app::adopt_session(&app, &session).await?;
+                output.write(&json!({"settings":settings,"version":adopted.version}))?;
+            }
+            SessionCommand::Settings { session } => {
+                app.store.session(&session)?;
+                let effective = app.configuration_for(Some(&session))?;
+                output.write(&json!({"settings":app.session_settings(&session)?,"enabled_plugins":effective.plugins.enabled()}))?;
+            }
             SessionCommand::Configure {
                 session,
                 provider,
