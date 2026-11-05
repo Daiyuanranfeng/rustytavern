@@ -362,12 +362,9 @@ impl AgentStreamNormalizer {
                 if choice["index"].as_u64().is_some_and(|i| i != 0) {
                     return Err(invalid("The choice index is invalid."));
                 }
-                if choice["delta"].as_object().is_some_and(|delta| {
-                    delta
-                        .keys()
-                        .any(|key| !matches!(key.as_str(), "role" | "content" | "tool_calls"))
-                }) || choice["delta"].get("function_call").is_some()
-                    || choice["delta"].get("refusal").is_some_and(|v| !v.is_null())
+                if ["audio", "function_call", "refusal"]
+                    .iter()
+                    .any(|key| !choice["delta"][key].is_null())
                 {
                     return Err(invalid("The stream contains unsupported output."));
                 }

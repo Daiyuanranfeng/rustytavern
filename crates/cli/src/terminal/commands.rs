@@ -82,7 +82,7 @@ impl Ui {
                 self.overlay = Some(Overlay::Document {
                     title: "Commands and keys".into(),
                     text: format!(
-                        "{}\n\nEnter sends. Alt+Enter inserts a newline.\nTab completes commands or changes fields. Escape closes dialogs.\nPage Up, Page Down, and the mouse wheel scroll. Click an item to select it.\nHold Shift (Option in some macOS terminals) to select text with the mouse.\nCtrl+C cancels. Ctrl+D exits.",
+                        "{}\n\nEnter sends. Alt+Enter inserts a newline.\nTab completes commands or changes fields. Escape closes dialogs.\nThe chat history stays in the terminal scrollback. Scroll and select it as usual.\nDialogs accept the mouse wheel and clicks.\nCtrl+O expands or collapses the steps of the active reply.\nCtrl+C cancels. Ctrl+D exits.",
                         COMMANDS
                             .iter()
                             .map(|(a, b)| format!("{a}  {b}"))

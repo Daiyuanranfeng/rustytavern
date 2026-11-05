@@ -110,11 +110,14 @@ fn the_screen_removes_controls_and_handles_small_terminals() {
     let mut ui = Ui::open(directory.path().into()).unwrap();
     ui.title = "Title\x1b[2J\x07".into();
     ui.notice = "Status\x1b[31m".into();
-    ui.transcript = vec![Message {
-        user: true,
-        label: "User".into(),
-        text: text("Reply\x1b]52;c;secret\x07"),
-    }];
+    ui.outgoing = text("Reply\x1b]52;c;secret\x07");
+    ui.note("Note\x1b[2J");
+    let history = super::super::view::history(&ui.history, 40, ui.bubbles);
+    assert!(
+        !history
+            .iter()
+            .any(|line| line.to_string().contains(['\x1b', '\x07']))
+    );
     for (width, height) in [(100, 30), (40, 12), (10, 3)] {
         let mut terminal = Terminal::new(TestBackend::new(width, height)).unwrap();
         terminal
@@ -572,12 +575,10 @@ fn the_header_shows_the_model_and_provider() {
     );
     app.save_config().unwrap();
     let mut ui = Ui::open(directory.path().into()).unwrap();
-    assert!(screen(&mut ui)[1].contains("No model"));
+    assert!(screen(&mut ui)[23].contains("No model"));
     ui.preferences.provider = Some("openrouter".into());
     ui.refresh().unwrap();
-    assert!(
-        screen(&mut ui)[1].starts_with("Model z-ai/glm-5 · Provider openrouter · for new chats")
-    );
+    assert!(screen(&mut ui)[23].contains("Model z-ai/glm-5 · Provider openrouter · for new chats"));
 }
 
 #[test]
@@ -604,35 +605,79 @@ fn the_command_popup_selects_with_arrows_and_completes_with_tab() {
     assert!(matches!(ui.overlay, Some(Overlay::Menu { ref title, .. }) if title == "Chats"));
 }
 
-#[test]
-fn dragging_over_the_transcript_copies_the_selected_text() {
-    use crossterm::event::{MouseButton, MouseEvent, MouseEventKind};
+#[tokio::test]
+async fn the_scrollback_receives_each_stored_message_once() {
     let directory = tempfile::tempdir().unwrap();
+    let mut app = Application::open(directory.path()).unwrap();
+    app.config.set_provider(
+        "local",
+        rustytavern::provider::ProviderConfig {
+            model: "fixture".into(),
+            ..Default::default()
+        },
+        None,
+    );
+    app.save_config().unwrap();
+    let card = std::fs::read("../card/tests/fixtures/full-v3.json").unwrap();
+    let card = rustytavern::card::Card::import(&card).unwrap();
+    app.store.save_card(&card).unwrap();
+    let persona = rustytavern::session::Persona::new("Alex".into(), String::new()).unwrap();
+    app.store.save_persona(&persona).unwrap();
     let mut ui = Ui::open(directory.path().into()).unwrap();
-    let rows = screen(&mut ui);
-    let row = rows
-        .iter()
-        .position(|row| row.starts_with("Use /new"))
-        .unwrap() as u16;
-    let event = |kind, column| MouseEvent {
-        kind,
-        column,
-        row,
-        modifiers: KeyModifiers::NONE,
+    assert!(ui.history[0].text.contains("Use /new"));
+    ui.history.clear();
+    ui.preferences.provider = Some("local".into());
+    ui.preferences.character = Some(card.id.clone());
+    ui.preferences.persona = Some(persona.id);
+    ui.new_requested = true;
+    ui.advance_new().unwrap();
+    let Some(Overlay::Menu { items, .. }) = ui.overlay.take() else {
+        panic!("The greeting menu is missing.");
     };
-    ui.mouse(event(MouseEventKind::Down(MouseButton::Left), 4))
-        .unwrap();
-    ui.mouse(event(MouseEventKind::Drag(MouseButton::Left), 7))
-        .unwrap();
-    ui.mouse(event(MouseEventKind::Up(MouseButton::Left), 7))
-        .unwrap();
-    screen(&mut ui);
-    assert_eq!(ui.copied.as_deref(), Some("/new"));
+    ui.choose(items.into_iter().next().unwrap().1).unwrap();
+    let Some(Job::Command(command, after)) = ui.pending.take() else {
+        panic!("The greeting does not start a chat.")
+    };
+    let result =
+        crate::batch::collect(directory.path().into(), command, CancellationToken::new()).await;
+    ui.complete(result, after);
+    assert!(ui.preferences.session.is_some(), "{}", ui.notice);
+    let shown = ui.history.len();
+    assert!(shown >= 2 && ui.history[0].label == "RustyTavern" && !ui.history[1].user);
+    assert_eq!(ui.printed.len(), shown - 1);
+    ui.history.clear();
+    ui.refresh().unwrap();
+    assert!(ui.history.is_empty());
+    ui.printed.push("removed".into());
+    ui.refresh().unwrap();
+    assert!(
+        ui.history[0]
+            .text
+            .contains("continues from an earlier message")
+    );
+    assert_eq!(ui.history.len(), 1);
+}
+
+#[test]
+fn code_blocks_use_syntax_colors() {
+    use ratatui::style::Color;
+    let lines = super::super::view::markdown("```rust\nfn main() {}\n```\n\n```\nplain\n```");
+    let colors: Vec<_> = lines
+        .iter()
+        .flat_map(|line| &line.spans)
+        .filter_map(|span| span.style.fg)
+        .collect();
+    assert!(colors.iter().any(|color| matches!(color, Color::Rgb(..))));
+    assert!(
+        lines
+            .iter()
+            .any(|line| line.to_string() == "  fn main() {}")
+    );
+    assert!(lines.iter().any(|line| line.to_string() == "  plain"));
 }
 
 #[test]
 fn thinking_and_tool_steps_render_as_collapsible_bubbles_before_the_reply() {
-    use crossterm::event::{MouseButton, MouseEvent, MouseEventKind};
     let directory = tempfile::tempdir().unwrap();
     let mut ui = Ui::open(directory.path().into()).unwrap();
     ui.streaming = true;
@@ -664,14 +709,9 @@ fn thinking_and_tool_steps_render_as_collapsible_bubbles_before_the_reply() {
     .map(|needle| rows.iter().position(|row| row.contains(needle)).unwrap());
     assert!(order.windows(2).all(|pair| pair[0] < pair[1]));
     assert!(!rows.iter().any(|row| row.contains("Sunny, 21")));
-    ui.mouse(MouseEvent {
-        kind: MouseEventKind::Down(MouseButton::Left),
-        column: 4,
-        row: order[1] as u16,
-        modifiers: KeyModifiers::NONE,
-    })
-    .unwrap();
-    assert!(ui.steps[1].open && !ui.steps[0].open);
+    ui.key(KeyEvent::new(KeyCode::Char('o'), KeyModifiers::CONTROL))
+        .unwrap();
+    assert!(ui.steps.iter().all(|step| step.open));
     assert!(
         screen(&mut ui)
             .iter()
@@ -680,4 +720,23 @@ fn thinking_and_tool_steps_render_as_collapsible_bubbles_before_the_reply() {
     ui.key(KeyEvent::new(KeyCode::Char('o'), KeyModifiers::CONTROL))
         .unwrap();
     assert!(ui.steps.iter().all(|step| !step.open));
+    ui.history.push(Message {
+        user: false,
+        label: "Character".into(),
+        text: "It is sunny.".into(),
+        steps: std::mem::take(&mut ui.steps),
+    });
+    let history: Vec<String> = super::super::view::history(&ui.history, 80, ui.bubbles)
+        .iter()
+        .map(ToString::to_string)
+        .collect();
+    let thinking = history
+        .iter()
+        .position(|row| row.contains("▸ ✻ Thinking"))
+        .unwrap();
+    let reply = history
+        .iter()
+        .position(|row| row.contains("It is sunny."))
+        .unwrap();
+    assert!(thinking < reply && !history.iter().any(|row| row.contains("Sunny, 21")));
 }

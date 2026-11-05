@@ -1,13 +1,47 @@
-use super::state::{Hit, Overlay, Ui, slash_matches, text, visible};
-use pulldown_cmark::{Event, Options, Parser, Tag, TagEnd};
+use super::state::{Hit, Message, Overlay, Step, Ui, slash_matches, text, visible};
+use pulldown_cmark::{CodeBlockKind, Event, Options, Parser, Tag, TagEnd};
 use ratatui::{
     Frame,
-    layout::{Alignment, Constraint, Direction, Layout, Position, Rect},
+    layout::{Alignment, Constraint, Direction, Layout, Rect},
     style::{Color, Modifier, Style},
     text::{Line, Span},
     widgets::{Block, Borders, Clear, List, ListItem, ListState, Paragraph, Wrap},
 };
+use std::sync::OnceLock;
+use syntect::{
+    easy::HighlightLines, highlighting::ThemeSet, parsing::SyntaxSet, util::LinesWithEndings,
+};
 use unicode_width::{UnicodeWidthChar, UnicodeWidthStr};
+
+/// The function colors the lines of a code block. It returns `None` for an unknown language.
+fn highlight(language: &str, code: &str) -> Option<Vec<Vec<Span<'static>>>> {
+    static ASSETS: OnceLock<(SyntaxSet, ThemeSet)> = OnceLock::new();
+    let (syntaxes, themes) = ASSETS.get_or_init(|| {
+        (
+            SyntaxSet::load_defaults_newlines(),
+            ThemeSet::load_defaults(),
+        )
+    });
+    let syntax = syntaxes.find_syntax_by_token(language)?;
+    let mut highlighter = HighlightLines::new(syntax, &themes.themes["base16-ocean.dark"]);
+    LinesWithEndings::from(code)
+        .map(|line| {
+            let regions = highlighter.highlight_line(line, syntaxes).ok()?;
+            Some(
+                regions
+                    .into_iter()
+                    .map(|(style, piece)| {
+                        let color = style.foreground;
+                        Span::styled(
+                            piece.trim_end_matches('\n').to_owned(),
+                            Style::default().fg(Color::Rgb(color.r, color.g, color.b)),
+                        )
+                    })
+                    .collect(),
+            )
+        })
+        .collect()
+}
 
 /// The renderer converts Markdown into styled terminal lines.
 #[derive(Default)]
@@ -52,7 +86,7 @@ impl Markdown {
 
 pub(super) fn markdown(source: &str) -> Vec<Line<'static>> {
     let mut md = Markdown::default();
-    let mut code = false;
+    let mut code: Option<(String, String)> = None;
     for event in Parser::new_ext(source, Options::ENABLE_STRIKETHROUGH) {
         match event {
             Event::Start(Tag::Paragraph) if md.item => md.item = false,
@@ -62,10 +96,15 @@ pub(super) fn markdown(source: &str) -> Vec<Line<'static>> {
                 md.nest(|s| s.fg(Color::Cyan).add_modifier(Modifier::BOLD));
             }
             Event::Start(Tag::BlockQuote(_)) => md.quotes += 1,
-            Event::Start(Tag::CodeBlock(_)) => {
+            Event::Start(Tag::CodeBlock(kind)) => {
                 md.block();
-                code = true;
-                md.nest(|s| s.fg(Color::Yellow));
+                let language = match kind {
+                    CodeBlockKind::Fenced(info) => {
+                        info.split_whitespace().next().unwrap_or("").into()
+                    }
+                    CodeBlockKind::Indented => String::new(),
+                };
+                code = Some((language, String::new()));
             }
             Event::Start(Tag::List(start)) => md.lists.push(start),
             Event::Start(Tag::Item) => {
@@ -85,9 +124,34 @@ pub(super) fn markdown(source: &str) -> Vec<Line<'static>> {
             Event::Start(Tag::Strikethrough) => md.nest(|s| s.add_modifier(Modifier::CROSSED_OUT)),
             Event::Start(Tag::Link { .. }) => md.nest(|s| s.add_modifier(Modifier::UNDERLINED)),
             Event::End(TagEnd::Paragraph) => md.gap = true,
-            Event::End(TagEnd::Heading(_)) | Event::End(TagEnd::CodeBlock) => {
-                code = false;
+            Event::End(TagEnd::Heading(_)) => {
                 md.styles.pop();
+                md.gap = true;
+            }
+            Event::End(TagEnd::CodeBlock) => {
+                let (language, source) = code.take().unwrap_or_default();
+                let plain = || {
+                    source
+                        .lines()
+                        .map(|line| {
+                            vec![Span::styled(
+                                line.to_owned(),
+                                Style::default().fg(Color::Yellow),
+                            )]
+                        })
+                        .collect()
+                };
+                let lines: Vec<Vec<Span<'static>>> =
+                    highlight(&language, &source).unwrap_or_else(plain);
+                for (index, spans) in lines.into_iter().enumerate() {
+                    if index > 0 {
+                        md.line();
+                    }
+                    md.push("  ", Style::default());
+                    if let Some(line) = md.lines.last_mut() {
+                        line.spans.extend(spans);
+                    }
+                }
                 md.gap = true;
             }
             Event::End(TagEnd::BlockQuote(_)) => {
@@ -102,12 +166,9 @@ pub(super) fn markdown(source: &str) -> Vec<Line<'static>> {
             Event::End(
                 TagEnd::Emphasis | TagEnd::Strong | TagEnd::Strikethrough | TagEnd::Link,
             ) => _ = md.styles.pop(),
-            Event::Text(value) if code => {
-                for (index, line) in value.trim_end_matches('\n').split('\n').enumerate() {
-                    if index > 0 {
-                        md.line();
-                    }
-                    md.push(&format!("  {line}"), md.style());
+            Event::Text(value) if code.is_some() => {
+                if let Some((_, source)) = &mut code {
+                    source.push_str(&value);
                 }
             }
             Event::Text(value) | Event::Html(value) | Event::InlineHtml(value) => {
@@ -226,10 +287,10 @@ fn message(
     );
 }
 
-/// The function draws one small bubble for each step. It records the line of each step header for clicks.
-fn steps(lines: &mut Vec<Line<'static>>, headers: &mut Vec<(usize, usize)>, ui: &Ui, width: usize) {
+/// The function draws one small bubble for each step. A step in the scrollback stays collapsed.
+fn steps(lines: &mut Vec<Line<'static>>, steps: &[Step], tick: usize, width: usize) {
     let dim = Style::default().fg(Color::DarkGray);
-    for (index, step) in ui.steps.iter().enumerate() {
+    for step in steps {
         let (icon, name) = match step.tool.as_deref() {
             None => ("✻", "Thinking"),
             Some(call) if call.starts_with("mcp__") => ("⧉", call),
@@ -244,7 +305,7 @@ fn steps(lines: &mut Vec<Line<'static>>, headers: &mut Vec<(usize, usize)>, ui: 
             .take(width.saturating_sub(12))
             .collect();
         let state = match (step.done, step.tool.is_some()) {
-            (false, _) => ["◐", "◓", "◑", "◒"][ui.tick % 4],
+            (false, _) => ["◐", "◓", "◑", "◒"][tick % 4],
             (true, true) => "✓",
             (true, false) => "",
         };
@@ -272,29 +333,46 @@ fn steps(lines: &mut Vec<Line<'static>>, headers: &mut Vec<(usize, usize)>, ui: 
         if !lines.is_empty() {
             lines.push(Line::default());
         }
-        headers.push((lines.len() + 1, index));
         lines.extend(bubble(body, width, Color::DarkGray));
     }
 }
 
-/// The function returns the transcript lines and the line index of each step header.
-fn conversation(ui: &Ui, width: u16) -> (Vec<Line<'static>>, Vec<(usize, usize)>) {
-    let width = (usize::from(width) * 3 / 4).max(16);
+fn bubble_width(width: u16) -> usize {
+    (usize::from(width) * 3 / 4).max(16)
+}
+
+/// The function renders queued messages for the scrollback. A blank line separates them from earlier output.
+pub(super) fn history(messages: &[Message], width: u16, colors: [Color; 2]) -> Vec<Line<'static>> {
+    let width = bubble_width(width);
     let mut lines = Vec::new();
-    let mut headers = Vec::new();
-    let last = ui.transcript.len().saturating_sub(1);
-    for (index, item) in ui.transcript.iter().enumerate() {
-        if index == last && !item.user && !ui.streaming {
-            steps(&mut lines, &mut headers, ui, width);
-        }
+    for item in messages {
+        let collapsed: Vec<Step> = item
+            .steps
+            .iter()
+            .map(|step| Step {
+                tool: step.tool.clone(),
+                body: String::new(),
+                done: true,
+                open: false,
+            })
+            .collect();
+        steps(&mut lines, &collapsed, 0, width);
         message(
             &mut lines,
-            (width, ui.bubbles),
+            (width, colors),
             item.user,
             &item.label,
             markdown(&item.text),
         );
     }
+    lines.insert(0, Line::default());
+    lines
+}
+
+/// The function returns the lines of the active exchange: the sent message, the steps, the reply, and a failure.
+fn live(ui: &Ui, width: u16) -> Vec<Line<'static>> {
+    let width = bubble_width(width);
+    let mut lines = Vec::new();
     if !ui.outgoing.is_empty() {
         message(
             &mut lines,
@@ -304,9 +382,7 @@ fn conversation(ui: &Ui, width: u16) -> (Vec<Line<'static>>, Vec<(usize, usize)>
             markdown(&ui.outgoing),
         );
     }
-    if ui.streaming {
-        steps(&mut lines, &mut headers, ui, width);
-    }
+    steps(&mut lines, &ui.steps, ui.tick, width);
     if ui.streaming || !ui.reply.is_empty() {
         let mut body = markdown(&ui.reply);
         let dim = Style::default().fg(Color::DarkGray);
@@ -329,61 +405,63 @@ fn conversation(ui: &Ui, width: u16) -> (Vec<Line<'static>>, Vec<(usize, usize)>
         lines.push(Line::styled(label, style.add_modifier(Modifier::BOLD)));
         lines.extend(bubble(body, width, Color::Red));
     }
-    (lines, headers)
+    lines
 }
 
-/// The function highlights the selected cells. It copies their text after the mouse button is released.
-fn select(frame: &mut Frame<'_>, area: Rect, (a, b): (Position, Position), ui: &mut Ui) {
-    let (start, end) = if (a.y, a.x) <= (b.y, b.x) {
-        (a, b)
-    } else {
-        (b, a)
-    };
-    let mut copied = Vec::new();
-    for y in start.y.max(area.y)..=end.y.min(area.bottom().saturating_sub(1)) {
-        let first = if y == start.y { start.x } else { area.x };
-        let last = if y == end.y {
-            end.x
-        } else {
-            area.right().saturating_sub(1)
-        };
-        let mut line = String::new();
-        for x in first.max(area.x)..=last.min(area.right().saturating_sub(1)) {
-            let cell = &mut frame.buffer_mut()[(x, y)];
-            line.push_str(cell.symbol());
-            cell.modifier.insert(Modifier::REVERSED);
-        }
-        copied.push(line.trim_end().to_owned());
-    }
-    if std::mem::take(&mut ui.copy) {
-        ui.copied = Some(copied.join("\n"));
-    }
+fn composer_height(ui: &Ui) -> u16 {
+    ui.composer.lines().len().clamp(1, 8) as u16 + 2
 }
 
-pub(super) fn draw(frame: &mut Frame<'_>, ui: &mut Ui) {
-    ui.hits.clear();
-    let area = frame.area();
-    if area.width < 32 || area.height < 10 {
-        frame.render_widget(
-            Paragraph::new("The terminal needs 32 columns and 10 rows."),
-            area,
-        );
-        return;
-    }
+fn popup_height(ui: &Ui) -> u16 {
+    ui.typed_command()
+        .map_or(0, |typed| slash_matches(&typed).count() as u16 + 2)
+}
+
+/// The function returns the height of the inline area: the active exchange, the command popup, the composer, and the status.
+pub(super) fn height(ui: &Ui, width: u16, screen: u16) -> u16 {
+    let live = Paragraph::new(live(ui, width))
+        .wrap(Wrap { trim: false })
+        .line_count(width)
+        .min(usize::from(screen)) as u16;
+    (live.max(popup_height(ui)) + composer_height(ui) + 2).min(screen)
+}
+
+fn inline(frame: &mut Frame<'_>, ui: &mut Ui, area: Rect) {
     let slots = Layout::default()
         .direction(Direction::Vertical)
         .constraints([
-            Constraint::Length(2),
-            Constraint::Min(1),
-            Constraint::Length(5),
+            Constraint::Min(0),
+            Constraint::Length(composer_height(ui)),
             Constraint::Length(2),
         ])
         .split(area);
     let dim = Style::default().fg(Color::DarkGray);
+    let paragraph = Paragraph::new(live(ui, area.width)).wrap(Wrap { trim: false });
+    let total = paragraph.line_count(slots[0].width).min(u16::MAX as usize) as u16;
+    let offset = total.saturating_sub(slots[0].height);
+    frame.render_widget(paragraph.scroll((offset, 0)), slots[0]);
+    ui.composer.set_block(
+        Block::default()
+            .borders(Borders::ALL)
+            .title(if ui.busy {
+                " Message · the operation is active "
+            } else {
+                " Message · Enter sends · Alt+Enter newline · /help "
+            })
+            .border_style(dim),
+    );
+    ui.composer.set_cursor_line_style(Style::default());
+    frame.render_widget(&ui.composer, slots[1]);
+    let progress = if ui.busy {
+        ["·", "•", "●", "•"][ui.tick % 4]
+    } else {
+        ""
+    };
     let strong = Style::default().add_modifier(Modifier::BOLD);
-    let model = match &ui.model {
-        Some([model, provider]) => Line::from(vec![
-            Span::styled("Model ", dim),
+    let mut status = vec![Span::styled(text(&ui.title), strong.fg(Color::Cyan))];
+    match &ui.model {
+        Some([model, provider]) => status.extend([
+            Span::styled(" · Model ", dim),
             Span::styled(text(model), strong),
             Span::styled(" · Provider ", dim),
             Span::styled(text(provider), strong),
@@ -396,88 +474,29 @@ pub(super) fn draw(frame: &mut Frame<'_>, ui: &mut Ui) {
                 dim,
             ),
         ]),
-        None => Line::styled("No model · use /model", dim),
-    };
-    frame.render_widget(
-        Paragraph::new(vec![
-            Line::styled(
-                text(&ui.title),
-                Style::default()
-                    .fg(Color::Cyan)
-                    .add_modifier(Modifier::BOLD),
-            ),
-            model,
-        ]),
-        slots[0],
-    );
-    let (lines, headers) = conversation(ui, slots[1].width);
-    let paragraph = if lines.is_empty() {
-        Paragraph::new("RustyTavern\n\nUse /provider to connect a model provider.\nUse /character and /persona to select identities.\nUse /new to start a conversation.\n\nType / to see the commands.")
-    } else {
-        Paragraph::new(lines)
+        None => status.push(Span::styled(" · No model · use /model", dim)),
     }
-    .wrap(Wrap { trim: false });
-    let total = paragraph.line_count(slots[1].width).min(u16::MAX as usize) as u16;
-    let offset = total
-        .saturating_sub(slots[1].height)
-        .saturating_sub(ui.scroll);
-    frame.render_widget(paragraph.scroll((offset, 0)), slots[1]);
-    ui.hits.push((slots[1], Hit::Transcript));
-    for (line, step) in headers {
-        if let Some(row) = line
-            .checked_sub(usize::from(offset))
-            .filter(|row| *row < usize::from(slots[1].height))
-        {
-            ui.hits.push((
-                Rect::new(slots[1].x, slots[1].y + row as u16, slots[1].width, 1),
-                Hit::Step(step),
-            ));
-        }
-    }
-    if let Some(selection) = ui.selection {
-        select(frame, slots[1], selection, ui);
-    }
-    ui.composer.set_block(
-        Block::default()
-            .borders(Borders::ALL)
-            .title(if ui.busy {
-                " Message · the operation is active "
-            } else {
-                " Message · /help "
-            })
-            .border_style(Style::default().fg(Color::DarkGray)),
-    );
-    ui.composer.set_cursor_line_style(Style::default());
-    frame.render_widget(&ui.composer, slots[2]);
-    let progress = if ui.busy {
-        ["·", "•", "●", "•"][ui.tick % 4]
-    } else {
-        ""
-    };
     frame.render_widget(
         Paragraph::new(vec![
             Line::from(text(&format!("{progress} {}", ui.notice))),
-            Line::styled(
-                "Enter sends · Alt+Enter newline · / commands · Ctrl+C cancels · Ctrl+D exits",
-                Style::default().fg(Color::DarkGray),
-            ),
+            Line::from(status),
         ]),
-        slots[3],
+        slots[2],
     );
     if let Some(typed) = ui.typed_command() {
         let matches: Vec<_> = slash_matches(&typed).collect();
-        let height = (matches.len() as u16 + 2).min(slots[1].height);
+        let height = (matches.len() as u16 + 2).min(slots[0].height);
         let popup = Rect::new(
-            slots[2].x,
-            slots[2].y.saturating_sub(height),
-            slots[2].width,
+            slots[1].x,
+            slots[1].y.saturating_sub(height),
+            slots[1].width,
             height,
         );
         frame.render_widget(Clear, popup);
         let block = Block::default()
             .borders(Borders::ALL)
-            .border_style(Style::default().fg(Color::DarkGray))
-            .title(" Commands · ↑↓ selects · Tab completes · Enter or click runs ");
+            .border_style(dim)
+            .title(" Commands · ↑↓ selects · Tab completes · Enter runs ");
         let inner = block.inner(popup);
         frame.render_widget(block, popup);
         for (row, (name, description)) in matches
@@ -485,7 +504,6 @@ pub(super) fn draw(frame: &mut Frame<'_>, ui: &mut Ui) {
             .enumerate()
             .take(usize::from(inner.height))
         {
-            let area = Rect::new(inner.x, inner.y + row as u16, inner.width, 1);
             frame.render_widget(
                 Paragraph::new(Line::from(vec![
                     Span::styled(
@@ -500,10 +518,26 @@ pub(super) fn draw(frame: &mut Frame<'_>, ui: &mut Ui) {
                     ),
                     Span::styled(*description, Style::default().fg(Color::Gray)),
                 ])),
-                area,
+                Rect::new(inner.x, inner.y + row as u16, inner.width, 1),
             );
-            ui.hits.push((area, Hit::Slash(name)));
         }
+    }
+}
+
+/// The function draws a dialog on the alternate screen, or the inline area below the scrollback.
+pub(super) fn draw(frame: &mut Frame<'_>, ui: &mut Ui) {
+    ui.hits.clear();
+    let area = frame.area();
+    let small = if ui.overlay.is_some() { 10 } else { 3 };
+    if area.width < 32 || area.height < small {
+        frame.render_widget(
+            Paragraph::new("The terminal needs 32 columns and 10 rows."),
+            area,
+        );
+        return;
+    }
+    if ui.overlay.is_none() {
+        return inline(frame, ui, area);
     }
     let Some(overlay) = &mut ui.overlay else {
         return;
