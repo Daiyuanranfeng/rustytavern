@@ -65,6 +65,8 @@ impl SessionConfiguration {
     fn hash(&self) -> Result<String> {
         let mut value = serde_json::to_value(self)?;
         value.as_object_mut().unwrap().remove("identity");
+        // The sort keeps the hash independent of the `preserve_order` feature of `serde_json`.
+        value.sort_all_objects();
         Ok(digest(&serde_json::to_vec(&value)?))
     }
     fn validate(&self) -> Result<()> {

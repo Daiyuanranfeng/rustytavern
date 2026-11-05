@@ -23,6 +23,7 @@ base64 = "0.22.1"
 clap = { version = "4.6", features = ["derive"] }
 crc32fast = "1.4"
 futures-util = "0.3"
+genai = { version = "0.7.3", default-features = false, features = ["rustls-tls"] }
 reqwest = { version = "0.13.5", default-features = false, features = ["json", "stream", "rustls"] }
 rusqlite = { version = "0.31", features = ["bundled"] }
 semver = "1"

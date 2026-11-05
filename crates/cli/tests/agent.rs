@@ -150,7 +150,7 @@ fn the_agent_reads_a_skill_and_returns_the_result_to_the_model() {
         "---\nname: greet\ndescription: Greet a traveler.\n---\nSay hello in French.\n",
     )
     .unwrap();
-    let call = json!({"tool_calls":[{"index":0,"id":"call_1","type":"function","function":{"name":"skill","arguments":"{\"name\":\"greet\"}"}}]});
+    let call = json!({"tool_calls":[{"index":0,"id":"call_1","type":"function","function":{"name":"read_skill","arguments":"{\"name\":\"greet\"}"}}]});
     let (endpoint, server) = serve(vec![
         sse(call, Value::Null) + &sse(json!({}), json!("tool_calls")),
         sse(json!({"content":"Bonjour."}), json!("stop")),
@@ -172,14 +172,19 @@ fn the_agent_reads_a_skill_and_returns_the_result_to_the_model() {
             .as_array()
             .unwrap()
             .iter()
-            .map(|t| t["function"]["name"].as_str().unwrap().to_owned())
+            .map(|t| {
+                t.get("function").unwrap_or(t)["name"]
+                    .as_str()
+                    .unwrap()
+                    .to_owned()
+            })
             .collect::<Vec<_>>()
     };
-    assert!(names(&inspected["prepared"]["body"]).contains(&"skill".to_owned()));
+    assert!(names(&inspected["prepared"]["body"]).contains(&"read_skill".to_owned()));
     let events = chat(directory.path(), &id);
     let bodies = server.join().unwrap();
 
-    assert_eq!(names(&bodies[0]), ["skill", "web_fetch"]);
+    assert_eq!(names(&bodies[0]), ["read_skill", "web_fetch"]);
     assert!(bodies[0]["messages"].as_array().unwrap().iter().any(|m| {
         m["role"] == "system"
             && m["content"]

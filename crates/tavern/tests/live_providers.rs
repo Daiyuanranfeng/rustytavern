@@ -50,14 +50,14 @@ fn plan(message: &str) -> PromptPlan {
     .unwrap()
 }
 
-/// The tools copy the schemas of the `web_fetch`, `skill`, and sanitized MCP tools.
+/// The tools copy the schemas of the `web_fetch`, `read_skill`, and sanitized MCP tools.
 fn tools() -> Vec<ToolDefinition> {
     [
         ("roll_dice", "Roll one die and return the result.",
             json!({"type":"object","properties":{"sides":{"type":"integer"}},"required":["sides"]})),
         ("web_fetch", "Fetch one public HTTPS page. The tool returns the page as plain text.",
             json!({"type":"object","properties":{"url":{"type":"string","description":"The HTTPS URL."}},"required":["url"],"additionalProperties":false})),
-        ("skill", "Read one skill from the skill catalog.",
+        ("read_skill", "Read one skill from the skill catalog.",
             json!({"type":"object","properties":{"name":{"type":"string","enum":["harbor-lore","tide-tables"]},"path":{"type":"string","description":"A file inside the skill directory. Omit it to read SKILL.md."}},"required":["name"],"additionalProperties":false})),
         ("clock__now", "Return the current UTC time.",
             json!({"type":"object","properties":{},"required":[]})),
@@ -88,7 +88,7 @@ fn execute(call: &ToolCall) -> String {
             "Example Domain. {}",
             "The harbor log continues. ".repeat(1200)
         ),
-        "skill" => "# Harbor lore\nThe harbor has a sunken bell.".into(),
+        "read_skill" => "# Harbor lore\nThe harbor has a sunken bell.".into(),
         "clock__now" => "2026-11-05T12:00:00Z".into(),
         "notes__search" => "1. A storm hit the reef in 1888.".into(),
         _ => "The tool is unknown.".into(),
@@ -121,7 +121,7 @@ const SCENARIOS: &[(&str, &str, &[&str])] = &[
     (
         "skill",
         "Read the harbor-lore skill and tell me one fact from it.",
-        &["skill"],
+        &["read_skill"],
     ),
     (
         "no-arguments",
