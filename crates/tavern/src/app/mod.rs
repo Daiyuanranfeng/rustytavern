@@ -1,3 +1,5 @@
+mod agent;
+
 pub use crate::config;
 use crate::{
     Error, Result, driver, external, phases, plugin, prompt, provider, runtime, source, store,
@@ -16,6 +18,7 @@ use serde_json::{Value, json};
 use tokio::sync::Mutex;
 use tokio_util::sync::CancellationToken;
 
+use crate::agent::AgentDriver;
 use crate::config::Configuration;
 use driver::{ConversationDriver, DRIVER_CAPABILITIES, SingleReplyDriver};
 use external::{ExternalSourcePlugin, ProcessDefinition};
@@ -745,6 +748,7 @@ impl ExtensionManager {
                 Ok(Arc::new(BuiltinPlugin {
                     definition,
                     store: self.store.clone(),
+                    data_dir: Some(self.data_dir.clone()),
                 }))
             }
             Implementation::Process { process } => {
@@ -799,6 +803,7 @@ impl PromptHook for StaticPromptEdits {
 struct BuiltinPlugin {
     definition: PluginDefinition,
     store: Arc<dyn StoreBackend>,
+    data_dir: Option<PathBuf>,
 }
 #[async_trait]
 impl RuntimePlugin for BuiltinPlugin {
@@ -826,6 +831,21 @@ impl RuntimePlugin for BuiltinPlugin {
                     context.authorize(capability)?;
                 }
                 let driver: Arc<dyn ConversationDriver> = Arc::new(SingleReplyDriver);
+                context.register("driver/1", Arc::new(driver))?;
+            }
+            "driver.agent" => {
+                for capability in DRIVER_CAPABILITIES {
+                    context.authorize(capability)?;
+                }
+                let data_dir = self.data_dir.as_deref().ok_or_else(|| {
+                    Error::new(
+                        "invalid_plugin_factory",
+                        "The agent requires a data directory.",
+                    )
+                })?;
+                let tools = agent::tools(context, data_dir).await?;
+                let steps = configuration["max_steps"].as_u64().unwrap_or(8) as usize;
+                let driver: Arc<dyn ConversationDriver> = Arc::new(AgentDriver::new(tools, steps));
                 context.register("driver/1", Arc::new(driver))?;
             }
             "profile.core-v1" => {
@@ -920,6 +940,7 @@ pub async fn default_registry(store: Arc<dyn StoreBackend>) -> Result<Arc<Mutex<
         plugins.push(Arc::new(BuiltinPlugin {
             definition,
             store: store.clone(),
+            data_dir: None,
         }));
     }
     let mut registry = PluginRegistry::default();
@@ -1256,31 +1277,41 @@ fn merge_defaults(target: &mut Value, update: &Value) {
 
 impl ExtensionManager {
     pub fn install_builtin(&mut self, name: &str) -> Result<InstalledExtension> {
-        let (manifest, plugin, readme, plugin_readme): (&[u8], &[u8], &[u8], &[u8]) = match name {
-            "chub" => (
-                include_bytes!("../../bundled/chub/extension.json"),
-                include_bytes!("../../bundled/chub/plugins/source.json"),
-                include_bytes!("../../bundled/chub/README.md"),
-                include_bytes!("../../bundled/chub/plugins/README.md"),
-            ),
-            "risurealm" => (
-                include_bytes!("../../bundled/risurealm/extension.json"),
-                include_bytes!("../../bundled/risurealm/plugins/source.json"),
-                include_bytes!("../../bundled/risurealm/README.md"),
-                include_bytes!("../../bundled/risurealm/plugins/README.md"),
-            ),
-            _ => {
-                return Err(Error::new(
-                    "invalid_extension_name",
-                    "The bundled extension does not exist.",
-                ));
-            }
-        };
+        let (file, manifest, plugin, readme, plugin_readme): (&str, &[u8], &[u8], &[u8], &[u8]) =
+            match name {
+                "agent" => (
+                    "plugins/driver.json",
+                    include_bytes!("../../bundled/agent/extension.json"),
+                    include_bytes!("../../bundled/agent/plugins/driver.json"),
+                    include_bytes!("../../bundled/agent/README.md"),
+                    include_bytes!("../../bundled/agent/plugins/README.md"),
+                ),
+                "chub" => (
+                    "plugins/source.json",
+                    include_bytes!("../../bundled/chub/extension.json"),
+                    include_bytes!("../../bundled/chub/plugins/source.json"),
+                    include_bytes!("../../bundled/chub/README.md"),
+                    include_bytes!("../../bundled/chub/plugins/README.md"),
+                ),
+                "risurealm" => (
+                    "plugins/source.json",
+                    include_bytes!("../../bundled/risurealm/extension.json"),
+                    include_bytes!("../../bundled/risurealm/plugins/source.json"),
+                    include_bytes!("../../bundled/risurealm/README.md"),
+                    include_bytes!("../../bundled/risurealm/plugins/README.md"),
+                ),
+                _ => {
+                    return Err(Error::new(
+                        "invalid_extension_name",
+                        "The bundled extension does not exist.",
+                    ));
+                }
+            };
         let stage = self.data_dir.join("extensions").join(new_id("template"));
         std::fs::create_dir_all(stage.join("plugins"))?;
         let result = (|| {
             std::fs::write(stage.join("extension.json"), manifest)?;
-            std::fs::write(stage.join("plugins/source.json"), plugin)?;
+            std::fs::write(stage.join(file), plugin)?;
             std::fs::write(stage.join("README.md"), readme)?;
             std::fs::write(stage.join("plugins/README.md"), plugin_readme)?;
             self.install(&stage)

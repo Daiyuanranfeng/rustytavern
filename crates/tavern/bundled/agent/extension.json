@@ -1,0 +1,13 @@
+{
+  "id": "org.rustytavern.extension.agent",
+  "version": "0.1.0",
+  "product_api": "1",
+  "plugins": [
+    {
+      "manifest": "plugins/driver.json"
+    }
+  ],
+  "bindings": {
+    "driver/1": "org.rustytavern.driver.agent"
+  }
+}

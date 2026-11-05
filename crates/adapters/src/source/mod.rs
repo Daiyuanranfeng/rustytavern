@@ -50,7 +50,8 @@ impl PublicFetcher {
             || url.password().is_some()
             || url.fragment().is_some()
             || url.port().is_some_and(|p| p != 443)
-            || !self.grants.contains(&format!("network:https:{host}"))
+            || !(self.grants.contains("network:https:*")
+                || self.grants.contains(&format!("network:https:{host}")))
         {
             return Err(Error::new(
                 "source_target_denied",

@@ -77,11 +77,10 @@ pub trait ProviderAdapter: Send + Sync {
         model: &str,
         config: &ProviderConfig,
     ) -> Result<PreparedRequest>;
+    /// The pure method adds tools and a continuation to a prepared text request.
     fn prepare_agent(
         &self,
-        _plan: &PromptPlan,
-        _model: &str,
-        _config: &ProviderConfig,
+        _request: PreparedRequest,
         _agent: &AgentRequest,
     ) -> Result<PreparedRequest> {
         Err(Error::new(
@@ -338,12 +337,10 @@ impl ProviderAdapter for HttpProvider {
 
     fn prepare_agent(
         &self,
-        plan: &PromptPlan,
-        model: &str,
-        config: &ProviderConfig,
+        request: PreparedRequest,
         agent: &AgentRequest,
     ) -> Result<PreparedRequest> {
-        agent::prepare(self.prepare(plan, model, config)?, agent)
+        agent::prepare(request, agent)
     }
     async fn open_agent_stream(
         &self,

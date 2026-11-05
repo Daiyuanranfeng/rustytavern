@@ -13,7 +13,7 @@ pub enum AgentProviderEvent {
     Complete,
 }
 impl AgentProviderEvent {
-    pub(super) fn into_text(self) -> Result<ProviderEvent> {
+    pub fn into_text(self) -> Result<ProviderEvent> {
         Ok(match self {
             Self::Text { text } => ProviderEvent::Text { text },
             Self::Usage { usage } => ProviderEvent::Usage { usage },

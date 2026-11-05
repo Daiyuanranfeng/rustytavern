@@ -7,7 +7,9 @@ use tokio_util::sync::CancellationToken;
 
 use crate::{
     Error, EventSink, Result, Runtime, RuntimeEvent,
-    provider::{PreparedRequest, ProviderEvent, ProviderStream},
+    provider::{
+        AgentProviderEvent, AgentProviderStream, AgentRequest, PreparedRequest, ProviderEvent,
+    },
     session::Generation,
     store::now_ms,
 };
@@ -44,7 +46,7 @@ impl ConversationDriver for SingleReplyDriver {
     }
 }
 
-type StreamSlot = Arc<Mutex<Option<ProviderStream>>>;
+type StreamSlot = Arc<Mutex<Option<AgentProviderStream>>>;
 pub(super) struct DriverControl {
     cancellation: CancellationToken,
     stream: StreamSlot,
@@ -127,13 +129,53 @@ impl DriverContext {
         Ok(())
     }
     pub async fn next_event(&mut self) -> Result<Option<ProviderEvent>> {
+        self.next_agent_event()
+            .await?
+            .map(AgentProviderEvent::into_text)
+            .transpose()
+    }
+    /// The method dispatches one agent step after the previous step completes.
+    pub async fn open_agent_step(&mut self, agent: &AgentRequest) -> Result<()> {
+        let result = self.open(Some(agent)).await;
+        if let Err(error) = &result {
+            self.failure = Some(error.clone());
+        }
+        result
+    }
+    pub async fn next_agent_event(&mut self) -> Result<Option<AgentProviderEvent>> {
         let result = self.next_inner().await;
         if let Err(error) = &result {
             self.failure = Some(error.clone());
         }
         result
     }
-    async fn next_inner(&mut self) -> Result<Option<ProviderEvent>> {
+    async fn open(&mut self, agent: Option<&AgentRequest>) -> Result<()> {
+        self.active()?;
+        if self.opened && !self.complete {
+            return Err(Error::new(
+                "invalid_driver_command",
+                "The driver cannot open a step before the previous step completes.",
+            ));
+        }
+        let stream = self
+            .runtime
+            .dispatch(
+                &self.generation,
+                self.request.clone(),
+                self.cancellation.clone(),
+                agent,
+            )
+            .await?;
+        *self
+            .stream
+            .lock()
+            .map_err(|_| Error::new("driver_state", "The driver stream is unavailable."))? =
+            Some(stream);
+        self.opened = true;
+        self.complete = false;
+        Ok(())
+    }
+    async fn next_inner(&mut self) -> Result<Option<AgentProviderEvent>> {
         self.active()?;
         if self.complete {
             return Ok(None);
@@ -145,20 +187,7 @@ impl DriverContext {
             ));
         }
         if !self.opened {
-            self.opened = true;
-            let stream = self
-                .runtime
-                .dispatch(
-                    &self.generation,
-                    self.request.clone(),
-                    self.cancellation.clone(),
-                )
-                .await?;
-            *self
-                .stream
-                .lock()
-                .map_err(|_| Error::new("driver_state", "The driver stream is unavailable."))? =
-                Some(stream);
+            self.open(None).await?;
         }
         let mut stream = self
             .stream
@@ -173,10 +202,10 @@ impl DriverContext {
         };
         self.events += 1;
         match &event {
-            ProviderEvent::Usage { usage } => self.record_usage(usage.clone()).await?,
-            ProviderEvent::Complete => self.complete = true,
-            ProviderEvent::Failure { error } => self.failure = Some(error.clone()),
-            ProviderEvent::Text { .. } => {}
+            AgentProviderEvent::Usage { usage } => self.record_usage(usage.clone()).await?,
+            AgentProviderEvent::Complete => self.complete = true,
+            AgentProviderEvent::Failure { error } => self.failure = Some(error.clone()),
+            AgentProviderEvent::Text { .. } | AgentProviderEvent::ToolCalls { .. } => {}
         }
         if !self.complete && self.failure.is_none() {
             *self
@@ -210,6 +239,16 @@ impl DriverContext {
         self.active()?;
         let mut event = RuntimeEvent::new("text_delta", &self.generation.id);
         event.text = Some(text);
+        self.sink.emit(event);
+        Ok(())
+    }
+    /// The method reports one finished tool call to the event consumer.
+    pub fn report_tool(&self, call: &crate::provider::ToolCall, content: &str) -> Result<()> {
+        self.active()?;
+        let mut event = RuntimeEvent::new("tool_result", &self.generation.id);
+        event.tool = Some(
+            serde_json::json!({"id":call.id,"name":call.name,"arguments":call.arguments,"content":content}),
+        );
         self.sink.emit(event);
         Ok(())
     }

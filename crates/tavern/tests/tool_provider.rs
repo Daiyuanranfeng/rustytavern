@@ -15,6 +15,16 @@ impl CredentialResolver for TestCredentials {
     }
 }
 
+fn prepare_agent(
+    config: &ProviderConfig,
+    agent: &AgentRequest,
+) -> rustytavern::Result<PreparedRequest> {
+    HttpProvider.prepare_agent(
+        HttpProvider.prepare(&Default::default(), "fixture", config)?,
+        agent,
+    )
+}
+
 fn mock(body: String, status: &str) -> (String, mpsc::Receiver<Value>, thread::JoinHandle<()>) {
     let listener = TcpListener::bind("127.0.0.1:0").unwrap();
     let address = listener.local_addr().unwrap();
@@ -104,9 +114,7 @@ async fn http_stream_emits_complete_calls_and_preserves_continuation_ids() {
         .map(|f| format!("data: {f}\n\n"))
         .collect::<String>();
     let (endpoint, received, server) = mock(body, "200 OK");
-    let request = HttpProvider
-        .prepare_agent(&Default::default(), "fixture", &config(endpoint), &agent())
-        .unwrap();
+    let request = prepare_agent(&config(endpoint), &agent()).unwrap();
     let mut stream = HttpProvider
         .open_agent_stream(request, &TestCredentials, CancellationToken::new())
         .await
@@ -141,14 +149,7 @@ async fn http_stream_emits_complete_calls_and_preserves_continuation_ids() {
             .collect(),
         calls,
     });
-    let request = HttpProvider
-        .prepare_agent(
-            &Default::default(),
-            "fixture",
-            &config("http://127.0.0.1:1".into()),
-            &agent,
-        )
-        .unwrap();
+    let request = prepare_agent(&config("http://127.0.0.1:1".into()), &agent).unwrap();
     assert_eq!(request.body["messages"][1]["tool_call_id"], "call_1");
     assert_eq!(request.body["messages"][2]["tool_call_id"], "call_2");
 }
@@ -199,10 +200,7 @@ fn native_protocols_and_duplicate_results_fail() {
         let mut config = config("http://127.0.0.1:1".into());
         config.kind = kind;
         assert_eq!(
-            HttpProvider
-                .prepare_agent(&Default::default(), "fixture", &config, &agent())
-                .unwrap_err()
-                .code,
+            prepare_agent(&config, &agent()).unwrap_err().code,
             "unsupported_provider_tools"
         );
     }
@@ -220,11 +218,7 @@ fn native_protocols_and_duplicate_results_fail() {
         }],
     });
     let config = config("http://127.0.0.1:1".into());
-    assert!(
-        HttpProvider
-            .prepare_agent(&Default::default(), "fixture", &config, &agent)
-            .is_err()
-    );
+    assert!(prepare_agent(&config, &agent).is_err());
 }
 #[tokio::test]
 async fn http_missing_terminal_error_and_cancellation_fail() {
@@ -236,9 +230,7 @@ async fn http_missing_terminal_error_and_cancellation_fail() {
         ),
     ] {
         let (endpoint, received, server) = mock(body, "200 OK");
-        let request = HttpProvider
-            .prepare_agent(&Default::default(), "fixture", &config(endpoint), &agent())
-            .unwrap();
+        let request = prepare_agent(&config(endpoint), &agent()).unwrap();
         let mut stream = HttpProvider
             .open_agent_stream(request, &TestCredentials, CancellationToken::new())
             .await
@@ -254,9 +246,7 @@ async fn http_missing_terminal_error_and_cancellation_fail() {
     let cancellation = CancellationToken::new();
     cancellation.cancel();
     let config = config("http://127.0.0.1:1".into());
-    let request = HttpProvider
-        .prepare_agent(&Default::default(), "fixture", &config, &agent())
-        .unwrap();
+    let request = prepare_agent(&config, &agent()).unwrap();
     let error = HttpProvider
         .open_agent_stream(request, &TestCredentials, cancellation)
         .await
@@ -277,9 +267,7 @@ async fn http_rejects_unknown_tools_and_invalid_argument_values() {
             chunk(json!({}), json!("tool_calls")), "[DONE]".into(),
         ].iter().map(|f| format!("data: {f}\n\n")).collect();
         let (endpoint, received, server) = mock(body, "200 OK");
-        let request = HttpProvider
-            .prepare_agent(&Default::default(), "fixture", &config(endpoint), &agent())
-            .unwrap();
+        let request = prepare_agent(&config(endpoint), &agent()).unwrap();
         let mut stream = HttpProvider
             .open_agent_stream(request, &TestCredentials, CancellationToken::new())
             .await
@@ -303,11 +291,7 @@ fn schemas_mixed_output_and_duplicate_ids_fail() {
         let mut agent = agent();
         agent.tools[0].parameters = schema;
         let config = config("http://127.0.0.1:1".into());
-        assert!(
-            HttpProvider
-                .prepare_agent(&Default::default(), "fixture", &config, &agent)
-                .is_err()
-        );
+        assert!(prepare_agent(&config, &agent).is_err());
     }
     for delta in [
         json!({"audio":{}}),
@@ -339,9 +323,7 @@ async fn http_cancellation_discards_pending_calls() {
         let (endpoint, received, server) = mock(body, "200 OK");
         let cancellation = CancellationToken::new();
         let config = config(endpoint);
-        let request = HttpProvider
-            .prepare_agent(&Default::default(), "fixture", &config, &agent())
-            .unwrap();
+        let request = prepare_agent(&config, &agent()).unwrap();
         let mut stream = HttpProvider
             .open_agent_stream(request, &TestCredentials, cancellation.clone())
             .await
@@ -378,9 +360,7 @@ fn continuation_budget_precedes_request_cloning() {
         })
         .collect();
     let config = config("http://127.0.0.1:1".into());
-    let error = HttpProvider
-        .prepare_agent(&Default::default(), "fixture", &config, &agent)
-        .unwrap_err();
+    let error = prepare_agent(&config, &agent).unwrap_err();
     assert_eq!(error.code, "invalid_provider_tool");
     assert_eq!(error.message, "The tool request exceeds its byte limit.");
 }

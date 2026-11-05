@@ -15,8 +15,8 @@ The [workspace guide](docs/architecture.md#workspace-boundaries) defines the com
 
 ## Build and check
 
-The current development environment uses Rust 1.94.
-The declared minimum is Rust 1.85.
+The `rust-toolchain.toml` file pins Rust 1.99.1.
+The declared minimum is Rust 1.99.
 The build uses the resolved Cargo.lock file.
 
 ```sh

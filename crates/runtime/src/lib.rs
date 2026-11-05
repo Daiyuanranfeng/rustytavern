@@ -6,6 +6,7 @@ use rustytavern_core::{Error, Result, digest};
 use rustytavern_plugin as plugin;
 use rustytavern_store as store;
 
+pub mod agent;
 pub mod driver;
 pub mod phases;
 
@@ -24,8 +25,8 @@ use driver::{ConversationDriver, DRIVER_CAPABILITIES, DriverContext, SingleReply
 use phases::{HookBinding, PhaseTrace, SavedEnrichment};
 use prompt::{ConservativeCounter, CoreProfile, PromptInput, PromptPlan, PromptProfile};
 use provider::{
-    CredentialResolver, EnvironmentCredentials, HttpProvider, PreparedRequest, ProviderAdapter,
-    ProviderConfig, ProviderStream,
+    AgentProviderStream, AgentRequest, CredentialResolver, EnvironmentCredentials, HttpProvider,
+    PreparedRequest, ProviderAdapter, ProviderConfig,
 };
 use session::{Generation, GenerationStatus, Role, Session, SessionConfiguration};
 use store::{Preparation, StoreBackend, Submit, now_ms};
@@ -52,6 +53,8 @@ pub struct RuntimeEvent {
     pub error: Option<Error>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub missed_events: Option<usize>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub tool: Option<Value>,
 }
 
 impl RuntimeEvent {
@@ -63,6 +66,7 @@ impl RuntimeEvent {
             usage: None,
             error: None,
             missed_events: None,
+            tool: None,
         }
     }
 }
@@ -841,10 +845,22 @@ impl Runtime {
         generation: &Generation,
         request: PreparedRequest,
         cancellation: CancellationToken,
-    ) -> Result<ProviderStream> {
+        agent: Option<&AgentRequest>,
+    ) -> Result<AgentProviderStream> {
         self.renew(generation).await?;
+        let credentials = self.credentials.as_ref();
+        let Some(agent) = agent else {
+            let stream = self
+                .provider
+                .open_stream(request, credentials, cancellation)
+                .await?;
+            return Ok(Box::pin(futures_util::StreamExt::map(stream, |event| {
+                event.map(Into::into)
+            })));
+        };
+        let request = self.provider.prepare_agent(request, agent)?;
         self.provider
-            .open_stream(request, self.credentials.as_ref(), cancellation)
+            .open_agent_stream(request, credentials, cancellation)
             .await
     }
 
