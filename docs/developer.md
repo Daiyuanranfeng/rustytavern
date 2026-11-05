@@ -126,22 +126,24 @@ The document must specify purpose, plugin ID, service, Rust type or protocol, in
 
 The [plugin crate](../crates/plugins/README.md) holds every essential plugin. Each plugin family is one module.
 The standard agent activates the essential plugins through `plugins::registry`. The owner ID is `core-product`.
-The host grants each requested capability of an essential plugin. The `plugins.disabled` setting in `config.json` turns off an essential plugin.
+The host grants each requested capability of an essential plugin. The `plugins.enabled` list in `config.toml` selects the optional plugins.
+Each `[plugins.ID]` table configures one plugin. Without `agent`, the `single-reply` driver serves `driver/1`.
 
 | Plugin ID | Service | Registered Rust type | Requested capabilities |
 | --- | --- | --- | --- |
-| `org.rustytavern.decoder.cc-v2-v3` | `card.decoder/1` | `Arc<dyn CardDecoder>` | None |
-| `org.rustytavern.profile.core-v1` | `profile/1` | `Arc<dyn PromptProfile>` | None |
-| `org.rustytavern.provider.http` | `provider/1` | `Arc<dyn ProviderAdapter>` | None |
-| `org.rustytavern.store.sqlite` | `store/1` | `Arc<dyn StoreBackend>` | None |
-| `org.rustytavern.driver.agent` | `driver/1` | `Arc<dyn ConversationDriver>` | The three driver capabilities |
-| `org.rustytavern.tools.web` | `tools.web/1` | `agent::ToolSet` | `network:https:*` |
-| `org.rustytavern.tools.skills` | `tools.skills/1` | `agent::ToolSet` | `skills.read`, `prompt.contribute:before_history` |
-| `org.rustytavern.tools.mcp` | `tools.mcp/1` | `agent::ToolSet` | `mcp.connect` |
-| `org.rustytavern.source.chub` | `card.source.chub/1` | `Arc<dyn CardSource>` | `network:https:api.chub.ai` |
-| `org.rustytavern.source.risurealm` | `card.source.risurealm/1` | `Arc<dyn CardSource>` | `network:https:realm.risuai.net` |
+| `decoder` | `card.decoder/1` | `Arc<dyn CardDecoder>` | None. Always on. |
+| `profile` | `profile/1` | `Arc<dyn PromptProfile>` | None. Always on. |
+| `provider` | `provider/1` | `Arc<dyn ProviderAdapter>` | None. Always on. |
+| `store` | `store/1` | `Arc<dyn StoreBackend>` | None. Always on. |
+| `agent` | `driver/1` | `Arc<dyn ConversationDriver>` | The three driver capabilities |
+| `single-reply` | `driver/1` | `Arc<dyn ConversationDriver>` | The three driver capabilities |
+| `web` | `tools.web/1` | `agent::ToolSet` | `network:https:*` |
+| `skills` | `tools.skills/1` | `agent::ToolSet` | `skills.read`, `prompt.contribute:before_history` |
+| `mcp` | `tools.mcp/1` | `agent::ToolSet` | `mcp.connect` |
+| `chub` | `card.source.chub/1` | `Arc<dyn CardSource>` | `network:https:api.chub.ai` |
+| `risurealm` | `card.source.risurealm/1` | `Arc<dyn CardSource>` | `network:https:realm.risuai.net` |
 
-An installed plugin can also select the `driver.single-reply`, `prompt.contributions`, and `prompt.edits` factories.
+An installed plugin can also select the `prompt.contributions` and `prompt.edits` factories.
 The registry wraps each table type in an outer `Arc`. The runtime selects decoder, driver, profile, and provider services from its composition lease.
 The application selects the store when it creates the runtime. A store binding change does not move existing session records.
 The provider adapter owns vendor stream decoding.
@@ -352,7 +354,7 @@ Replay compares the plan, phase trace, and request. A difference returns `nondet
 A different composition, profile, or absent saved enrichment blocks replay. Old generations remain readable and exportable.
 
 ```sh
-cargo run --locked -- --data-dir ./data prompt replay GENERATION_ID
+cargo run --locked -- --home ./home prompt replay GENERATION_ID
 ```
 
 ### Profile interface
@@ -455,13 +457,13 @@ Uninstallation retains that state.
 
 A user installs a third-party plugin from a local directory. The directory contains one `plugin.json` file and the files that the plugin uses.
 The `PluginManager` owns installation and enabled state. The `PluginRegistry` owns runtime plugin instances.
-The manager stores its catalog as revisions in SQLite `plugin_state`. The namespace is `rustytavern.application`. The key is `plugins`.
-The manager uses a revision check to reject concurrent catalog changes.
+The manager records each installed plugin as a `[plugins.ID]` table in `config.toml` with `path`, `grants`, and `trust_processes`.
+The caller saves `PluginManager::settings` into `config.toml` after a change.
 
-Installation copies the directory into `DATA_DIR/plugins` and hashes every file. Installation does not execute a script or start a plugin.
-Activation checks the file hashes and validates command services before it saves enabled state.
-An activation failure removes the newly activated plugins and restores the previous service bindings.
-The next application process restores enabled plugins for runtime commands.
+Installation reads `plugin.json` from its path and activates the plugin. Installation does not copy the directory or run a script.
+Activation validates command services before the manager records the plugin.
+An activation failure removes the newly activated plugin and restores the previous service bindings.
+The next application process restores the enabled installed plugins from `config.toml`.
 An enabled plugin does not change an existing session's saved composition automatically. The user adopts that change through `session configure`.
 
 ### Plugin manifest
@@ -501,8 +503,7 @@ The [installed plugin tests](../crates/tavern/tests/installed_plugins.rs) show a
 A process plugin uses `"kind": "process"` and a `process` object. A `{plugin}/` prefix selects a file inside the plugin directory.
 The host requires `--trust-processes` before it starts the executable. The host does not provide an operating-system sandbox.
 
-A directory can contain at most 512 regular files and 64 MiB of file data. The manager rejects symbolic links, absolute paths, and parent traversal.
-The manager rejects a changed installed file at restore.
+A `{plugin}/` path must stay inside the plugin directory. The manager rejects symbolic links and parent traversal in that path.
 
 ### Commands
 
@@ -523,15 +524,14 @@ The CLI runs a command through `plugin run NAME --args JSON`. The CLI also accep
 8. Disable the plugin and verify removal of its effect.
 
 ```sh
-cargo run --locked -- --data-dir ./data plugin install crates/tavern/examples/plugins/lighthouse-notes
-cargo run --locked -- --data-dir ./data plugin enable lighthouse-notes --grant prompt.contribute:before_character --grant prompt.contribute:after_character
-cargo run --locked -- --data-dir ./data plugin inspect lighthouse-notes
-cargo run --locked -- --data-dir ./data plugin disable lighthouse-notes
-cargo run --locked -- --data-dir ./data plugin uninstall lighthouse-notes
+cargo run --locked -- --home ./home plugin install crates/tavern/examples/plugins/lighthouse-notes --grant prompt.contribute:before_character --grant prompt.contribute:after_character
+cargo run --locked -- --home ./home plugin inspect lighthouse-notes
+cargo run --locked -- --home ./home plugin disable lighthouse-notes
+cargo run --locked -- --home ./home plugin uninstall lighthouse-notes
 ```
 
-The manager rejects an update while the installed plugin remains enabled. Disable the plugin before installation of its replacement.
-Uninstallation removes the disabled plugin from the catalog. Uninstallation keeps user plugin state and cached plugin files.
+The manager rejects an update while the installed plugin remains active. Disable the plugin before installation of its replacement.
+Uninstallation removes the plugin table from `config.toml`. Uninstallation keeps user plugin state.
 A plugin update requires explicit session adoption before another generation.
 The plugin manifest accepts a positive `state_schema`. A compiled native factory can call the host migration command during activation.
 
@@ -543,47 +543,33 @@ The plugin manifest accepts a positive `state_schema`. A compiled native factory
 | [Lighthouse edits](../crates/tavern/examples/plugins/lighthouse-edits/README.md) | The plugin adds a pure prompt hook with explicit section edits. |
 | [Inline source](../crates/tavern/examples/plugins/inline-source/README.md) | The plugin runs an independent Rust process and declares a command. |
 
-The author must test failure rollback, restart, disable, and uninstall. The author must test changed files and denied capabilities.
+The author must test failure rollback, restart, disable, uninstall, and denied capabilities.
 
 ## Extensions
 
 An extension changes how an application looks. An extension cannot change agent behavior or agent context.
 A plugin does that work. An extension cannot contain plugins, commands, or grants.
-The [extension module](../crates/tavern/src/extension.rs) defines `ExtensionManifest`, `Theme`, and `Extensions`.
+The [extension module](../crates/tavern/src/extension.rs) defines `Extension` and `theme`.
 
-Each extension is one `extension.json` file. The manager copies it to `DATA_DIR/extensions/ID/extension.json`.
-An `enabled` marker file in that directory enables the extension.
+Each `[extensions.NAME]` table in `config.toml` is one enabled extension. Remove the table to remove the extension.
 
-```json
-{
-  "id": "example.rose",
-  "version": "1.0.0",
-  "description": "Pink user bubbles.",
-  "theme": {"user_bubble": "#ff5f87", "assistant_bubble": "magenta"}
-}
+```toml
+[extensions.rose]
+description = "Pink user bubbles."
+user_bubble = "#ff5f87"
+assistant_bubble = "magenta"
 ```
 
 | Field | Meaning |
 | --- | --- |
-| `id` | The value identifies the extension. |
-| `version` | The value uses semantic versioning. |
 | `description` | The optional text describes the extension. |
-| `theme.user_bubble` | The optional color sets the user bubble. |
-| `theme.assistant_bubble` | The optional color sets the character bubble. |
+| `user_bubble` | The optional color sets the user bubble. |
+| `assistant_bubble` | The optional color sets the character bubble. |
 
 A color is a name, such as `magenta`, or a hex value, such as `#5f87ff`. The terminal keeps its default for an invalid color.
-The manager rejects unknown fields. `Extensions::theme` merges the enabled themes in ID order. A later ID overrides an earlier ID.
-The terminal reads the theme when it starts.
-
-```sh
-cargo run --locked -- --data-dir ./data extension install ./rose
-cargo run --locked -- --data-dir ./data extension enable example.rose
-cargo run --locked -- --data-dir ./data extension list
-cargo run --locked -- --data-dir ./data extension disable example.rose
-cargo run --locked -- --data-dir ./data extension uninstall example.rose
-```
-
-The [extension tests](../crates/tavern/tests/extensions.rs) cover installation, themes, and rejected plugin fields.
+The configuration rejects unknown fields. `theme` merges the extensions in name order. A later name overrides an earlier name.
+The terminal reads the theme when it starts. The `extension list` command prints the extensions.
+The [configuration tests](../crates/tavern/tests/configuration.rs) cover themes and rejected fields.
 
 ## External card-source protocol
 

@@ -47,17 +47,18 @@ The [terminal guide](docs/user-guide.md#interactive-terminal) defines commands, 
 
 ## Script commands
 
-The examples use `./data` for durable records.
+The default home directory is `~/.rustytavern`. The examples use `./home` instead.
+The home directory holds `config.toml` for every setting and `rustytavern.db` for durable records.
 The OpenRouter adapter reads `OPENROUTER_API_KEY` from the process environment.
-The configuration stores the variable name.
-The configuration does not store the key value.
+The `--api-key KEY` option stores the key in `config.toml` instead.
+The [configuration guide](docs/user-guide.md#configuration-file) shows the complete file.
 
 ```sh
-cargo run -- --data-dir ./data config provider \
+cargo run -- --home ./home config provider \
   --name openrouter --kind openrouter \
   --model openai/gpt-4.1-nano --output-limit 256
-cargo run -- --data-dir ./data card import crates/tavern/examples/lumen.json --json
-cargo run -- --data-dir ./data persona create \
+cargo run -- --home ./home card import crates/tavern/examples/lumen.json --json
+cargo run -- --home ./home persona create \
   --name Alex --description "Alex charts the coast."
 ```
 
@@ -65,13 +66,13 @@ The import and persona commands print their IDs as JSON.
 The next command uses those IDs.
 
 ```sh
-rustytavern --data-dir ./data session new \
+rustytavern --home ./home session new \
   --character CHARACTER_ID --persona PERSONA_ID --provider openrouter
-rustytavern --data-dir ./data prompt inspect SESSION_ID \
+rustytavern --home ./home prompt inspect SESSION_ID \
   --message "Hello." --request
-rustytavern --data-dir ./data chat SESSION_ID \
+rustytavern --home ./home chat SESSION_ID \
   --message "Hello." --events --idempotency-key first-message
-rustytavern --data-dir ./data session show SESSION_ID --json
+rustytavern --home ./home session show SESSION_ID --json
 ```
 
 The last commands require the built binary on PATH.
@@ -82,12 +83,12 @@ The caller should reuse an idempotency key only for the same submission.
 ## Inspect, branch, and export
 
 ```sh
-rustytavern --data-dir ./data session regenerate SESSION_ID --events
-rustytavern --data-dir ./data session branch SESSION_ID --at MESSAGE_ID
-rustytavern --data-dir ./data session edit SESSION_ID \
+rustytavern --home ./home session regenerate SESSION_ID --events
+rustytavern --home ./home session branch SESSION_ID --at MESSAGE_ID
+rustytavern --home ./home session edit SESSION_ID \
   --at MESSAGE_ID --message "Another direction."
-rustytavern --data-dir ./data session export SESSION_ID --output session.json
-rustytavern --data-dir ./data card export CHARACTER_ID --output original.png
+rustytavern --home ./home session export SESSION_ID --output session.json
+rustytavern --home ./home card export CHARACTER_ID --output original.png
 ```
 
 An original card export returns the exact imported bytes.

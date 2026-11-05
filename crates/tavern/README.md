@@ -7,7 +7,7 @@ The crate assembles the character runtime and product features.
 The crate retains the public `rustytavern` library paths.
 The `app` module installs third-party plugins and defines factories, commands, and application setup.
 The `extension` module defines application extensions.
-The `config` module defines provider profiles, plugin settings, and the data directory.
+The `config` module defines `config.toml`, the home directory, and the API key resolver.
 The `plugins` path re-exports the [plugin crate](../plugins/README.md).
 The crate re-exports runtime, plugin, prompt, format, provider, source, and storage interfaces.
 

@@ -15,11 +15,10 @@ The host rejects an ungranted or missing target, transcript edits, and competing
 The host calls the transform after it builds the draft. The host then selects context and checks the request budget.
 
 ```sh
-cargo run --locked -- --data-dir ./data plugin install crates/tavern/examples/plugins/lighthouse-edits
-cargo run --locked -- --data-dir ./data plugin enable lighthouse-edits --grant session.read:current --grant prompt.transform:description
-cargo run --locked -- --data-dir ./data session configure SESSION_ID
-cargo run --locked -- --data-dir ./data prompt inspect SESSION_ID --message "Hello." --json
-cargo run --locked -- --data-dir ./data plugin disable lighthouse-edits
+cargo run --locked -- --home ./home plugin install crates/tavern/examples/plugins/lighthouse-edits --grant session.read:current --grant prompt.transform:description
+cargo run --locked -- --home ./home session configure SESSION_ID
+cargo run --locked -- --home ./home prompt inspect SESSION_ID --message "Hello." --json
+cargo run --locked -- --home ./home plugin disable lighthouse-edits
 ```
 
 The enabled plan contains the blue-lamp text. The commands make no model request.

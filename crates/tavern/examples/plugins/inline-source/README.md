@@ -19,12 +19,11 @@ cargo build --locked --example source_plugin
 rustytavern_example_dir=$(mktemp -d)
 cp -R crates/tavern/examples/plugins/inline-source/. "$rustytavern_example_dir/"
 cp target/debug/examples/source_plugin "$rustytavern_example_dir/source-plugin"
-cargo run --locked -- --data-dir ./data plugin install "$rustytavern_example_dir"
-cargo run --locked -- --data-dir ./data plugin enable inline-source --trust-processes
-cargo run --locked -- --data-dir ./data plugin run example-import --url https://example.com/lumen
-cargo run --locked -- --data-dir ./data card fetch https://example.com/lumen --source example
-cargo run --locked -- --data-dir ./data plugin disable inline-source
-cargo run --locked -- --data-dir ./data plugin uninstall inline-source
+cargo run --locked -- --home ./home plugin install "$rustytavern_example_dir" --trust-processes
+cargo run --locked -- --home ./home plugin run example-import --url https://example.com/lumen
+cargo run --locked -- --home ./home card fetch https://example.com/lumen --source example
+cargo run --locked -- --home ./home plugin disable inline-source
+cargo run --locked -- --home ./home plugin uninstall inline-source
 rm -rf "$rustytavern_example_dir"
 ```
 

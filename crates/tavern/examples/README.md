@@ -29,7 +29,7 @@ These commands make no paid model request.
 ## Library conversation
 
 The [conversation example](library/conversation.rs) uses an existing session and its pinned provider.
-The caller selects the data directory, session, and message.
+The caller selects the home directory, session, and message.
 The example returns the durable reply and usage.
 The example supports cancellation and an optional submission key.
 
@@ -39,7 +39,7 @@ The library retains the previous configuration and transcript.
 
 ```sh
 cargo run --locked -p rustytavern --example conversation -- \
-  --data-dir ./data --session SESSION_ID --message "Hello." --adopt
+  --home ./home --session SESSION_ID --message "Hello." --adopt
 ```
 
 The selected provider determines whether this command makes a paid request.

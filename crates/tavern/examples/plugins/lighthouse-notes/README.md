@@ -17,11 +17,10 @@ The core profile accepts the `system` role in these slots.
 The plugin provides no typed services and requires no network access.
 
 ```sh
-cargo run --locked -- --data-dir ./data plugin install crates/tavern/examples/plugins/lighthouse-notes
-cargo run --locked -- --data-dir ./data plugin enable lighthouse-notes --grant prompt.contribute:before_character --grant prompt.contribute:after_character
-cargo run --locked -- --data-dir ./data session configure SESSION_ID
-cargo run --locked -- --data-dir ./data prompt inspect SESSION_ID --message "Hello." --json
-cargo run --locked -- --data-dir ./data plugin disable lighthouse-notes
+cargo run --locked -- --home ./home plugin install crates/tavern/examples/plugins/lighthouse-notes --grant prompt.contribute:before_character --grant prompt.contribute:after_character
+cargo run --locked -- --home ./home session configure SESSION_ID
+cargo run --locked -- --home ./home prompt inspect SESSION_ID --message "Hello." --json
+cargo run --locked -- --home ./home plugin disable lighthouse-notes
 ```
 
 Use an existing session ID from `session new`. Prompt inspection makes no model request.

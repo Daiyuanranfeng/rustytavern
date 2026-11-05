@@ -121,8 +121,8 @@ An edited export replaces `card.json` and retains the other entry payloads. The 
 The lookup makes no network request. The CLI provides the same operation.
 
 ```sh
-rustytavern --data-dir ./data card import character.charx
-rustytavern --data-dir ./data card asset CHARACTER_ID \
+rustytavern --home ./home card import character.charx
+rustytavern --home ./home card asset CHARACTER_ID \
   --uri embeded://assets/icon/images/portrait.png --output portrait.png
 ```
 
@@ -153,7 +153,7 @@ RustyTavern supplies five text adapters. Each prepared request records its `cont
 The contract identifies the implemented adapter subset. The contract does not identify every capability of the remote service.
 
 ```sh
-cargo run --locked -- --data-dir ./data config capabilities
+cargo run --locked -- --home ./home config capabilities
 ```
 
 The command reports roles, text input and output, streaming, parameters, system placement, and token-count mode. The text contracts expose no multimodal input or reasoning controls.
@@ -186,7 +186,7 @@ The Anthropic adapter accepts up to 8191 strings. The Anthropic and Gemini adapt
 The adapter rejects unsupported parameter names and invalid value types before dispatch.
 
 ```sh
-cargo run --locked -- --data-dir ./data config provider \
+cargo run --locked -- --home ./home config provider \
   --name openrouter --kind openrouter --model openai/gpt-4.1-nano \
   --parameters '{"temperature":0.7,"top_p":0.9}'
 ```
@@ -211,7 +211,7 @@ The profile can permit fallback only through an explicit routing setting. The ru
 The [OpenRouter routing reference](https://openrouter.ai/docs/guides/routing/provider-selection) defines the remote routing controls.
 
 ```sh
-cargo run --locked -- --data-dir ./data config provider \
+cargo run --locked -- --home ./home config provider \
   --name routed --kind openrouter --model openai/gpt-4.1-nano \
   --routing '{"order":["openai"],"allow_fallbacks":false,"require_parameters":true}'
 ```
@@ -252,7 +252,7 @@ The [Anthropic context reference](https://platform.claude.com/docs/en/build-with
 ### Local model example
 
 ```sh
-cargo run --locked -- --data-dir ./data config provider \
+cargo run --locked -- --home ./home config provider \
   --name local --kind custom --model local-model \
   --endpoint http://127.0.0.1:8080/v1/chat/completions
 ```
