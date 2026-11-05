@@ -107,7 +107,7 @@ output_limit = 1024
 parameters = { temperature = 0.8 }
 
 [plugins]
-enabled = ["agent", "web", "skills", "mcp", "chub", "risurealm", "lighthouse-notes"]
+enabled = ["lighthouse-notes"]       # installed plugins only
 
 [plugins.agent]
 max_steps = 8
@@ -133,7 +133,7 @@ assistant_bubble = "magenta"
 | --- | --- |
 | `default_provider` | The provider profile for new chats. |
 | `providers.NAME` | One provider profile. `api_key` stores the key in this file. |
-| `plugins.enabled` | The enabled plugin IDs. Without this list, the default plugins are on. |
+| `plugins.enabled` | The enabled installed plugin IDs. The essential plugins are always on. |
 | `plugins.NAME` | The configuration of one plugin. A table with `path` is an installed plugin. |
 | `extensions.NAME` | One enabled extension. |
 
@@ -145,7 +145,7 @@ A session can change the `plugins` settings of `config.toml` for itself. The dat
 The key is a dotted `plugins` path. The value uses TOML syntax. An object value merges by key. Any other value replaces the old value.
 
 ```sh
-rustytavern session set SESSION_ID plugins.enabled '["agent", "web"]'
+rustytavern session set SESSION_ID plugins.enabled '["lighthouse-notes"]'
 rustytavern session set SESSION_ID plugins.agent.max_steps 4
 rustytavern session settings SESSION_ID
 rustytavern session unset SESSION_ID plugins.enabled
@@ -226,7 +226,8 @@ A plugin changes agent behavior or adds content to the agent context.
 An extension changes only the application appearance.
 
 The standard agent includes the essential plugins: the agent loop, `web_fetch`, skills, MCP tools, and the card sources.
-The `plugins.enabled` list in `config.toml` selects the plugins. Without `agent`, the `single-reply` driver answers.
+The essential plugins are always on. The agent loop is the only conversation mode.
+The `plugins.enabled` list in `config.toml` selects the installed plugins.
 The [plugin crate](../crates/plugins/README.md) lists each plugin ID, grant, and file location.
 
 | Setting | Purpose |

@@ -21,7 +21,7 @@ use tokio::{sync::mpsc, task::JoinHandle};
 use tokio_util::sync::CancellationToken;
 
 use card::{Card, CardDecoder, CcDecoder};
-use driver::{ConversationDriver, DRIVER_CAPABILITIES, DriverContext, SingleReplyDriver};
+use driver::{ConversationDriver, DRIVER_CAPABILITIES, DriverContext};
 use phases::{HookBinding, PhaseTrace, SavedEnrichment};
 use prompt::{ConservativeCounter, CoreProfile, PromptInput, PromptPlan, PromptProfile};
 use provider::{
@@ -161,7 +161,7 @@ impl Runtime {
             provider: Arc::new(HttpProvider),
             profile: Arc::new(CoreProfile),
             decoder: Arc::new(CcDecoder),
-            driver: Arc::new(SingleReplyDriver),
+            driver: Arc::new(agent::AgentDriver::new(agent::DEFAULT_MAX_STEPS)),
             credentials: Arc::new(NoCredentials),
             registry: None,
             composition: None,
@@ -748,11 +748,7 @@ impl Runtime {
         loop {
             let mut prepared = self.provider.prepare(&plan, &session.model, config)?;
             if let Some(agent) = self.agent_request(Vec::new()) {
-                match self.provider.prepare_agent(prepared.clone(), &agent) {
-                    Ok(request) => prepared = request,
-                    Err(error) if error.code == "unsupported_provider_tools" => {}
-                    Err(error) => return Err(error),
-                }
+                prepared = self.provider.prepare_agent(prepared, &agent)?;
             }
             let units = serde_json::to_vec(&prepared.body)?.len();
             if units <= 8 * 1024 * 1024

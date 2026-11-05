@@ -51,7 +51,7 @@ pub struct ProviderProfile {
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
 #[serde(default)]
 pub struct PluginSettings {
-    /// An absent list enables the default plugins.
+    /// The list enables installed plugins. The essential plugins are always on.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub enabled: Option<BTreeSet<String>>,
     /// Each entry selects one plugin for one service.
@@ -77,12 +77,7 @@ impl PluginSettings {
         self.enabled.is_none() && self.bindings.is_empty() && self.entries.is_empty()
     }
     pub fn enabled(&self) -> BTreeSet<String> {
-        self.enabled.clone().unwrap_or_else(|| {
-            crate::plugins::DEFAULT_ENABLED
-                .iter()
-                .map(|id| id.to_string())
-                .collect()
-        })
+        self.enabled.clone().unwrap_or_default()
     }
     /// The method returns each table with a `path` key.
     pub fn installed(&self) -> Result<BTreeMap<String, InstalledPlugin>> {
@@ -329,7 +324,6 @@ impl Application {
     ) -> Result<Arc<tokio::sync::Mutex<crate::plugin::PluginRegistry>>> {
         crate::plugins::registry(
             &crate::plugins::Environment::new(self.store.clone()),
-            &config.plugins.enabled(),
             &config.plugins.essential_configuration(&self.home),
         )
         .await

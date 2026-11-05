@@ -207,21 +207,6 @@ fn the_agent_reads_a_skill_and_returns_the_result_to_the_model() {
 }
 
 #[test]
-fn the_agent_without_tool_plugins_sends_a_plain_request() {
-    let directory = tempfile::tempdir().unwrap();
-    let (endpoint, server) = serve(vec![sse(json!({"content":"Hello."}), json!("stop"))]);
-    let id = session(
-        directory.path(),
-        &endpoint,
-        "[plugins]\nenabled = [\"agent\"]\n",
-    );
-    let events = chat(directory.path(), &id);
-    let bodies = server.join().unwrap();
-    assert!(bodies[0].get("tools").is_none());
-    assert_eq!(events.last().unwrap()["text"], "Hello.");
-}
-
-#[test]
 fn the_agent_calls_an_mcp_tool_with_a_reduced_schema() {
     if Command::new("python3").arg("--version").output().is_err() {
         return;
@@ -255,7 +240,7 @@ fn the_agent_calls_an_mcp_tool_with_a_reduced_schema() {
 }
 
 #[test]
-fn session_settings_change_the_plugins_of_one_session() {
+fn session_settings_keep_the_essential_plugins_on() {
     let directory = tempfile::tempdir().unwrap();
     let home = directory.path();
     let id = session(home, "http://127.0.0.1:1/chat", "");
@@ -287,14 +272,11 @@ fn session_settings_change_the_plugins_of_one_session() {
             .is_some()
     };
     assert!(tools(&id) && tools(&other));
-    let set = cli(
-        home,
-        &["session", "set", &id, "plugins.enabled", "[\"agent\"]"],
-    );
-    assert_eq!(set["settings"], json!({"plugins":{"enabled":["agent"]}}));
-    assert!(!tools(&id) && tools(&other));
+    let set = cli(home, &["session", "set", &id, "plugins.enabled", "[]"]);
+    assert_eq!(set["settings"], json!({"plugins":{"enabled":[]}}));
+    assert!(tools(&id) && tools(&other));
     let settings = cli(home, &["session", "settings", &id]);
-    assert_eq!(settings["enabled_plugins"], json!(["agent"]));
+    assert_eq!(settings["enabled_plugins"], json!([]));
     cli(home, &["session", "unset", &id, "plugins.enabled"]);
     assert!(tools(&id));
     assert_eq!(

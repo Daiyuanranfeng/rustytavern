@@ -34,25 +34,6 @@ pub trait ConversationDriver: Send + Sync {
     async fn run(&self, context: &mut DriverContext) -> Result<()>;
 }
 
-pub struct SingleReplyDriver;
-#[async_trait]
-impl ConversationDriver for SingleReplyDriver {
-    fn id(&self) -> &str {
-        "single-reply/1"
-    }
-    async fn run(&self, context: &mut DriverContext) -> Result<()> {
-        while let Some(event) = context.next_event().await? {
-            match event {
-                ProviderEvent::Text { text } => context.append_text(&text).await?,
-                ProviderEvent::Usage { .. } => {}
-                ProviderEvent::Complete => return Ok(()),
-                ProviderEvent::Failure { error } => return Err(error),
-            }
-        }
-        Ok(())
-    }
-}
-
 type StreamSlot = Arc<Mutex<Option<AgentProviderStream>>>;
 pub(super) struct DriverControl {
     cancellation: CancellationToken,
