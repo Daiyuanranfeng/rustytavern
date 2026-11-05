@@ -8,7 +8,7 @@ Each plugin family is one module.
 
 `essential` returns the plugins of the standard agent.
 `registry` activates them under the `core-product` owner and grants their requested capabilities.
-`Builtin` runs one plugin from its factory name. A package manifest can select the same factory names.
+`Builtin` runs one plugin from its factory name. An installed plugin can select the same factory names.
 `Environment` supplies the store and the data directory.
 
 | Module | Factory | Service | Behavior |
@@ -62,5 +62,5 @@ The default `mcp` feature includes the MCP plugin and the `rmcp` dependency.
 
 ```sh
 cargo test --locked -p rustytavern-cli --test agent
-cargo test --locked -p rustytavern --test packages --test sources
+cargo test --locked -p rustytavern --test installed_plugins --test sources
 ```

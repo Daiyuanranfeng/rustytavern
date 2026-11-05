@@ -2,7 +2,7 @@
 use clap::Parser;
 use rustytavern::{
     Error, Result,
-    app::{PackageManager, runtime},
+    app::{PluginManager, runtime},
     config::Application,
     session::GenerationStatus,
 };
@@ -34,9 +34,9 @@ async fn main() {
 async fn converse(arguments: Arguments) -> Result<()> {
     let app = Application::open(&arguments.data_dir)?;
     let registry = app.registry().await?;
-    let mut packages = PackageManager::open(&app.data_dir, app.store, registry)?;
-    packages.restore().await?;
-    let runtime = runtime(&packages).await?;
+    let mut manager = PluginManager::open(&app.data_dir, app.store, registry)?;
+    manager.restore().await?;
+    let runtime = runtime(&manager).await?;
     let session = runtime.store.session(&arguments.session)?;
     let provider = session.configuration()?.provider_config;
     if arguments.adopt {

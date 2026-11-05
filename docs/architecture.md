@@ -4,7 +4,7 @@
 
 RustyTavern uses a virtual workspace with ten crates. Each crate owns a cohesive component and its README.
 Modules separate related implementation areas within each component. The CLI supplies the interactive terminal and script commands.
-The product library assembles the runtime, the essential plugins, plugin packages, and extensions. The runtime uses plugin, conversation, adapter, and storage interfaces.
+The product library assembles the runtime, the essential plugins, installed plugins, and extensions. The runtime uses plugin, conversation, adapter, and storage interfaces.
 A plugin changes agent behavior or adds content to the agent context. An extension changes only the application appearance.
 
 ![Runtime architecture](assets/runtime-architecture.svg)
@@ -19,12 +19,12 @@ A plugin changes agent behavior or adds content to the agent context. An extensi
 | [`adapters`](../crates/adapters/README.md) | `rustytavern-adapters` | Model provider adapters and public character source adapters. |
 | [`runtime`](../crates/runtime/README.md) | `rustytavern-runtime` | Generation control, durable events, prompt hooks, the tool registry, and cancellation. |
 | [`plugins`](../crates/plugins/README.md) | `rustytavern-plugins` | The essential plugins: agent driver, tools, MCP, skills, providers, sources, and prompt hooks. |
-| [`tavern`](../crates/tavern/README.md) | `rustytavern` | Product assembly, plugin packages, extensions, configuration, and public library exports. |
+| [`tavern`](../crates/tavern/README.md) | `rustytavern` | Product assembly, installed plugins, extensions, configuration, and public library exports. |
 | [`cli`](../crates/cli/README.md) | `rustytavern-cli` | The interactive terminal and script interface. |
 
-The dependency graph remains acyclic. The runtime has no product package dependency.
+The dependency graph remains acyclic. The runtime has no product library dependency.
 The default storage contract has no SQLite dependency. The default plugin registry has no process host dependency.
-The stock product enables the SQLite and process features explicitly. The plugin, package, and extension concepts retain separate interfaces.
+The stock product enables the SQLite and process features explicitly. The plugin and extension concepts retain separate interfaces.
 The [workspace guide](architecture.md#workspace-boundaries) records dependency direction and feature choices.
 
 ### Runtime ordering
@@ -52,11 +52,11 @@ The final budget pass removes history, examples, lore, and optional contribution
 Required context overflow stops dispatch.
 [Inspection and replay](developer.md#offline-inspection-and-replay) expose pure compilation.
 
-### Plugins, packages, and extensions
+### Plugins and extensions
 
 The [plugin crate](../crates/plugins/README.md) holds the essential plugins. The standard agent activates them by default.
-The [package manager](developer.md#plugin-packages) owns third-party plugin packages, commands, defaults, assets, and plugin ownership. The runtime registry enforces plugin grants and lifecycle rules.
-The package catalog uses versioned `plugin_state` records.
+The [plugin manager](developer.md#installed-plugins) installs third-party plugins from local directories and owns their commands and enabled state. The runtime registry enforces plugin grants and lifecycle rules.
+The plugin catalog uses versioned `plugin_state` records.
 The [extension interface](developer.md#extensions) owns application appearance. An extension has no access to the plugin registry.
 
 ### Error handling
@@ -70,7 +70,7 @@ The CLI maps the same code to its exit status.
 The [product target](product.md#required-target) includes agent, media, audio, and discovery features. The current figures show implemented code only.
 The essential [agent driver](../crates/plugins/README.md#agent-and-tools) runs a bounded tool loop. It does not implement that full target yet. The core host must own persistence, permission checks, cancellation, and resource limits.
 The core host must bound request counts, tool steps, deadlines, event counts, and stored artifacts. Plugins must implement behavior and adapters through declared services.
-Packages must deliver third-party plugins with commands, defaults, and assets. A plugin must not bypass durable host transitions through a replacement driver.
+Third-party plugins must declare their services, grants, and commands. A plugin must not bypass durable host transitions through a replacement driver.
 The host must save operation inputs and results before it exposes durable events. New service families must preserve configuration adoption and replay boundaries.
 
 ## Workspace boundaries
@@ -83,7 +83,7 @@ The CLI depends on the assembled product library. The library has no terminal de
 
 The plugin registry keeps its process host behind the `process` feature. The storage contract keeps its SQLite adapter behind the `sqlite` feature.
 The stock product enables both features. A standalone consumer can use either contract without its adapter.
-The model and source adapters retain separate modules and network policies. The product library keeps package management and extensions above runtime plugins.
+The model and source adapters retain separate modules and network policies. The product library keeps plugin installation and extensions above runtime plugins.
 
 | Package | Direct workspace dependencies |
 | --- | --- |
@@ -102,7 +102,7 @@ The plugin dependency on adapters applies to its optional process host. The defa
 
 ### Public library paths
 
-The assembled `rustytavern` library retains its existing module paths. The `app` module owns plugin packages and application setup. The `extension` module owns application extensions. The `plugins` path exposes the essential plugins.
+The assembled `rustytavern` library retains its existing module paths. The `app` module installs third-party plugins and owns application setup. The `extension` module owns application extensions. The `plugins` path exposes the essential plugins.
 The `config` module owns product configuration. The `session`, `prompt`, `plugin`, `external`, `provider`, `source`, `runtime`, and `store` paths expose the component interfaces.
 The package consolidation changes internal Cargo package names. Direct component consumers must update their dependencies and imports.
 The data formats and database schema remain unchanged.
@@ -154,7 +154,7 @@ The product must retain estimated-count labels for other models.
 
 ## Architecture figures
 
-The figures show the current implementation. The product map includes the implemented plugin package layer.
+The figures show the current implementation. The product map includes the installed plugin layer.
 
 ### Build
 

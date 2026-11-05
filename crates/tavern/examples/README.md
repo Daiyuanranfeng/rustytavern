@@ -1,6 +1,6 @@
-# Library, plugin, and package examples
+# Library and plugin examples
 
-The examples show both runtime plugins and plugin packages.
+The examples show the library and runtime plugins.
 The examples use authored character data and local fixtures.
 The [plugin examples](plugins/README.md) contain the native and process implementations.
 
@@ -9,20 +9,19 @@ The [plugin examples](plugins/README.md) contain the native and process implemen
 | Decoder and driver replacement | The application binds native decoder, driver, and fixture provider services. | [Feature services](plugins/feature-services.md) |
 | Persistent state | The plugin upgrades its namespace and preserves older revisions. | [State migration](plugins/state-migration.md) |
 | Native prompt plugin | The application injects and removes compiled Rust code. | [Native plugin](plugins/native-plugin.md) |
-| Asset package | The package contains a template and defaults without plugins. | [Harbor assets](packages/harbor-assets/README.md) |
-| Multiple plugins | One package owns two prompt contributions. | [Lighthouse notes](packages/lighthouse-notes/README.md) |
-| Prompt edits | One plugin edits a named section before context selection. | [Lighthouse edits](packages/lighthouse-edits/README.md) |
-| External source | The package starts a separate Rust executable through stdio. | [Inline source](packages/inline-source/README.md) |
+| Prompt contributions | One installable plugin adds two prompt contributions. | [Lighthouse notes](plugins/lighthouse-notes/README.md) |
+| Prompt edits | One plugin edits a named section before context selection. | [Lighthouse edits](plugins/lighthouse-edits/README.md) |
+| External source | The plugin starts a separate Rust executable through stdio. | [Inline source](plugins/inline-source/README.md) |
 
 The [plugin guide](../../../docs/developer.md#runtime-plugins) defines native interfaces and lifecycle.
-The [package guide](../../../docs/developer.md#plugin-packages) defines packaging and commands.
+The [installed plugin guide](../../../docs/developer.md#installed-plugins) defines plugin directories and commands.
 The [protocol guide](../../../docs/developer.md#external-card-source-protocol) defines process messages.
 The [plugin crate](../../plugins/README.md) holds the essential plugins and website adapters.
 
 ```sh
 cargo build --locked --examples
 cargo run --locked --example native_plugin
-cargo test --locked --test plugins --test packages --test external
+cargo test --locked --test plugins --test installed_plugins --test external
 ```
 
 These commands make no paid model request.

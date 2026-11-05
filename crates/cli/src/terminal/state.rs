@@ -19,7 +19,7 @@ pub(super) const COMMANDS: &[(&str, &str)] = &[
     ("/retry", "Regenerate the last reply"),
     (
         "/settings",
-        "Lorebooks, branches, export, packages, and more",
+        "Lorebooks, branches, export, plugins, and more",
     ),
     ("/help", "Read commands and keys"),
     ("/quit", "Close the terminal"),

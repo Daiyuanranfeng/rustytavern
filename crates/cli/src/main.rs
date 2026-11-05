@@ -48,10 +48,6 @@ enum Command {
         #[command(subcommand)]
         command: ConfigCommand,
     },
-    Package {
-        #[command(subcommand)]
-        command: PackageCommand,
-    },
     Plugin {
         #[command(subcommand)]
         command: PluginCommand,
@@ -65,7 +61,7 @@ enum Command {
         command: PresetCommand,
     },
     #[command(external_subcommand)]
-    PackageAlias(Vec<String>),
+    PluginAlias(Vec<String>),
     Chat {
         session: String,
         #[command(flatten)]
@@ -313,46 +309,6 @@ enum ConfigCommand {
         merge_system_messages: bool,
     },
 }
-#[derive(Subcommand)]
-enum PackageCommand {
-    Install {
-        path: PathBuf,
-    },
-    List {
-        #[arg(long)]
-        json: bool,
-    },
-    Inspect {
-        package: String,
-        #[arg(long)]
-        json: bool,
-    },
-    Enable {
-        #[arg(required=true,num_args=1..)]
-        packages: Vec<String>,
-        #[arg(long)]
-        grant: Vec<String>,
-        #[arg(long)]
-        trust_processes: bool,
-    },
-    Disable {
-        package: String,
-    },
-    Uninstall {
-        package: String,
-    },
-    Asset {
-        package: String,
-        path: String,
-        #[arg(long)]
-        output: PathBuf,
-    },
-    Run {
-        command: String,
-        #[command(flatten)]
-        input: CommandInput,
-    },
-}
 /// An extension changes only the application appearance.
 #[derive(Subcommand)]
 enum ExtensionCommand {
@@ -362,12 +318,39 @@ enum ExtensionCommand {
     Disable { extension: String },
     Uninstall { extension: String },
 }
+/// A plugin changes agent behavior or adds content to the agent context.
 #[derive(Subcommand)]
 enum PluginCommand {
-    Inspect {
-        plugin: Option<String>,
+    Install {
+        path: PathBuf,
+    },
+    List {
         #[arg(long)]
         json: bool,
+    },
+    Inspect {
+        plugin: String,
+        #[arg(long)]
+        json: bool,
+    },
+    Enable {
+        #[arg(required=true,num_args=1..)]
+        plugins: Vec<String>,
+        #[arg(long)]
+        grant: Vec<String>,
+        #[arg(long)]
+        trust_processes: bool,
+    },
+    Disable {
+        plugin: String,
+    },
+    Uninstall {
+        plugin: String,
+    },
+    Run {
+        command: String,
+        #[command(flatten)]
+        input: CommandInput,
     },
     Bind {
         service: String,

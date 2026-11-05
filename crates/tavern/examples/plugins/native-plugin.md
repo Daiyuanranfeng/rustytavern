@@ -37,6 +37,6 @@ The program prints this JSON after the assertions pass.
 5. Register owned resources through `PluginContext::own` when the plugin acquires resources.
 6. Verify activation failure and removal as described in the [plugin guide](../../../../docs/developer.md#runtime-plugins).
 
-The stock CLI cannot load this Rust type from a package at runtime.
+The stock CLI cannot load this Rust type from a plugin directory at runtime.
 An embedded application can expose the type through a registered `NativeFactory`.
-An independent process can use the [external source example](../packages/inline-source/README.md).
+An independent process can use the [external source example](inline-source/README.md).

@@ -186,11 +186,10 @@ impl Ui {
                     ("Export this chat", "/export"),
                     ("Inspect the next model request", "/prompt"),
                     (
-                        "Apply the current provider and packages to this chat",
+                        "Apply the current provider and plugins to this chat",
                         "/adopt",
                     ),
                     ("Edit provider settings (advanced)", "/profile"),
-                    ("Packages", "/packages"),
                     ("Plugins", "/plugins"),
                     ("Show the configuration", "/config"),
                 ]
@@ -214,20 +213,24 @@ impl Ui {
                 },
                 After::View("Configuration"),
             ),
-            "/plugins" => self.menu(
-                "Runtime plugins",
-                vec![
+            "/plugins" => {
+                let mut items = vec![
                     (
                         "Inspect plugins".into(),
                         Choice::Command(
                             Command::Plugin {
-                                command: PluginCommand::Inspect {
-                                    plugin: None,
-                                    json: true,
-                                },
+                                command: PluginCommand::List { json: true },
                             },
-                            After::View("Runtime plugins"),
+                            After::View("Plugins"),
                         ),
+                    ),
+                    (
+                        "Install a plugin...".into(),
+                        Choice::Form(FormKind::Install),
+                    ),
+                    (
+                        "Run a plugin command...".into(),
+                        Choice::Form(FormKind::Run),
                     ),
                     ("Bind a service...".into(), Choice::Form(FormKind::Bind)),
                     (
@@ -243,36 +246,15 @@ impl Ui {
                             After::View("Composition"),
                         ),
                     ),
-                ],
-            ),
-            "/packages" => {
-                let mut items = vec![
-                    (
-                        "Inspect packages".into(),
-                        Choice::Command(
-                            Command::Package {
-                                command: PackageCommand::List { json: true },
-                            },
-                            After::View("Product packages"),
-                        ),
-                    ),
-                    (
-                        "Install a package...".into(),
-                        Choice::Form(FormKind::Install),
-                    ),
-                    (
-                        "Run a package command...".into(),
-                        Choice::Form(FormKind::Run),
-                    ),
                 ];
                 let registry = rustytavern::plugin::PluginRegistry::default();
-                let manager = PackageManager::open(
+                let manager = PluginManager::open(
                     &app.data_dir,
                     app.store.clone(),
                     std::sync::Arc::new(tokio::sync::Mutex::new(registry)),
                 )?;
-                for package in manager.list() {
-                    let id = package.manifest.id;
+                for installed in manager.list() {
+                    let id = installed.definition.manifest.id;
                     items.push((
                         format!("Enable {id}"),
                         Choice::Select(Selection::Enable, id.clone()),
@@ -286,7 +268,7 @@ impl Ui {
                         Choice::Select(Selection::Uninstall, id),
                     ));
                 }
-                self.menu("Product packages", items);
+                self.menu("Plugins", items);
             }
             "/prompt" => {
                 self.active()?;
@@ -299,7 +281,7 @@ impl Ui {
             "/adopt" => {
                 let session = self.active()?;
                 self.menu(
-                    "Adopt the selected provider and current packages for this conversation?",
+                    "Adopt the selected provider and current plugins for this conversation?",
                     vec![(
                         "Apply the current settings".into(),
                         Choice::Command(
@@ -426,14 +408,14 @@ impl Ui {
                 ),
                 Selection::Enable => self.form(FormKind::Enable(id)),
                 Selection::Disable => self.command(
-                    Command::Package {
-                        command: PackageCommand::Disable { package: id },
+                    Command::Plugin {
+                        command: PluginCommand::Disable { plugin: id },
                     },
                     After::Notice,
                 ),
                 Selection::Uninstall => self.command(
-                    Command::Package {
-                        command: PackageCommand::Uninstall { package: id },
+                    Command::Plugin {
+                        command: PluginCommand::Uninstall { plugin: id },
                     },
                     After::Notice,
                 ),

@@ -41,5 +41,5 @@ The example prints these fields after its assertions pass.
 
 The [service guide](../../../../docs/developer.md#decoder-and-driver-services) defines every host method and limit.
 The [plugin guide](../../../../docs/developer.md#runtime-plugins) defines lifecycle and registration.
-The stock CLI does not load this Rust implementation from a package dynamically.
-An embedding application can register a native factory for a package to select it.
+The stock CLI does not load this Rust implementation from a plugin directory dynamically.
+An embedding application can register a native factory for an installed plugin to select it.

@@ -61,6 +61,14 @@ impl Application {
 }
 
 impl Configuration {
+    pub fn provider(&self, name: &str) -> Result<ProviderConfig> {
+        self.providers.get(name).cloned().ok_or_else(|| {
+            Error::new(
+                "configuration",
+                format!("The provider profile {name} does not exist."),
+            )
+        })
+    }
     /// The `plugins.disabled` setting lists the essential plugin IDs that stay off.
     pub fn disabled_plugins(&self) -> BTreeSet<String> {
         self.settings

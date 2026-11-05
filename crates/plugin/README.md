@@ -13,7 +13,7 @@ The default feature set contains no external process adapter.
 
 The native registry owns grants, dependencies, service bindings, and composition leases.
 The process module owns child lifetime, cancellation, JSON-RPC, and scoped artifacts.
-The crate has no runtime or product package dependency.
+The crate has no runtime or product library dependency.
 The [plugin guide](../../docs/developer.md#runtime-plugins) defines author interfaces.
 The [protocol guide](../../docs/developer.md#external-card-source-protocol) defines process messages.
 

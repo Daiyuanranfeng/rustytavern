@@ -102,8 +102,8 @@ pub fn bounded_read(path: &Path, limit: usize) -> Result<Vec<u8>> {
         .read_to_end(&mut bytes)?;
     if bytes.len() > limit {
         return Err(Error::new(
-            "invalid_package_size",
-            "The package file exceeds its byte limit.",
+            "file_size_limit",
+            "The file exceeds its byte limit.",
         ));
     }
     Ok(bytes)
@@ -129,8 +129,8 @@ pub fn safe_relative(value: &str) -> Result<PathBuf> {
             .any(|part| !matches!(part, Component::Normal(_)))
     {
         return Err(Error::new(
-            "invalid_package_asset_path",
-            "The package path must stay inside its directory.",
+            "invalid_path",
+            "The path must stay inside its directory.",
         ));
     }
     Ok(path)
@@ -145,15 +145,15 @@ pub fn checked_file(root: &Path, relative: &str) -> Result<PathBuf> {
         path.push(component.as_os_str());
         if std::fs::symlink_metadata(&path)?.file_type().is_symlink() {
             return Err(Error::new(
-                "invalid_package_asset_path",
-                "The package cannot contain a symbolic link.",
+                "invalid_path",
+                "The directory cannot contain a symbolic link.",
             ));
         }
     }
     if !path.is_file() || !path.canonicalize()?.starts_with(root) {
         return Err(Error::new(
-            "invalid_package_asset_path",
-            "The declared package file is unavailable.",
+            "invalid_path",
+            "The declared file is unavailable.",
         ));
     }
     Ok(path)

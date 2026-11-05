@@ -119,17 +119,17 @@ impl Ui {
                     field("Plugin ID", ""),
                 ],
             ),
-            FormKind::Install => ("Install a plugin package", vec![field("Package path", "")]),
+            FormKind::Install => ("Install a plugin", vec![field("Plugin directory", "")]),
             FormKind::Enable(id) => (
-                "Enable a plugin package",
+                "Enable a plugin",
                 vec![
-                    field("Package ID", id),
+                    field("Plugin ID", id),
                     field("Explicit grants: one per line", ""),
                     field("Trust external processes: yes or no", "no"),
                 ],
             ),
             FormKind::Run => (
-                "Run a package command",
+                "Run a plugin command",
                 vec![field("Command name", ""), field("Arguments as JSON", "{}")],
             ),
         };
@@ -322,17 +322,17 @@ impl Ui {
                 After::Notice,
             ),
             FormKind::Install => (
-                Command::Package {
-                    command: PackageCommand::Install {
+                Command::Plugin {
+                    command: PluginCommand::Install {
                         path: values[0].clone().into(),
                     },
                 },
                 After::Notice,
             ),
             FormKind::Enable(_) => (
-                Command::Package {
-                    command: PackageCommand::Enable {
-                        packages: vec![values[0].clone()],
+                Command::Plugin {
+                    command: PluginCommand::Enable {
+                        plugins: vec![values[0].clone()],
                         grant: values[1]
                             .lines()
                             .filter(|line| !line.is_empty())
@@ -344,8 +344,8 @@ impl Ui {
                 After::Notice,
             ),
             FormKind::Run => (
-                Command::Package {
-                    command: PackageCommand::Run {
+                Command::Plugin {
+                    command: PluginCommand::Run {
                         command: values[0].clone(),
                         input: CommandInput {
                             args: Some(values[1].clone()),
@@ -354,7 +354,7 @@ impl Ui {
                         },
                     },
                 },
-                After::View("Package result"),
+                After::View("Plugin result"),
             ),
         };
         self.command(command, after);

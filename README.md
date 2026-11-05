@@ -9,7 +9,7 @@ The current CLI supports cards, worldbooks, personas, prompt inspection, streami
 The product supports native runtime plugins and external card-source processes.
 A plugin changes agent behavior or adds content to the agent context.
 The essential plugins include the agent loop, web fetch, skills, MCP tools, and the Chub and RisuRealm sources.
-The CLI installs, enables, inspects, and removes third-party plugin packages.
+The CLI installs, enables, inspects, and removes third-party plugins.
 An extension changes only the application appearance, such as the bubble colors.
 The project does not claim full SillyTavern or RisuAI parity.
 
@@ -103,11 +103,11 @@ The [native format guide](docs/user-guide.md#native-records-and-exports) defines
 - The [product guide](docs/product.md) defines required features and current support.
 - The [architecture guide](docs/architecture.md) defines components, host ownership, dependencies, and figures.
 - The [user guide](docs/user-guide.md) defines terminal commands, scripts, configuration, worldbooks, and exports.
-- The [developer guide](docs/developer.md) defines plugins, packages, extensions, prompt hooks, state, and process frames.
+- The [developer guide](docs/developer.md) defines plugins, extensions, prompt hooks, state, and process frames.
 - The [compatibility guide](docs/compatibility.md) defines formats, providers, reference comparisons, and evidence.
 
 Each [component](docs/architecture.md#current-implementation) retains its README.
-The [plugin crate](crates/plugins/README.md) and each [example package](crates/tavern/examples/README.md) retain their interface documents.
+The [plugin crate](crates/plugins/README.md) and each [example plugin](crates/tavern/examples/README.md) retain their interface documents.
 
 ## License and source use
 

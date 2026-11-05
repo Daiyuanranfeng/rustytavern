@@ -17,11 +17,11 @@ The existing command surface remains available for scripts.
 | `/new` | The user starts a chat and selects the first greeting. |
 | `/chats` | The user resumes a saved chat. |
 | `/retry` | The user regenerates the last reply. |
-| `/settings` | The user opens lorebooks, branches, export, request inspection, configuration adoption, advanced provider settings, packages, plugins, and the configuration view. |
+| `/settings` | The user opens lorebooks, branches, export, request inspection, configuration adoption, advanced provider settings, plugins, and the configuration view. |
 | `/help` | The user reads the command and key reference. |
 | `/quit` | The user closes the terminal. |
 
-The names `/setup`, `/sessions`, and `/models` remain aliases. The `/settings` items also accept direct names: `/worldbook`, `/branch`, `/export`, `/prompt`, `/adopt`, `/profile`, `/packages`, `/plugins`, and `/config`.
+The names `/setup`, `/sessions`, and `/models` remain aliases. The `/settings` items also accept direct names: `/worldbook`, `/branch`, `/export`, `/prompt`, `/adopt`, `/profile`, `/plugins`, and `/config`.
 
 The composer sends ordinary text to the active conversation. A command popup opens when the composer starts with `/`.
 Up and Down select a command in the popup. Tab completes the selected command. Enter or a click runs it.
@@ -45,7 +45,7 @@ The terminal builds steps from the `reasoning_delta`, `tool_call`, and `tool_res
 
 A drag over the transcript selects text. The release copies the text through OSC 52 and, on macOS, `pbcopy`.
 
-A chat pins its provider settings, plugins, and packages. A changed setup stops the next reply. The terminal then offers `/adopt` and keeps the unsent message in the composer.
+A chat pins its provider settings and plugins. A changed setup stops the next reply. The terminal then offers `/adopt` and keeps the unsent message in the composer.
 
 ### First setup
 
@@ -101,7 +101,7 @@ The command validates the asset before it creates the output file.
 
 ### Provider profiles
 
-The `config provider` command writes one named profile. The `config show` command prints the effective configuration with enabled package defaults.
+The `config provider` command writes one named profile. The `config show` command prints the configuration.
 Explicit configuration values override those defaults. The save operation writes explicit provider settings only.
 The profile stores a provider kind, model ID, endpoint, credential environment-variable name, context limit, and output limit. A custom provider requires an explicit full endpoint URL.
 A custom provider can omit credentials for a local model. The native provider kinds are `openrouter`, `openai`, `anthropic`, `gemini`, and `custom`.
@@ -154,9 +154,9 @@ Replay runs pure compilation and compares the result with the saved request. Rep
 | `4` | A session conflict, missing record, or storage invariant blocks the operation. |
 | `130` | The caller cancels generation. |
 
-### Plugins, packages, and extensions
+### Plugins and extensions
 
-A plugin changes agent behavior or adds content to the agent context. A package delivers third-party plugins.
+A plugin changes agent behavior or adds content to the agent context.
 An extension changes only the application appearance.
 
 The standard agent includes the essential plugins: the agent loop, `web_fetch`, skills, MCP tools, and the card sources.
@@ -170,22 +170,20 @@ The [plugin crate](../crates/plugins/README.md) lists each plugin ID, grant, and
 
 The `chat --events` command prints a `tool_call` and a `tool_result` event for each tool call. The terminal shows each tool call as a step.
 
-The `plugin inspect [PLUGIN_ID]` command lists essential plugins and declared package plugins. The command does not start external processes.
+The `plugin install PATH` command copies and hashes a third-party plugin directory with a `plugin.json` file.
+Installation does not enable the plugin. The `plugin enable ID` command activates it.
+Each `--grant CAPABILITY` option approves one requested host capability. The `--trust-processes` option permits a plugin executable.
+The `plugin list` command lists essential and installed plugins. The `plugin inspect ID` command shows one plugin. Neither command starts external processes.
+The `plugin disable ID` command removes the plugin effect. The `plugin uninstall ID` command removes a disabled plugin and keeps its state.
 The `plugin bind SERVICE PLUGIN_ID` command saves an explicit service binding. The `preset inspect tavern --resolved` command resolves the enabled composition.
 The resolved inspection can start enabled trusted processes.
 
-The `package install PATH` command copies and hashes a local package.
-Installation does not enable the package. The `package enable ID` command checks dependencies and activates plugins.
-Each `--grant CAPABILITY` option approves one requested host capability. The `--trust-processes` option permits package executables.
-The `package list` and `package inspect ID` commands read package metadata. The `package disable ID` command removes the package features.
-The `package uninstall ID` command removes a disabled catalog entry. Uninstallation keeps plugin state and cached package files.
-
-The `package asset ID PATH --output DESTINATION` command writes a declared asset. The `package run NAME --args JSON` command calls an enabled package command.
+The `plugin run NAME --args JSON` command calls an enabled plugin command.
 The command also accepts `--args-file PATH` or `--url URL`. The root alias form accepts `NAME --url URL` or `NAME --args JSON`.
 The `card fetch URL --source NAME` command imports through a source plugin. Source imports retain provenance in the stored card record.
-Ctrl+C cancels a source or package operation.
+Ctrl+C cancels a source or plugin operation.
+The [installed plugin guide](developer.md#installed-plugins) includes the manifest and implementation instructions. The [example index](../crates/tavern/examples/README.md) links executable examples.
 
-The [package guide](developer.md#plugin-packages) includes complete manifest and implementation instructions. The [example index](../crates/tavern/examples/README.md) links executable examples.
 The `extension install PATH` command copies an `extension.json` file. The `extension enable ID` and `extension disable ID` commands change its state.
 The `extension list` and `extension uninstall ID` commands read and remove extensions. The terminal reads the enabled themes at start.
 The [extension guide](developer.md#extensions) defines the theme fields.
@@ -252,7 +250,7 @@ The [session module](../crates/conversation/src/session.rs) defines `SessionConf
 | `profile` | The record identifies the selected base prompt profile. |
 | `composition` | The record retains the exact service and product lock. |
 
-The composition records plugin manifests, artifacts, configuration hashes, grants, bindings, and contributions. The product composition also records package versions, package hashes, and asset hashes.
+The composition records plugin manifests, artifacts, configuration hashes, grants, bindings, and contributions. The product composition also records the product preset.
 The `service_identity` value identifies the registry snapshot. The full `identity` also includes the product metadata and native implementations.
 The native metadata records the executable hash, provider, profile, decoder, and driver implementation IDs. The default provider implementation ID uses its Rust type name.
 The `ProviderAdapter::id` method can supply another stable implementation ID. The `validate_config` method must remain pure.
