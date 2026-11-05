@@ -64,7 +64,7 @@ The CLI maps the same code to its exit status.
 ## Target runtime
 
 The [product target](product.md#required-target) includes agent, media, audio, and discovery features. The current figures show implemented code only.
-The current single-reply driver does not implement that full target. The core host must own persistence, permission checks, cancellation, and resource limits.
+The default single-reply driver does not implement that full target. The optional [agent extension](../crates/tavern/bundled/agent/README.md) adds a bounded tool loop. The core host must own persistence, permission checks, cancellation, and resource limits.
 The core host must bound request counts, tool steps, deadlines, event counts, and stored artifacts. Plugins must implement behavior and adapters through declared services.
 Extensions must package those plugins with commands, defaults, and assets. A plugin must not bypass durable host transitions through a replacement driver.
 The host must save operation inputs and results before it exposes durable events. New service families must preserve configuration adoption and replay boundaries.

@@ -10,8 +10,8 @@
 | Conversations | The product stores branches, alternatives, drafts, configuration revisions, and native exports. | The product needs broader reference workflow coverage. |
 | Providers | Five adapters stream text. OpenRouter has local and authorized live evidence. | Other direct vendor endpoints need live validation. |
 | Model discovery | The library fetches and filters advertised model capabilities. CLI and terminal selectors exist. | Integrated checks remain pending. Advertisements do not prove model behavior. |
-| Tools, MCP, and skills | OpenRouter and custom adapters transport typed tool calls. The runtime driver permits one text request. | Host tool execution, MCP, skills, and bounded multi-request loops remain pending. |
-| Web search and fetch | Card-source plugins can request bounded host artifact fetches. | General agent search and fetch remain pending. |
+| Tools, MCP, and skills | The [agent extension](../crates/tavern/bundled/agent/README.md) runs a bounded tool loop on OpenRouter and custom adapters. It connects stdio and HTTP MCP servers through `rmcp` and reads Agent Skills files. | Durable tool records, request traces for each tool step, and per-character skill selection remain pending. |
+| Web search and fetch | The agent `web_fetch` tool reads public HTTPS pages through the scoped host fetcher. | Web search remains pending. |
 | Voice and image input | The provider contract accepts text only. | Typed media inputs, storage, permissions, and adapters remain pending. |
 | Speech and realtime audio | The runtime has no audio operation. | Recognition, synthesis, and realtime sessions remain pending. |
 | Image generation | The runtime has no image generation operation. | Typed generation operations and artifact storage remain pending. |

@@ -73,6 +73,14 @@ fn public_source_policy_rejects_private_addresses_and_ungranted_origins() {
         );
     }
     assert!(fetcher.check_url("https://public.example/a").is_ok());
+    let any = PublicFetcher::new(["*".into()]);
+    assert!(any.check_url("https://other.example/a").is_ok());
+    for value in ["http://other.example/a", "https://127.0.0.1/a"] {
+        assert_eq!(
+            any.check_url(value).unwrap_err().code,
+            "source_target_denied"
+        );
+    }
 }
 #[test]
 fn source_url_recognition_requires_an_exact_website_identity() {

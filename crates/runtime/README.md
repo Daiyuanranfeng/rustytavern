@@ -4,7 +4,7 @@ The crate coordinates durable character generations.
 
 ## Interface
 
-`Runtime`, `GenerationHandle`, `CompiledRequest`, runtime events, and `driver::ConversationDriver`.
+`Runtime`, `GenerationHandle`, `CompiledRequest`, runtime events, `driver::ConversationDriver`, and `agent::AgentDriver`.
 
 ## Design
 

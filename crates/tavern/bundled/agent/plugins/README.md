@@ -37,5 +37,5 @@ If the grants produce no tool, the driver acts as the single-reply driver.
 ## Verification
 
 ```sh
-cargo test --locked --test agent
+cargo test --locked -p rustytavern-cli --test agent
 ```

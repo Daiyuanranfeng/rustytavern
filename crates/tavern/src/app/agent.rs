@@ -96,28 +96,26 @@ impl AgentTool for WebFetch {
 }
 
 /// The function removes scripts, styles, and tags from HTML.
+/// ASCII lowercase keeps byte offsets, so one index serves both strings.
 fn html_text(html: &str) -> String {
+    let lower = html.to_ascii_lowercase();
     let mut text = String::new();
-    let mut rest = html;
-    while let Some(start) = rest.find('<') {
-        text.push_str(&rest[..start]);
-        rest = &rest[start..];
-        let lower = rest.get(..7).unwrap_or_default().to_ascii_lowercase();
-        let close = if lower.starts_with("<script") {
+    let mut at = 0;
+    while let Some(start) = lower[at..].find('<').map(|i| at + i) {
+        text.push_str(&html[at..start]);
+        let close = if lower[start..].starts_with("<script") {
             "</script>"
-        } else if lower.starts_with("<style") {
+        } else if lower[start..].starts_with("<style") {
             "</style>"
         } else {
             ">"
         };
-        let end = rest
-            .to_ascii_lowercase()
+        at = lower[start..]
             .find(close)
-            .map(|i| i + close.len());
-        rest = &rest[end.unwrap_or(rest.len())..];
+            .map_or(html.len(), |i| start + i + close.len());
         text.push(' ');
     }
-    text.push_str(rest);
+    text.push_str(&html[at..]);
     text.split_whitespace().collect::<Vec<_>>().join(" ")
 }
 
@@ -367,5 +365,14 @@ impl AgentTool for McpTool {
             return Err(Error::new("mcp_tool_error", text.join("\n")));
         }
         Ok(text.join("\n"))
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    #[test]
+    fn html_text_removes_scripts_styles_and_tags() {
+        let html = "<p>A<SCRIPT>x<y</script> <style>b{}</style>B&amp;</p>";
+        assert_eq!(super::html_text(html), "A B&amp;");
     }
 }

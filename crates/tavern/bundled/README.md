@@ -1,10 +1,11 @@
 # Bundled extensions
 
-The product supplies optional website extensions as reference packages.
+The product supplies optional extensions as reference packages.
 The user must install and enable each package explicitly.
 
 | Package | Feature | Interface guide |
 | --- | --- | --- |
+| [Agent](agent/README.md) | The package adds a tool loop with web fetch, skills, and MCP tools. | [Driver plugin](agent/plugins/README.md) |
 | [Chub](chub/README.md) | The package imports Chub character cards. | [Source plugin](chub/plugins/README.md) |
 | [RisuRealm](risurealm/README.md) | The package imports RisuRealm character PNG files. | [Source plugin](risurealm/plugins/README.md) |
 
