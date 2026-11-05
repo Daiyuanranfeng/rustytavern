@@ -289,3 +289,77 @@ fn session_settings_keep_the_essential_plugins_on() {
         json!({})
     );
 }
+
+#[test]
+fn one_reply_streams_thinking_tool_calls_and_text_from_two_model_steps() {
+    let directory = tempfile::tempdir().unwrap();
+    let skill = directory.path().join("skills/greet");
+    std::fs::create_dir_all(&skill).unwrap();
+    std::fs::write(
+        skill.join("SKILL.md"),
+        "---\nname: greet\ndescription: Greet a traveler.\n---\nSay hello in French.\n",
+    )
+    .unwrap();
+    let call = json!({"tool_calls":[{"index":0,"id":"call_1","type":"function","function":{"name":"read_skill","arguments":"{\"name\":\"greet\"}"}}]});
+    let (endpoint, server) = serve(vec![
+        sse(json!({"reasoning":"Find the skill."}), Value::Null)
+            + &sse(json!({"content":"One moment. "}), Value::Null)
+            + &sse(call, Value::Null)
+            + &sse(json!({}), json!("tool_calls")),
+        sse(json!({"reasoning":"Use French."}), Value::Null)
+            + &sse(json!({"content":"Bon"}), Value::Null)
+            + &sse(json!({"content":"jour."}), json!("stop")),
+    ]);
+    let id = session(directory.path(), &endpoint, "");
+    let events = chat(directory.path(), &id);
+    let bodies = server.join().unwrap();
+
+    let steps = events
+        .iter()
+        .filter(|e| e["type"] != "usage" && e["type"] != "prepared")
+        .map(|e| {
+            format!(
+                "{} {}",
+                e["type"].as_str().unwrap(),
+                e["text"].as_str().unwrap_or_default()
+            )
+        })
+        .collect::<Vec<_>>();
+    assert_eq!(
+        steps,
+        [
+            "reasoning_delta Find the skill.",
+            "text_delta One moment. ",
+            "tool_call read_skill {\"name\":\"greet\"}",
+            "tool_result ---\nname: greet\ndescription: Greet a traveler.\n---\nSay hello in French.\n",
+            "reasoning_delta Use French.",
+            "text_delta Bon",
+            "text_delta jour.",
+            "completed One moment. Bonjour.",
+        ],
+        "{events:?}"
+    );
+    assert_eq!(bodies.len(), 2);
+    let messages = bodies[1]["messages"].as_array().unwrap();
+    let assistant = &messages[messages.len() - 2];
+    assert_eq!(assistant["role"], "assistant");
+    assert_eq!(assistant["content"], "One moment. ");
+    assert_eq!(assistant["tool_calls"][0]["id"], "call_1");
+    let shown =
+        serde_json::to_string(&cli(directory.path(), &["session", "show", &id, "--json"])).unwrap();
+    assert!(shown.contains("One moment. Bonjour.") && !shown.contains("Use French."));
+}
+
+#[test]
+fn a_reply_without_tool_calls_uses_one_model_step() {
+    let directory = tempfile::tempdir().unwrap();
+    let (endpoint, server) = serve(vec![sse(json!({"content":"Hello."}), json!("stop"))]);
+    let id = session(directory.path(), &endpoint, "");
+    let events = chat(directory.path(), &id);
+    let bodies = server.join().unwrap();
+
+    assert_eq!(bodies.len(), 1);
+    assert_eq!(bodies[0]["tools"][0]["function"]["name"], "web_fetch");
+    assert!(!events.iter().any(|e| e["type"] == "tool_call"));
+    assert_eq!(events.last().unwrap()["text"], "Hello.");
+}

@@ -41,12 +41,13 @@ impl ConversationDriver for UppercaseDriver {
         "uppercase-reply/1"
     }
     async fn run(&self, context: &mut DriverContext) -> Result<()> {
+        context.open_step(&[]).await?;
         while let Some(event) = context.next_event().await? {
             match event {
                 ProviderEvent::Text { text } => context.append_text(&text.to_uppercase()).await?,
                 ProviderEvent::Complete => return Ok(()),
                 ProviderEvent::Failure { error } => return Err(error),
-                ProviderEvent::Usage { .. } => {}
+                _ => {}
             }
         }
         Ok(())

@@ -133,7 +133,7 @@
     "status": "200 OK",
     "text": "Partial",
     "errors": [
-      "unsupported_provider_output"
+      "invalid_provider_tool"
     ],
     "body": "data: {\"candidates\":[{\"content\":{\"parts\":[{\"text\":\"Partial\"}]}}]}\n\ndata: {\"candidates\":[{\"content\":{\"parts\":[{\"functionCall\":{\"name\":\"run\",\"args\":{}}}]},\"finishReason\":\"STOP\"}]}\n\n"
   },
@@ -220,12 +220,12 @@
     "body": "data: {\"candidates\":[{\"content\":{\"parts\":[{\"text\":\"PRIVATE_SENTINEL\",\"thought\":true},{\"text\":\"Hello.\"}]},\"finishReason\":\"STOP\"}]}\n\n"
   },
   {
-    "id": "custom-valid-tool",
+    "id": "custom-undeclared-tool",
     "kind": "custom",
     "status": "200 OK",
     "text": "Partial",
     "errors": [
-      "unsupported_provider_output"
+      "invalid_provider_tool"
     ],
     "body": "data: {\"choices\":[{\"delta\":{\"content\":\"Partial\"},\"finish_reason\":null}]}\n\ndata: {\"choices\":[{\"delta\":{\"tool_calls\":[{\"index\":0,\"id\":\"call_1\",\"type\":\"function\",\"function\":{\"name\":\"run\",\"arguments\":\"{}\"}}]},\"finish_reason\":\"tool_calls\"}]}\n\ndata: [DONE]\n\n"
   },

@@ -116,15 +116,15 @@ async fn http_stream_emits_complete_calls_and_preserves_continuation_ids() {
     let (endpoint, received, server) = mock(body, "200 OK");
     let request = prepare_agent(&config(endpoint), &agent()).unwrap();
     let mut stream = HttpProvider
-        .open_agent_stream(request, &TestCredentials, CancellationToken::new())
+        .open_stream(request, &TestCredentials, CancellationToken::new())
         .await
         .unwrap();
     let mut calls = vec![];
     let mut complete = false;
     while let Some(event) = stream.next().await {
         match event.unwrap() {
-            AgentProviderEvent::ToolCalls { calls: value } => calls = value,
-            AgentProviderEvent::Complete => complete = true,
+            ProviderEvent::ToolCalls { calls: value } => calls = value,
+            ProviderEvent::Complete => complete = true,
             _ => {}
         }
     }
@@ -158,7 +158,7 @@ async fn stream(
     kind: ProviderKind,
     agent: &AgentRequest,
     frames: &[String],
-) -> (Vec<rustytavern::Result<AgentProviderEvent>>, Value) {
+) -> (Vec<rustytavern::Result<ProviderEvent>>, Value) {
     // Anthropic names each event in the SSE event field.
     let body = frames
         .iter()
@@ -178,7 +178,7 @@ async fn stream(
     config.api_key_env = Some("KEY".into());
     let request = prepare_agent(&config, agent).unwrap();
     let events = match HttpProvider
-        .open_agent_stream(request, &TestCredentials, CancellationToken::new())
+        .open_stream(request, &TestCredentials, CancellationToken::new())
         .await
     {
         Ok(stream) => stream.collect().await,
@@ -188,9 +188,9 @@ async fn stream(
     server.join().unwrap();
     (events, wire)
 }
-fn failure(events: &[rustytavern::Result<AgentProviderEvent>]) -> Option<&str> {
+fn failure(events: &[rustytavern::Result<ProviderEvent>]) -> Option<&str> {
     events.iter().find_map(|event| match event {
-        Err(error) | Ok(AgentProviderEvent::Failure { error }) => Some(error.code.as_str()),
+        Err(error) | Ok(ProviderEvent::Failure { error }) => Some(error.code.as_str()),
         _ => None,
     })
 }
@@ -302,8 +302,8 @@ async fn http_native_streams_emit_tool_calls_and_send_native_continuations() {
         let events = events.into_iter().map(Result::unwrap).collect::<Vec<_>>();
         let [
             ..,
-            AgentProviderEvent::ToolCalls { calls },
-            AgentProviderEvent::Complete,
+            ProviderEvent::ToolCalls { calls },
+            ProviderEvent::Complete,
         ] = &events[..]
         else {
             panic!("The {kind:?} stream must end with calls: {events:?}");
@@ -353,7 +353,7 @@ async fn http_missing_terminal_error_and_cancellation_fail() {
     let config = config("http://127.0.0.1:1".into());
     let request = prepare_agent(&config, &agent()).unwrap();
     let error = HttpProvider
-        .open_agent_stream(request, &TestCredentials, cancellation)
+        .open_stream(request, &TestCredentials, cancellation)
         .await
         .err()
         .unwrap();
@@ -395,7 +395,7 @@ fn invalid_schemas_fail() {
 }
 
 #[tokio::test]
-async fn http_text_ignores_provider_metadata_and_the_openrouter_usage_chunk() {
+async fn http_text_keeps_reasoning_apart_and_ignores_the_openrouter_usage_chunk() {
     let end = json!({"content":"","role":"assistant","reasoning":null});
     let usage = json!({"choices":[{"index":0,"delta":end,"finish_reason":"stop"}],"usage":{"total_tokens":9}});
     let frames = [
@@ -413,10 +413,11 @@ async fn http_text_ignores_provider_metadata_and_the_openrouter_usage_chunk() {
         matches!(
             &events[..],
             [
-                AgentProviderEvent::Text { text },
-                AgentProviderEvent::Usage { usage },
-                AgentProviderEvent::Complete
-            ] if text == "Hi" && usage["total_tokens"] == 9
+                ProviderEvent::Reasoning { text: thinking },
+                ProviderEvent::Text { text },
+                ProviderEvent::Usage { usage },
+                ProviderEvent::Complete
+            ] if thinking == "Plan." && text == "Hi" && usage["total_tokens"] == 9
         ),
         "{events:?}"
     );
@@ -431,7 +432,7 @@ async fn http_text_ignores_provider_metadata_and_the_openrouter_usage_chunk() {
     ];
     let (events, _) = stream(ProviderKind::OpenRouter, &agent(), &frames).await;
     assert!(
-        matches!(events.last(), Some(Ok(AgentProviderEvent::Complete))),
+        matches!(events.last(), Some(Ok(ProviderEvent::Complete))),
         "{events:?}"
     );
 }
@@ -449,13 +450,13 @@ async fn http_cancellation_discards_pending_calls() {
         let config = config(endpoint);
         let request = prepare_agent(&config, &agent()).unwrap();
         let mut stream = HttpProvider
-            .open_agent_stream(request, &TestCredentials, cancellation.clone())
+            .open_stream(request, &TestCredentials, cancellation.clone())
             .await
             .unwrap();
         if read_text {
             assert!(matches!(
                 stream.next().await.unwrap().unwrap(),
-                AgentProviderEvent::Text { .. }
+                ProviderEvent::Text { .. }
             ));
         }
         cancellation.cancel();

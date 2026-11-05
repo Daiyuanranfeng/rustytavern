@@ -3,6 +3,7 @@
 //! The module maps the library events and errors to the provider contract.
 
 use super::*;
+use futures_util::StreamExt;
 use genai::{
     Client, ModelIden, ServiceTarget,
     adapter::AdapterKind,
@@ -170,9 +171,8 @@ fn reason_text(reason: StopReason) -> String {
 struct State {
     stream: g::ChatStream,
     cancellation: CancellationToken,
-    agent_mode: bool,
     tools: Vec<ToolDefinition>,
-    pending: VecDeque<Result<AgentProviderEvent>>,
+    pending: VecDeque<Result<ProviderEvent>>,
     bytes: usize,
     done: bool,
 }
@@ -204,15 +204,17 @@ impl State {
                     "The provider reported a generation error.",
                 );
                 self.done = true;
-                self.pending
-                    .push_back(Ok(AgentProviderEvent::Failure { error }));
+                self.pending.push_back(Ok(ProviderEvent::Failure { error }));
                 return Ok(());
             }
             Some(Err(error)) => return Err(map_error(error)),
             Some(Ok(event)) => event,
         };
+        let reasoning = matches!(event, ChatStreamEvent::ReasoningChunk(_));
         match event {
-            ChatStreamEvent::Chunk(chunk) if !chunk.content.is_empty() => {
+            ChatStreamEvent::Chunk(chunk) | ChatStreamEvent::ReasoningChunk(chunk)
+                if !chunk.content.is_empty() =>
+            {
                 self.bytes = self.bytes.saturating_add(chunk.content.len());
                 if self.bytes > MAX_STREAM_BYTES {
                     return Err(Error::new(
@@ -220,14 +222,17 @@ impl State {
                         "The provider stream exceeds the byte limit.",
                     ));
                 }
-                self.pending.push_back(Ok(AgentProviderEvent::Text {
-                    text: chunk.content,
+                let text = chunk.content;
+                self.pending.push_back(Ok(if reasoning {
+                    ProviderEvent::Reasoning { text }
+                } else {
+                    ProviderEvent::Text { text }
                 }));
             }
             ChatStreamEvent::End(end) => {
                 self.done = true;
                 if let Some(usage) = end.captured_usage {
-                    self.pending.push_back(Ok(AgentProviderEvent::Usage {
+                    self.pending.push_back(Ok(ProviderEvent::Usage {
                         usage: serde_json::to_value(usage)?,
                     }));
                 }
@@ -247,17 +252,10 @@ impl State {
                     )),
                 };
                 if let Err(error) = finish {
-                    self.pending
-                        .push_back(Ok(AgentProviderEvent::Failure { error }));
+                    self.pending.push_back(Ok(ProviderEvent::Failure { error }));
                     return Ok(());
                 }
                 if !calls.is_empty() {
-                    if !self.agent_mode {
-                        return Err(Error::new(
-                            "unsupported_provider_output",
-                            "The default driver accepts text only.",
-                        ));
-                    }
                     let calls = calls
                         .into_iter()
                         .map(|call| {
@@ -285,9 +283,9 @@ impl State {
                         .collect::<Result<Vec<_>>>()?;
                     let calls = tools::check_calls(&self.tools, calls)?;
                     self.pending
-                        .push_back(Ok(AgentProviderEvent::ToolCalls { calls }));
+                        .push_back(Ok(ProviderEvent::ToolCalls { calls }));
                 }
-                self.pending.push_back(Ok(AgentProviderEvent::Complete));
+                self.pending.push_back(Ok(ProviderEvent::Complete));
             }
             _ => {}
         }
@@ -299,8 +297,7 @@ pub(super) async fn open(
     request: PreparedRequest,
     credentials: &dyn CredentialResolver,
     cancellation: CancellationToken,
-    agent_mode: bool,
-) -> Result<AgentProviderStream> {
+) -> Result<ProviderStream> {
     let body = request.chat()?;
     let (chat, options) = chat_request(&body);
     let target = target(&request, &body.model, credentials)?;
@@ -322,7 +319,6 @@ pub(super) async fn open(
     let mut state = State {
         stream: response.stream,
         cancellation,
-        agent_mode,
         tools: body.tools,
         pending: VecDeque::new(),
         bytes: 0,

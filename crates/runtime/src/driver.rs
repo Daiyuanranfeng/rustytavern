@@ -8,8 +8,8 @@ use tokio_util::sync::CancellationToken;
 use crate::{
     Error, EventSink, Result, Runtime, RuntimeEvent,
     provider::{
-        AgentProviderEvent, AgentProviderStream, AgentRequest, AgentTurn, PreparedRequest,
-        ProviderEvent, ToolCall, ToolResult,
+        AgentRequest, AgentTurn, PreparedRequest, ProviderEvent, ProviderStream, ToolCall,
+        ToolResult,
     },
     session::Generation,
     store::now_ms,
@@ -27,14 +27,10 @@ pub const DRIVER_CAPABILITIES: [&str; 3] = [
 #[async_trait]
 pub trait ConversationDriver: Send + Sync {
     fn id(&self) -> &str;
-    /// A tool driver receives the composed tools in its saved request.
-    fn uses_tools(&self) -> bool {
-        false
-    }
     async fn run(&self, context: &mut DriverContext) -> Result<()>;
 }
 
-type StreamSlot = Arc<Mutex<Option<AgentProviderStream>>>;
+type StreamSlot = Arc<Mutex<Option<ProviderStream>>>;
 pub(super) struct DriverControl {
     cancellation: CancellationToken,
     stream: StreamSlot,
@@ -116,33 +112,23 @@ impl DriverContext {
         }
         Ok(())
     }
-    pub async fn next_event(&mut self) -> Result<Option<ProviderEvent>> {
-        self.next_agent_event()
-            .await?
-            .map(AgentProviderEvent::into_text)
-            .transpose()
-    }
     /// The method dispatches one step with the composed tools and the continuation.
-    /// Without tools in the saved request, the method dispatches the saved text request.
-    pub async fn open_agent_step(&mut self, continuation: &[AgentTurn]) -> Result<()> {
-        let agent = match self.request.body.get("tools") {
-            Some(_) => self.runtime.agent_request(continuation.to_vec()),
-            None => None,
-        };
-        let result = self.open(agent.as_ref()).await;
+    pub async fn open_step(&mut self, continuation: &[AgentTurn]) -> Result<()> {
+        let agent = self.runtime.agent_request(continuation.to_vec());
+        let result = self.open(&agent).await;
         if let Err(error) = &result {
             self.failure = Some(error.clone());
         }
         result
     }
-    pub async fn next_agent_event(&mut self) -> Result<Option<AgentProviderEvent>> {
+    pub async fn next_event(&mut self) -> Result<Option<ProviderEvent>> {
         let result = self.next_inner().await;
         if let Err(error) = &result {
             self.failure = Some(error.clone());
         }
         result
     }
-    async fn open(&mut self, agent: Option<&AgentRequest>) -> Result<()> {
+    async fn open(&mut self, agent: &AgentRequest) -> Result<()> {
         self.active()?;
         if self.opened && !self.complete {
             return Err(Error::new(
@@ -168,7 +154,7 @@ impl DriverContext {
         self.complete = false;
         Ok(())
     }
-    async fn next_inner(&mut self) -> Result<Option<AgentProviderEvent>> {
+    async fn next_inner(&mut self) -> Result<Option<ProviderEvent>> {
         self.active()?;
         if self.complete {
             return Ok(None);
@@ -180,7 +166,10 @@ impl DriverContext {
             ));
         }
         if !self.opened {
-            self.open(None).await?;
+            return Err(Error::new(
+                "invalid_driver_command",
+                "The driver cannot read events before it opens a step.",
+            ));
         }
         let mut stream = self
             .stream
@@ -195,10 +184,12 @@ impl DriverContext {
         };
         self.events += 1;
         match &event {
-            AgentProviderEvent::Usage { usage } => self.record_usage(usage.clone()).await?,
-            AgentProviderEvent::Complete => self.complete = true,
-            AgentProviderEvent::Failure { error } => self.failure = Some(error.clone()),
-            AgentProviderEvent::Text { .. } | AgentProviderEvent::ToolCalls { .. } => {}
+            ProviderEvent::Usage { usage } => self.record_usage(usage.clone()).await?,
+            ProviderEvent::Complete => self.complete = true,
+            ProviderEvent::Failure { error } => self.failure = Some(error.clone()),
+            ProviderEvent::Text { .. }
+            | ProviderEvent::Reasoning { .. }
+            | ProviderEvent::ToolCalls { .. } => {}
         }
         if !self.complete && self.failure.is_none() {
             *self
@@ -235,11 +226,15 @@ impl DriverContext {
         self.sink.emit(event);
         Ok(())
     }
+    /// The method emits a `reasoning_delta` event. The draft does not keep the thinking text.
+    pub fn append_reasoning(&self, text: &str) -> Result<()> {
+        self.emit("reasoning_delta", text.to_owned())
+    }
     /// The method emits `tool_call` without a result and `tool_result` with a result.
     /// The host runs one tool call and emits `tool_call` and `tool_result` events.
     /// A failed tool returns its error text to the model.
     pub async fn call_tool(&mut self, call: &ToolCall) -> Result<ToolResult> {
-        self.emit_tool("tool_call", format!("{} {}", call.name, call.arguments))?;
+        self.emit("tool_call", format!("{} {}", call.name, call.arguments))?;
         let tool = self
             .runtime
             .tools
@@ -265,13 +260,13 @@ impl DriverContext {
             }
             content.truncate(end);
         }
-        self.emit_tool("tool_result", content.clone())?;
+        self.emit("tool_result", content.clone())?;
         Ok(ToolResult {
             call_id: call.id.clone(),
             content,
         })
     }
-    fn emit_tool(&self, kind: &str, text: String) -> Result<()> {
+    fn emit(&self, kind: &str, text: String) -> Result<()> {
         self.active()?;
         let mut event = RuntimeEvent::new(kind, &self.generation.id);
         event.text = Some(text);

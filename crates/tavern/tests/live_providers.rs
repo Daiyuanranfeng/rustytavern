@@ -148,21 +148,15 @@ async fn run(
         output_limit: 512,
         ..Default::default()
     };
-    let mut request = HttpProvider
+    let request = HttpProvider
         .prepare(&plan(message), model, &config)
         .unwrap();
-    let stream = match agent {
-        Some(agent) => {
-            request = HttpProvider.prepare_agent(request, agent).unwrap();
-            HttpProvider
-                .open_agent_stream(request, key, CancellationToken::new())
-                .await
-        }
-        None => HttpProvider
-            .open_stream(request, key, CancellationToken::new())
-            .await
-            .map(|s| Box::pin(s.map(|e| e.map(Into::into))) as AgentProviderStream),
-    };
+    let request = HttpProvider
+        .prepare_agent(request, agent.unwrap_or(&AgentRequest::default()))
+        .unwrap();
+    let stream = HttpProvider
+        .open_stream(request, key, CancellationToken::new())
+        .await;
     let (mut text, mut calls, mut error) = (String::new(), vec![], None);
     let mut stream = match stream {
         Ok(stream) => stream,
@@ -171,11 +165,11 @@ async fn run(
     let mut complete = false;
     while let Some(event) = stream.next().await {
         match event {
-            Ok(AgentProviderEvent::Text { text: t }) => text.push_str(&t),
-            Ok(AgentProviderEvent::ToolCalls { calls: c }) => calls = c,
-            Ok(AgentProviderEvent::Failure { error: e }) => error = Some(format!("{e:?}")),
-            Ok(AgentProviderEvent::Complete) => complete = true,
-            Ok(AgentProviderEvent::Usage { .. }) => {}
+            Ok(ProviderEvent::Text { text: t }) => text.push_str(&t),
+            Ok(ProviderEvent::ToolCalls { calls: c }) => calls = c,
+            Ok(ProviderEvent::Failure { error: e }) => error = Some(format!("{e:?}")),
+            Ok(ProviderEvent::Complete) => complete = true,
+            Ok(ProviderEvent::Usage { .. } | ProviderEvent::Reasoning { .. }) => {}
             Err(e) => error = Some(format!("{e:?}")),
         }
     }

@@ -25,8 +25,8 @@ use driver::{ConversationDriver, DRIVER_CAPABILITIES, DriverContext};
 use phases::{HookBinding, PhaseTrace, SavedEnrichment};
 use prompt::{ConservativeCounter, CoreProfile, PromptInput, PromptPlan, PromptProfile};
 use provider::{
-    AgentProviderStream, AgentRequest, CredentialResolver, HttpProvider, NoCredentials,
-    PreparedRequest, ProviderAdapter, ProviderConfig,
+    AgentRequest, CredentialResolver, HttpProvider, NoCredentials, PreparedRequest,
+    ProviderAdapter, ProviderConfig, ProviderStream,
 };
 use session::{Generation, GenerationStatus, Role, Session, SessionConfiguration};
 use store::{Preparation, StoreBackend, Submit, now_ms};
@@ -746,10 +746,10 @@ impl Runtime {
         )?;
         self.profile.select_context(&mut plan, &session.options)?;
         loop {
-            let mut prepared = self.provider.prepare(&plan, &session.model, config)?;
-            if let Some(agent) = self.agent_request(Vec::new()) {
-                prepared = self.provider.prepare_agent(prepared, &agent)?;
-            }
+            let prepared = self.provider.prepare(&plan, &session.model, config)?;
+            let prepared = self
+                .provider
+                .prepare_agent(prepared, &self.agent_request(Vec::new()))?;
             let units = serde_json::to_vec(&prepared.body)?.len();
             if units <= 8 * 1024 * 1024
                 && units
@@ -843,12 +843,12 @@ impl Runtime {
             ))?
     }
 
-    /// The method returns the composed tools for a tool driver.
-    fn agent_request(&self, continuation: Vec<provider::AgentTurn>) -> Option<AgentRequest> {
-        (self.driver.uses_tools() && !self.tools.is_empty()).then(|| AgentRequest {
+    /// The method returns the composed tools and the continuation for one step.
+    fn agent_request(&self, continuation: Vec<provider::AgentTurn>) -> AgentRequest {
+        AgentRequest {
             tools: self.tools.iter().map(|tool| tool.definition()).collect(),
             continuation,
-        })
+        }
     }
 
     async fn dispatch(
@@ -856,22 +856,12 @@ impl Runtime {
         generation: &Generation,
         request: PreparedRequest,
         cancellation: CancellationToken,
-        agent: Option<&AgentRequest>,
-    ) -> Result<AgentProviderStream> {
+        agent: &AgentRequest,
+    ) -> Result<ProviderStream> {
         self.renew(generation).await?;
-        let credentials = self.credentials.as_ref();
-        let Some(agent) = agent else {
-            let stream = self
-                .provider
-                .open_stream(request, credentials, cancellation)
-                .await?;
-            return Ok(Box::pin(futures_util::StreamExt::map(stream, |event| {
-                event.map(Into::into)
-            })));
-        };
         let request = self.provider.prepare_agent(request, agent)?;
         self.provider
-            .open_agent_stream(request, credentials, cancellation)
+            .open_stream(request, self.credentials.as_ref(), cancellation)
             .await
     }
 
