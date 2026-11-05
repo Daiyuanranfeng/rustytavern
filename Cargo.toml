@@ -12,6 +12,7 @@ publish = false
 rustytavern-conversation = { path = "crates/conversation" }
 rustytavern-adapters = { path = "crates/adapters" }
 rustytavern-runtime = { path = "crates/runtime" }
+rustytavern-plugins = { path = "crates/plugins" }
 rustytavern-plugin = { path = "crates/plugin" }
 rustytavern-store = { path = "crates/store" }
 rustytavern = { path = "crates/tavern" }

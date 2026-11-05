@@ -70,8 +70,9 @@ fn serve(answers: Vec<String>) -> (String, thread::JoinHandle<Vec<Value>>) {
     (endpoint, task)
 }
 
-/// The function prepares a data directory with the agent, its tool extensions, and one session.
-fn session(directory: &Path, endpoint: &str, tools: &[(&str, &[&str])]) -> String {
+/// The function prepares a data directory with one session.
+/// The `disabled` plugins stay off.
+fn session(directory: &Path, endpoint: &str, disabled: &[&str]) -> String {
     cli(
         directory,
         &[
@@ -110,20 +111,10 @@ fn session(directory: &Path, endpoint: &str, tools: &[(&str, &[&str])]) -> Strin
             "Alex reads maps.",
         ],
     );
-    let driver: &[&str] = &[
-        "session.read:current",
-        "session.write:current",
-        "provider.generate",
-    ];
-    for (name, grants) in [("agent", driver)].iter().chain(tools) {
-        cli(directory, &["extension", "install", "--builtin", name]);
-        let id = format!("org.rustytavern.extension.{name}");
-        let mut enable = vec!["extension", "enable", &id];
-        for grant in *grants {
-            enable.extend(["--grant", grant]);
-        }
-        cli(directory, &enable);
-    }
+    let path = directory.join("config.json");
+    let mut config: Value = serde_json::from_slice(&std::fs::read(&path).unwrap()).unwrap();
+    config["plugins"] = json!({"disabled": disabled});
+    std::fs::write(&path, config.to_string()).unwrap();
     let session = cli(
         directory,
         &[
@@ -165,8 +156,7 @@ fn the_agent_reads_a_skill_and_returns_the_result_to_the_model() {
         sse(call, Value::Null) + &sse(json!({}), json!("tool_calls")),
         sse(json!({"content":"Bonjour."}), json!("stop")),
     ]);
-    let grants: &[&str] = &["skills.read", "prompt.contribute:before_history"];
-    let id = session(directory.path(), &endpoint, &[("skills", grants)]);
+    let id = session(directory.path(), &endpoint, &[]);
     let inspected = cli(
         directory.path(),
         &[
@@ -178,14 +168,19 @@ fn the_agent_reads_a_skill_and_returns_the_result_to_the_model() {
             "--request",
         ],
     );
-    assert_eq!(
-        inspected["prepared"]["body"]["tools"][0]["function"]["name"],
-        "skill"
-    );
+    let names = |body: &Value| {
+        body["tools"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|t| t["function"]["name"].as_str().unwrap().to_owned())
+            .collect::<Vec<_>>()
+    };
+    assert!(names(&inspected["prepared"]["body"]).contains(&"skill".to_owned()));
     let events = chat(directory.path(), &id);
     let bodies = server.join().unwrap();
 
-    assert_eq!(bodies[0]["tools"].as_array().unwrap().len(), 1);
+    assert_eq!(names(&bodies[0]), ["skill", "web_fetch"]);
     assert!(bodies[0]["messages"].as_array().unwrap().iter().any(|m| {
         m["role"] == "system"
             && m["content"]
@@ -213,10 +208,15 @@ fn the_agent_reads_a_skill_and_returns_the_result_to_the_model() {
 }
 
 #[test]
-fn the_agent_without_tool_extensions_sends_a_plain_request() {
+fn the_agent_without_tool_plugins_sends_a_plain_request() {
     let directory = tempfile::tempdir().unwrap();
     let (endpoint, server) = serve(vec![sse(json!({"content":"Hello."}), json!("stop"))]);
-    let id = session(directory.path(), &endpoint, &[]);
+    let disabled = [
+        "org.rustytavern.tools.web",
+        "org.rustytavern.tools.skills",
+        "org.rustytavern.tools.mcp",
+    ];
+    let id = session(directory.path(), &endpoint, &disabled);
     let events = chat(directory.path(), &id);
     let bodies = server.join().unwrap();
     assert!(bodies[0].get("tools").is_none());
@@ -240,12 +240,16 @@ fn the_agent_calls_an_mcp_tool_with_a_reduced_schema() {
         sse(call, Value::Null) + &sse(json!({}), json!("tool_calls")),
         sse(json!({"content":"Done."}), json!("stop")),
     ]);
-    let grants: &[&str] = &["mcp.connect"];
-    let id = session(directory.path(), &endpoint, &[("mcp", grants)]);
+    let id = session(directory.path(), &endpoint, &[]);
     let events = chat(directory.path(), &id);
     let bodies = provider.join().unwrap();
 
-    let schema = &bodies[0]["tools"][0]["function"]["parameters"];
+    let tools = bodies[0]["tools"].as_array().unwrap();
+    let echo = tools
+        .iter()
+        .find(|t| t["function"]["name"] == "echo__say")
+        .unwrap();
+    let schema = &echo["function"]["parameters"];
     assert_eq!(
         schema,
         &json!({"type":"object","properties":{"text":{"type":"string"}},"required":["text"]})

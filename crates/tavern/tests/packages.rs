@@ -1,8 +1,9 @@
 use async_trait::async_trait;
 use rustytavern::{
     Error, Result,
-    app::{CommandService, ExtensionManager, PluginDefinition, default_registry},
+    app::{CommandService, PackageManager, PluginDefinition, default_registry},
     plugin::{PluginContext, PluginManifest, RuntimePlugin},
+    plugins::{self, Environment},
     source::CardSource,
     store::{SqliteStore, StoreBackend},
 };
@@ -31,7 +32,7 @@ fn package(parent: &Path, id: &str, plugins: Vec<Value>) -> PathBuf {
         })
         .collect::<Vec<_>>();
     std::fs::write(
-        root.join("extension.json"),
+        root.join("manifest.json"),
         serde_json::to_vec(&json!({"id":id,"version":"0.1.0","product_api":"1","plugins":entries}))
             .unwrap(),
     )
@@ -39,13 +40,13 @@ fn package(parent: &Path, id: &str, plugins: Vec<Value>) -> PathBuf {
     root
 }
 fn edit_manifest(root: &Path, update: impl FnOnce(&mut Value)) {
-    let path = root.join("extension.json");
+    let path = root.join("manifest.json");
     let mut value: Value = serde_json::from_slice(&std::fs::read(&path).unwrap()).unwrap();
     update(&mut value);
     std::fs::write(path, serde_json::to_vec(&value).unwrap()).unwrap();
 }
-async fn manager(data: &Path, store: Arc<dyn StoreBackend>) -> ExtensionManager {
-    ExtensionManager::open(data, store.clone(), default_registry(store).await.unwrap()).unwrap()
+async fn manager(data: &Path, store: Arc<dyn StoreBackend>) -> PackageManager {
+    PackageManager::open(data, store.clone(), default_registry(store).await.unwrap()).unwrap()
 }
 fn definition(id: &str, provides: &[&str], requires: &[&str], fail: bool) -> Value {
     json!({"id":id,"version":"0.1.0","host_protocol":"1","provides":provides,"requires":requires,"implementation":{"kind":"builtin","name":"fixture","configuration":{"fail":fail}}})
@@ -80,7 +81,7 @@ impl RuntimePlugin for FixturePlugin {
         Ok(())
     }
 }
-fn fixture_factory(manager: &mut ExtensionManager, cleaned: Arc<AtomicUsize>) {
+fn fixture_factory(manager: &mut PackageManager, cleaned: Arc<AtomicUsize>) {
     manager
         .register_factory(
             "fixture".into(),
@@ -95,14 +96,14 @@ fn fixture_factory(manager: &mut ExtensionManager, cleaned: Arc<AtomicUsize>) {
 }
 
 #[tokio::test]
-async fn an_asset_only_extension_survives_reopen_and_keeps_explicit_configuration() {
+async fn an_asset_only_package_survives_reopen_and_keeps_explicit_configuration() {
     let data = tempfile::tempdir().unwrap();
     let store = Arc::new(SqliteStore::open(data.path().join("state.sqlite3")).unwrap());
     let mut app = manager(data.path(), store.clone()).await;
     let package = app
         .install(Path::new(concat!(
             env!("CARGO_MANIFEST_DIR"),
-            "/../tavern/examples/extensions/harbor-assets"
+            "/../tavern/examples/packages/harbor-assets"
         )))
         .unwrap();
     assert!(!package.enabled);
@@ -125,7 +126,7 @@ async fn an_asset_only_extension_survives_reopen_and_keeps_explicit_configuratio
         json!({"schema_version":1,"providers":{},"example":{"location":"city"},"custom":false})
     );
     let before = app.registry.lock().await.inspect().len();
-    assert_eq!(before, 5);
+    assert_eq!(before, 10);
     drop(app);
     drop(store);
     let store = Arc::new(SqliteStore::open(data.path().join("state.sqlite3")).unwrap());
@@ -209,7 +210,7 @@ async fn shared_plugins_keep_their_remaining_owner_and_uninstall_keeps_user_stat
         .unwrap();
     app.disable("example.first").await.unwrap();
     assert_eq!(cleaned.load(Ordering::SeqCst), 0);
-    assert_eq!(app.registry.lock().await.inspect().len(), 6);
+    assert_eq!(app.registry.lock().await.inspect().len(), 11);
     app.uninstall("example.first").unwrap();
     assert!(app.inspect("example.first").is_err());
     assert_eq!(
@@ -221,7 +222,7 @@ async fn shared_plugins_keep_their_remaining_owner_and_uninstall_keeps_user_stat
 }
 
 #[tokio::test]
-async fn extension_dependencies_block_disable_and_detect_cycles() {
+async fn package_dependencies_block_disable_and_detect_cycles() {
     let source = tempfile::tempdir().unwrap();
     let data = tempfile::tempdir().unwrap();
     let store = Arc::new(SqliteStore::memory().unwrap());
@@ -236,7 +237,7 @@ async fn extension_dependencies_block_disable_and_detect_cycles() {
             .await
             .unwrap_err()
             .code,
-        "missing_extension_dependency"
+        "missing_package_dependency"
     );
     app.enable(
         &["example.a".into(), "example.b".into()],
@@ -247,7 +248,7 @@ async fn extension_dependencies_block_disable_and_detect_cycles() {
     .unwrap();
     assert_eq!(
         app.disable("example.a").await.unwrap_err().code,
-        "missing_extension_dependency"
+        "missing_package_dependency"
     );
     app.disable("example.b").await.unwrap();
     app.disable("example.a").await.unwrap();
@@ -266,7 +267,7 @@ async fn extension_dependencies_block_disable_and_detect_cycles() {
         .await
         .unwrap_err()
         .code,
-        "extension_dependency_cycle"
+        "package_dependency_cycle"
     );
 }
 
@@ -298,7 +299,7 @@ async fn catalog_revision_conflicts_remove_staged_plugins() {
         .unwrap_err();
     assert_eq!(error.code, "configuration_conflict");
     assert_eq!(cleaned.load(Ordering::SeqCst), 3);
-    assert_eq!(stale.registry.lock().await.inspect().len(), 5);
+    assert_eq!(stale.registry.lock().await.inspect().len(), 10);
     let current = manager(data.path(), store).await;
     assert!(!current.inspect("example.catalog").unwrap().enabled);
 }
@@ -315,12 +316,12 @@ async fn package_hashes_and_paths_block_tampered_assets() {
     });
     assert_eq!(
         app.install(&root).unwrap_err().code,
-        "invalid_extension_asset_path"
+        "invalid_package_asset_path"
     );
     let package = app
         .install(Path::new(concat!(
             env!("CARGO_MANIFEST_DIR"),
-            "/../tavern/examples/extensions/harbor-assets"
+            "/../tavern/examples/packages/harbor-assets"
         )))
         .unwrap();
     app.enable(from_ref(&package.manifest.id), BTreeSet::new(), false)
@@ -328,7 +329,7 @@ async fn package_hashes_and_paths_block_tampered_assets() {
         .unwrap();
     std::fs::write(
         data.path()
-            .join("extensions")
+            .join("packages")
             .join(&package.directory)
             .join("templates/harbor.txt"),
         "Changed.",
@@ -338,12 +339,12 @@ async fn package_hashes_and_paths_block_tampered_assets() {
         app.asset(&package.manifest.id, "templates/harbor.txt")
             .unwrap_err()
             .code,
-        "invalid_extension_hash"
+        "invalid_package_hash"
     );
     let mut reopened = manager(data.path(), store).await;
     assert_eq!(
         reopened.restore().await.unwrap_err().code,
-        "invalid_extension_hash"
+        "invalid_package_hash"
     );
 }
 
@@ -359,35 +360,38 @@ async fn package_symbolic_links_cannot_escape_the_source_directory() {
     std::os::unix::fs::symlink(&outside, root.join("escape.txt")).unwrap();
     assert_eq!(
         app.install(&root).unwrap_err().code,
-        "invalid_extension_asset_path"
+        "invalid_package_asset_path"
     );
     assert_eq!(std::fs::read_to_string(outside).unwrap(), "Outside.");
 }
 
 #[tokio::test]
-async fn bundled_sources_require_explicit_network_grants() {
-    let data = tempfile::tempdir().unwrap();
-    let mut app = manager(data.path(), Arc::new(SqliteStore::memory().unwrap())).await;
-    let package = app.install_builtin("chub").unwrap();
+async fn essential_plugins_form_the_standard_agent() {
+    let store: Arc<dyn StoreBackend> = Arc::new(SqliteStore::memory().unwrap());
+    let environment = Environment::new(store);
+    let registry = plugins::registry(&environment, &BTreeSet::new())
+        .await
+        .unwrap();
+    let lease = registry.lock().await.freeze().unwrap();
     assert_eq!(
-        app.enable(from_ref(&package.manifest.id), BTreeSet::new(), false)
-            .await
-            .unwrap_err()
-            .code,
-        "capability_denied"
+        lease.service_owner("driver/1").unwrap().manifest.id,
+        "org.rustytavern.driver.agent"
     );
-    app.enable(
-        from_ref(&package.manifest.id),
-        BTreeSet::from(["network:https:api.chub.ai".into()]),
-        false,
-    )
-    .await
-    .unwrap();
-    let lease = app.registry.lock().await.freeze().unwrap();
+    assert!(lease.contains_service("tools.web/1") && lease.contains_service("tools.skills/1"));
     let source = lease
         .service::<Arc<dyn CardSource>>("card.source.chub/1")
         .unwrap();
     assert!(source.recognize("https://chub.ai/author/character"));
+    let disabled = BTreeSet::from(["org.rustytavern.tools.web".into()]);
+    let registry = plugins::registry(&environment, &disabled).await.unwrap();
+    assert!(
+        !registry
+            .lock()
+            .await
+            .freeze()
+            .unwrap()
+            .contains_service("tools.web/1")
+    );
 }
 
 struct Echo;
@@ -401,7 +405,7 @@ impl CommandService for Echo {
     ) -> Result<Value> {
         if operation != "echo" {
             return Err(Error::new(
-                "unsupported_extension_command",
+                "unsupported_package_command",
                 "The command operation is unknown.",
             ));
         }
@@ -422,7 +426,7 @@ impl RuntimePlugin for EchoPlugin {
     }
 }
 #[tokio::test]
-async fn extension_commands_call_typed_native_services() {
+async fn package_commands_call_typed_native_services() {
     let source = tempfile::tempdir().unwrap();
     let data = tempfile::tempdir().unwrap();
     let mut app = manager(data.path(), Arc::new(SqliteStore::memory().unwrap())).await;
@@ -459,7 +463,7 @@ async fn extension_commands_call_typed_native_services() {
             .await
             .unwrap_err()
             .code,
-        "invalid_extension_command"
+        "invalid_package_command"
     );
 }
 

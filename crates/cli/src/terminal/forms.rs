@@ -119,20 +119,17 @@ impl Ui {
                     field("Plugin ID", ""),
                 ],
             ),
-            FormKind::Install => (
-                "Install a product extension",
-                vec![field("Package path or builtin: chub, risurealm", "")],
-            ),
+            FormKind::Install => ("Install a plugin package", vec![field("Package path", "")]),
             FormKind::Enable(id) => (
-                "Enable a product extension",
+                "Enable a plugin package",
                 vec![
-                    field("Extension ID", id),
+                    field("Package ID", id),
                     field("Explicit grants: one per line", ""),
                     field("Trust external processes: yes or no", "no"),
                 ],
             ),
             FormKind::Run => (
-                "Run an extension command",
+                "Run a package command",
                 vec![field("Command name", ""), field("Arguments as JSON", "{}")],
             ),
         };
@@ -325,20 +322,17 @@ impl Ui {
                 After::Notice,
             ),
             FormKind::Install => (
-                Command::Extension {
-                    command: ExtensionCommand::Install {
-                        path: (!["chub", "risurealm"].contains(&values[0].as_str()))
-                            .then(|| values[0].clone().into()),
-                        builtin: (["chub", "risurealm"].contains(&values[0].as_str()))
-                            .then(|| values[0].clone()),
+                Command::Package {
+                    command: PackageCommand::Install {
+                        path: values[0].clone().into(),
                     },
                 },
                 After::Notice,
             ),
             FormKind::Enable(_) => (
-                Command::Extension {
-                    command: ExtensionCommand::Enable {
-                        extensions: vec![values[0].clone()],
+                Command::Package {
+                    command: PackageCommand::Enable {
+                        packages: vec![values[0].clone()],
                         grant: values[1]
                             .lines()
                             .filter(|line| !line.is_empty())
@@ -350,8 +344,8 @@ impl Ui {
                 After::Notice,
             ),
             FormKind::Run => (
-                Command::Extension {
-                    command: ExtensionCommand::Run {
+                Command::Package {
+                    command: PackageCommand::Run {
                         command: values[0].clone(),
                         input: CommandInput {
                             args: Some(values[1].clone()),
@@ -360,19 +354,19 @@ impl Ui {
                         },
                     },
                 },
-                After::View("Extension result"),
+                After::View("Package result"),
             ),
         };
         self.command(command, after);
         Ok(())
     }
-    /// The method selects the source from the address and asks once for its network grant.
+    /// The method selects the source plugin from the address.
     fn fetch(&mut self, url: &str) -> Result<()> {
         use rustytavern::source::{ChubSource, RisuRealmSource};
-        let (source, host) = if ChubSource::resolve(url).is_ok() {
-            ("chub", "api.chub.ai")
+        let source = if ChubSource::resolve(url).is_ok() {
+            "chub"
         } else if RisuRealmSource::resolve(url).is_ok() {
-            ("risurealm", "realm.risuai.net")
+            "risurealm"
         } else {
             return Err(Error::new(
                 "invalid_input",
@@ -386,39 +380,7 @@ impl Ui {
                 json: true,
             },
         };
-        let id = format!("org.rustytavern.extension.{source}");
-        let app = Application::open(&self.path)?;
-        let registry = std::sync::Arc::new(tokio::sync::Mutex::new(
-            rustytavern::plugin::PluginRegistry::default(),
-        ));
-        if ExtensionManager::open(&app.data_dir, app.store.clone(), registry)?
-            .inspect(&id)
-            .is_ok_and(|package| package.enabled)
-        {
-            self.command(fetch, After::Card);
-            return Ok(());
-        }
-        let enable = Command::Extension {
-            command: ExtensionCommand::Enable {
-                extensions: vec![id],
-                grant: vec![format!("network:https:{host}")],
-                trust_processes: false,
-            },
-        };
-        let install = Command::Extension {
-            command: ExtensionCommand::Install {
-                path: None,
-                builtin: Some(source.into()),
-            },
-        };
-        let then = |command, after| After::Then(Box::new(command), Box::new(after));
-        self.menu(
-            &format!("Allow downloads from {host}?"),
-            vec![(
-                format!("Allow network access to {host} and download the character"),
-                Choice::Command(install, then(enable, then(fetch, After::Card))),
-            )],
-        );
+        self.command(fetch, After::Card);
         Ok(())
     }
 }

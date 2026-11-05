@@ -5,7 +5,7 @@ use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 use std::{
     io::Read,
-    path::Path,
+    path::{Component, Path, PathBuf},
     sync::OnceLock,
     time::{SystemTime, UNIX_EPOCH},
 };
@@ -102,9 +102,59 @@ pub fn bounded_read(path: &Path, limit: usize) -> Result<Vec<u8>> {
         .read_to_end(&mut bytes)?;
     if bytes.len() > limit {
         return Err(Error::new(
-            "invalid_extension_size",
+            "invalid_package_size",
             "The package file exceeds its byte limit.",
         ));
     }
     Ok(bytes)
+}
+
+/// The function accepts a bounded ASCII identifier.
+pub fn valid_id(id: &str) -> bool {
+    !id.is_empty()
+        && id.len() <= 128
+        && id.as_bytes()[0].is_ascii_alphanumeric()
+        && id
+            .bytes()
+            .all(|b| b.is_ascii_alphanumeric() || b"._-".contains(&b))
+}
+
+/// The function accepts a relative path that stays inside its root.
+pub fn safe_relative(value: &str) -> Result<PathBuf> {
+    let path = PathBuf::from(value);
+    if value.is_empty()
+        || value.len() > 512
+        || path
+            .components()
+            .any(|part| !matches!(part, Component::Normal(_)))
+    {
+        return Err(Error::new(
+            "invalid_package_asset_path",
+            "The package path must stay inside its directory.",
+        ));
+    }
+    Ok(path)
+}
+
+/// The function returns a regular file inside `root` without symbolic links.
+pub fn checked_file(root: &Path, relative: &str) -> Result<PathBuf> {
+    let relative = safe_relative(relative)?;
+    let root = root.canonicalize()?;
+    let mut path = root.clone();
+    for component in relative.components() {
+        path.push(component.as_os_str());
+        if std::fs::symlink_metadata(&path)?.file_type().is_symlink() {
+            return Err(Error::new(
+                "invalid_package_asset_path",
+                "The package cannot contain a symbolic link.",
+            ));
+        }
+    }
+    if !path.is_file() || !path.canonicalize()?.starts_with(root) {
+        return Err(Error::new(
+            "invalid_package_asset_path",
+            "The declared package file is unavailable.",
+        ));
+    }
+    Ok(path)
 }

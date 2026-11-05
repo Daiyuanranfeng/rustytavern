@@ -186,11 +186,11 @@ impl Ui {
                     ("Export this chat", "/export"),
                     ("Inspect the next model request", "/prompt"),
                     (
-                        "Apply the current provider and extensions to this chat",
+                        "Apply the current provider and packages to this chat",
                         "/adopt",
                     ),
                     ("Edit provider settings (advanced)", "/profile"),
-                    ("Extensions", "/extensions"),
+                    ("Packages", "/packages"),
                     ("Plugins", "/plugins"),
                     ("Show the configuration", "/config"),
                 ]
@@ -245,15 +245,15 @@ impl Ui {
                     ),
                 ],
             ),
-            "/extensions" => {
+            "/packages" => {
                 let mut items = vec![
                     (
                         "Inspect packages".into(),
                         Choice::Command(
-                            Command::Extension {
-                                command: ExtensionCommand::List { json: true },
+                            Command::Package {
+                                command: PackageCommand::List { json: true },
                             },
-                            After::View("Product extensions"),
+                            After::View("Product packages"),
                         ),
                     ),
                     (
@@ -266,7 +266,7 @@ impl Ui {
                     ),
                 ];
                 let registry = rustytavern::plugin::PluginRegistry::default();
-                let manager = ExtensionManager::open(
+                let manager = PackageManager::open(
                     &app.data_dir,
                     app.store.clone(),
                     std::sync::Arc::new(tokio::sync::Mutex::new(registry)),
@@ -286,7 +286,7 @@ impl Ui {
                         Choice::Select(Selection::Uninstall, id),
                     ));
                 }
-                self.menu("Product extensions", items);
+                self.menu("Product packages", items);
             }
             "/prompt" => {
                 self.active()?;
@@ -299,7 +299,7 @@ impl Ui {
             "/adopt" => {
                 let session = self.active()?;
                 self.menu(
-                    "Adopt the selected provider and current extensions for this conversation?",
+                    "Adopt the selected provider and current packages for this conversation?",
                     vec![(
                         "Apply the current settings".into(),
                         Choice::Command(
@@ -426,14 +426,14 @@ impl Ui {
                 ),
                 Selection::Enable => self.form(FormKind::Enable(id)),
                 Selection::Disable => self.command(
-                    Command::Extension {
-                        command: ExtensionCommand::Disable { extension: id },
+                    Command::Package {
+                        command: PackageCommand::Disable { package: id },
                     },
                     After::Notice,
                 ),
                 Selection::Uninstall => self.command(
-                    Command::Extension {
-                        command: ExtensionCommand::Uninstall { extension: id },
+                    Command::Package {
+                        command: PackageCommand::Uninstall { package: id },
                     },
                     After::Notice,
                 ),

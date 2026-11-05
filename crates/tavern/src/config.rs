@@ -1,6 +1,6 @@
 use rustytavern_store::SqliteStore;
 use std::{
-    collections::BTreeMap,
+    collections::{BTreeMap, BTreeSet},
     path::{Path, PathBuf},
     sync::Arc,
 };
@@ -49,12 +49,26 @@ impl Application {
             store,
         })
     }
+    /// The method activates the essential plugins with this data directory.
+    pub async fn registry(&self) -> Result<Arc<tokio::sync::Mutex<crate::plugin::PluginRegistry>>> {
+        let environment =
+            crate::plugins::Environment::new(self.store.clone()).with_data_dir(&self.data_dir);
+        crate::plugins::registry(&environment, &self.config.disabled_plugins()).await
+    }
     pub fn save_config(&self) -> Result<()> {
         self.config.save(&self.data_dir.join("config.json"))
     }
 }
 
 impl Configuration {
+    /// The `plugins.disabled` setting lists the essential plugin IDs that stay off.
+    pub fn disabled_plugins(&self) -> BTreeSet<String> {
+        self.settings
+            .get("plugins")
+            .and_then(|p| p.get("disabled"))
+            .and_then(|d| serde_json::from_value(d.clone()).ok())
+            .unwrap_or_default()
+    }
     pub fn load(path: &Path) -> Result<Self> {
         if !path.exists() {
             return Ok(Self::default());

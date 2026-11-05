@@ -109,18 +109,18 @@ fn cli_import_prompt_chat_resume_regenerate_branch_and_export_work() {
     cli(
         directory.path(),
         &[
-            "extension",
+            "package",
             "install",
             concat!(
                 env!("CARGO_MANIFEST_DIR"),
-                "/../tavern/examples/extensions/lighthouse-edits"
+                "/../tavern/examples/packages/lighthouse-edits"
             ),
         ],
     );
     cli(
         directory.path(),
         &[
-            "extension",
+            "package",
             "enable",
             "example.lighthouse-edits",
             "--grant",

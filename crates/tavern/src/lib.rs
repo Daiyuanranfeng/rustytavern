@@ -6,6 +6,7 @@ pub use rustytavern_card as card;
 pub use rustytavern_conversation as session;
 pub use rustytavern_core::{Error, Result, digest, error};
 pub use rustytavern_plugin::process as external;
+pub use rustytavern_plugins as plugins;
 pub use rustytavern_runtime::{self as runtime, agent, driver, phases};
 pub use rustytavern_store as store;
 pub mod plugin {

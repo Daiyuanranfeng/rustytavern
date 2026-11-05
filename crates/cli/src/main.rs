@@ -48,9 +48,9 @@ enum Command {
         #[command(subcommand)]
         command: ConfigCommand,
     },
-    Extension {
+    Package {
         #[command(subcommand)]
-        command: ExtensionCommand,
+        command: PackageCommand,
     },
     Plugin {
         #[command(subcommand)]
@@ -61,7 +61,7 @@ enum Command {
         command: PresetCommand,
     },
     #[command(external_subcommand)]
-    ExtensionAlias(Vec<String>),
+    PackageAlias(Vec<String>),
     Chat {
         session: String,
         #[command(flatten)]
@@ -310,38 +310,35 @@ enum ConfigCommand {
     },
 }
 #[derive(Subcommand)]
-enum ExtensionCommand {
+enum PackageCommand {
     Install {
-        #[arg(conflicts_with = "builtin")]
-        path: Option<PathBuf>,
-        #[arg(long)]
-        builtin: Option<String>,
+        path: PathBuf,
     },
     List {
         #[arg(long)]
         json: bool,
     },
     Inspect {
-        extension: String,
+        package: String,
         #[arg(long)]
         json: bool,
     },
     Enable {
         #[arg(required=true,num_args=1..)]
-        extensions: Vec<String>,
+        packages: Vec<String>,
         #[arg(long)]
         grant: Vec<String>,
         #[arg(long)]
         trust_processes: bool,
     },
     Disable {
-        extension: String,
+        package: String,
     },
     Uninstall {
-        extension: String,
+        package: String,
     },
     Asset {
-        extension: String,
+        package: String,
         path: String,
         #[arg(long)]
         output: PathBuf,

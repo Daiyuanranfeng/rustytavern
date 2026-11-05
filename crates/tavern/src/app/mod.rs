@@ -1,14 +1,12 @@
-mod tools;
-
 pub use crate::config;
-use crate::{
-    Error, Result, driver, external, phases, plugin, prompt, provider, runtime, source, store,
+use crate::{Error, Result, external, plugin, provider, runtime, source, store};
+use rustytavern_core::{
+    bounded_read, checked_file, digest, native_artifact_hash, safe_relative, valid_id,
 };
-use rustytavern_core::{bounded_read, digest, native_artifact_hash};
 
 use std::{
     collections::{BTreeMap, BTreeSet},
-    path::{Component, Path, PathBuf},
+    path::{Path, PathBuf},
     sync::Arc,
 };
 
@@ -18,23 +16,18 @@ use serde_json::{Value, json};
 use tokio::sync::Mutex;
 use tokio_util::sync::CancellationToken;
 
-use crate::agent::AgentDriver;
 use crate::config::Configuration;
-use driver::{ConversationDriver, DRIVER_CAPABILITIES, SingleReplyDriver};
+use crate::plugins::{self, Builtin, Environment};
 use external::{ExternalSourcePlugin, ProcessDefinition};
-use phases::{HookPolicy, PromptHook, SectionEdit, TransformInput};
-use plugin::{
-    CompositionLease, Contribution, PluginContext, PluginManifest, PluginRegistry, RuntimePlugin,
-};
-use prompt::{CoreProfile, PromptProfile};
-use provider::{HttpProvider, ProviderAdapter, ProviderConfig};
+use plugin::{CompositionLease, PluginManifest, PluginRegistry, RuntimePlugin};
+use provider::ProviderConfig;
 use runtime::Runtime;
-use rustytavern_card::{Card, CardDecoder, CcDecoder};
-use source::{Artifact, ArtifactFetcher, CardSource, ChubSource, PublicFetcher, RisuRealmSource};
+use rustytavern_card::{Card, CardDecoder};
+use source::{Artifact, CardSource};
 use store::{StoreBackend, new_id};
 
 const APP_NAMESPACE: &str = "rustytavern.application";
-const CATALOG_KEY: &str = "extensions";
+const CATALOG_KEY: &str = "packages";
 const MAX_PACKAGE_BYTES: usize = 64 * 1024 * 1024;
 const MAX_PACKAGE_FILES: usize = 512;
 
@@ -61,7 +54,7 @@ pub struct PluginEntry {
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(default, deny_unknown_fields)]
-pub struct ExtensionManifest {
+pub struct PackageManifest {
     pub id: String,
     pub version: String,
     pub product_api: String,
@@ -72,7 +65,7 @@ pub struct ExtensionManifest {
     pub bindings: BTreeMap<String, String>,
     pub assets: Vec<AssetDefinition>,
 }
-impl Default for ExtensionManifest {
+impl Default for PackageManifest {
     fn default() -> Self {
         Self {
             id: String::new(),
@@ -109,8 +102,8 @@ pub struct PluginDefinition {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct InstalledExtension {
-    pub manifest: ExtensionManifest,
+pub struct InstalledPackage {
+    pub manifest: PackageManifest,
     pub package_hash: String,
     pub directory: String,
     pub files: BTreeMap<String, String>,
@@ -123,7 +116,7 @@ pub struct InstalledExtension {
 #[serde(default)]
 struct Catalog {
     schema_version: u32,
-    packages: BTreeMap<String, InstalledExtension>,
+    packages: BTreeMap<String, InstalledPackage>,
     bindings: BTreeMap<String, String>,
 }
 impl Default for Catalog {
@@ -149,7 +142,7 @@ pub trait CommandService: Send + Sync {
 pub type NativeFactory =
     Arc<dyn Fn(&PluginDefinition) -> Result<Arc<dyn RuntimePlugin>> + Send + Sync>;
 
-pub struct ExtensionManager {
+pub struct PackageManager {
     data_dir: PathBuf,
     store: Arc<dyn StoreBackend>,
     pub registry: Arc<Mutex<PluginRegistry>>,
@@ -158,7 +151,7 @@ pub struct ExtensionManager {
     factories: BTreeMap<String, NativeFactory>,
 }
 
-impl ExtensionManager {
+impl PackageManager {
     pub fn open(
         data_dir: impl AsRef<Path>,
         store: Arc<dyn StoreBackend>,
@@ -171,11 +164,11 @@ impl ExtensionManager {
         if catalog.schema_version != 1 {
             return Err(Error::new(
                 "future_schema",
-                "The extension catalog requires another application version.",
+                "The package catalog requires another application version.",
             ));
         }
         let data_dir = data_dir.as_ref().to_owned();
-        std::fs::create_dir_all(data_dir.join("extensions"))?;
+        std::fs::create_dir_all(data_dir.join("packages"))?;
         Ok(Self {
             data_dir,
             store,
@@ -197,18 +190,18 @@ impl ExtensionManager {
         Ok(())
     }
 
-    pub fn list(&self) -> Vec<InstalledExtension> {
+    pub fn list(&self) -> Vec<InstalledPackage> {
         self.catalog.packages.values().cloned().collect()
     }
-    pub fn inspect(&self, id: &str) -> Result<InstalledExtension> {
+    pub fn inspect(&self, id: &str) -> Result<InstalledPackage> {
         self.catalog
             .packages
             .get(id)
             .cloned()
-            .ok_or_else(|| Error::new("not_found", "The extension is not installed."))
+            .ok_or_else(|| Error::new("not_found", "The package is not installed."))
     }
 
-    pub fn install(&mut self, source: &Path) -> Result<InstalledExtension> {
+    pub fn install(&mut self, source: &Path) -> Result<InstalledPackage> {
         let (manifest, files) = validate_package(source)?;
         if self
             .catalog
@@ -217,8 +210,8 @@ impl ExtensionManager {
             .is_some_and(|p| p.enabled)
         {
             return Err(Error::new(
-                "extension_in_use",
-                "The caller must disable this extension before an update.",
+                "package_in_use",
+                "The caller must disable this package before an update.",
             ));
         }
         let package_hash = digest(&serde_json::to_vec(&files)?);
@@ -228,8 +221,8 @@ impl ExtensionManager {
             manifest.version,
             &package_hash[..16]
         );
-        let final_dir = self.data_dir.join("extensions").join(&directory);
-        let stage = self.data_dir.join("extensions").join(new_id("staging"));
+        let final_dir = self.data_dir.join("packages").join(&directory);
+        let stage = self.data_dir.join("packages").join(new_id("staging"));
         let staged = (|| -> Result<()> {
             std::fs::create_dir(&stage)?;
             for (relative, hash) in &files {
@@ -237,7 +230,7 @@ impl ExtensionManager {
                 let bytes = bounded_read(&original, MAX_PACKAGE_BYTES)?;
                 if digest(&bytes) != *hash {
                     return Err(Error::new(
-                        "invalid_extension_hash",
+                        "invalid_package_hash",
                         "The package changed during installation.",
                     ));
                 }
@@ -266,7 +259,7 @@ impl ExtensionManager {
             let _ = std::fs::remove_dir_all(&stage);
         }
         staged?;
-        let package = InstalledExtension {
+        let package = InstalledPackage {
             manifest,
             package_hash,
             directory,
@@ -305,11 +298,11 @@ impl ExtensionManager {
             let package = catalog
                 .packages
                 .get_mut(id)
-                .ok_or_else(|| Error::new("not_found", "The extension is not installed."))?;
+                .ok_or_else(|| Error::new("not_found", "The package is not installed."))?;
             if package.enabled {
                 return Err(Error::new(
-                    "extension_in_use",
-                    "The extension is already enabled.",
+                    "package_in_use",
+                    "The package is already enabled.",
                 ));
             }
             package.enabled = true;
@@ -321,7 +314,7 @@ impl ExtensionManager {
 
     async fn activate(&mut self, ids: &[String], update: Option<Catalog>) -> Result<()> {
         let target = update.as_ref().unwrap_or(&self.catalog);
-        let order = extension_order(target)?;
+        let order = package_order(target)?;
         let requested = ids.iter().cloned().collect::<BTreeSet<_>>();
         let bindings = resolved_bindings(target)?;
         let mut desired = Vec::new();
@@ -336,7 +329,7 @@ impl ExtensionManager {
                 {
                     return Err(Error::new(
                         "capability_denied",
-                        "The extension requires explicit trust for its process executable.",
+                        "The package requires explicit trust for its process executable.",
                     ));
                 }
                 let plugin = self.build_plugin(definition, &root)?;
@@ -382,9 +375,9 @@ impl ExtensionManager {
             owners
                 .entry(manifest.id.clone())
                 .or_default()
-                .insert(extension_owner(&owner));
+                .insert(package_owner(&owner));
         }
-        let batch = new_id("extension-activation");
+        let batch = new_id("package-activation");
         registry
             .inject_bound(
                 unique.into_values().collect(),
@@ -399,7 +392,7 @@ impl ExtensionManager {
                     if !lease.contains_service(&command.service) {
                         return Err(Error::new(
                             "missing_service",
-                            "The extension command requires an unavailable service.",
+                            "The package command requires an unavailable service.",
                         ));
                     }
                     if lease
@@ -408,7 +401,7 @@ impl ExtensionManager {
                     {
                         if command.operation != "fetch" {
                             return Err(Error::new(
-                                "unsupported_extension_command",
+                                "unsupported_package_command",
                                 "The source command requires the fetch operation.",
                             ));
                         }
@@ -454,22 +447,18 @@ impl ExtensionManager {
         catalog
             .packages
             .get_mut(id)
-            .ok_or_else(|| Error::new("not_found", "The extension is unavailable."))?
+            .ok_or_else(|| Error::new("not_found", "The package is unavailable."))?
             .enabled = false;
-        extension_order(&catalog)?;
+        package_order(&catalog)?;
         let mut registry = self.registry.lock().await;
-        registry.can_eject_owner(&extension_owner(id))?;
+        registry.can_eject_owner(&package_owner(id))?;
         let current = registry.inspect();
         let active_packages = current
             .iter()
-            .any(|p| p.owners.iter().any(|owner| owner.starts_with("extension:")));
+            .any(|p| p.owners.iter().any(|owner| owner.starts_with("package:")));
         let mut available = current
             .iter()
-            .filter(|p| {
-                p.owners
-                    .iter()
-                    .any(|owner| !owner.starts_with("extension:"))
-            })
+            .filter(|p| p.owners.iter().any(|owner| !owner.starts_with("package:")))
             .map(|p| p.manifest.id.clone())
             .collect::<BTreeSet<_>>();
         for package in catalog.packages.values().filter(|p| p.enabled) {
@@ -497,7 +486,7 @@ impl ExtensionManager {
         }
         let revision = self.persist(&catalog)?;
         if active_packages {
-            registry.eject_owner(&extension_owner(id)).await?;
+            registry.eject_owner(&package_owner(id)).await?;
             registry.replace_bindings(bindings)?;
         }
         self.catalog = catalog;
@@ -509,8 +498,8 @@ impl ExtensionManager {
         let package = self.inspect(id)?;
         if package.enabled {
             return Err(Error::new(
-                "extension_in_use",
-                "The caller must disable the extension before uninstall.",
+                "package_in_use",
+                "The caller must disable the package before uninstall.",
             ));
         }
         let mut catalog = self.catalog.clone();
@@ -542,7 +531,7 @@ impl ExtensionManager {
         }
         let active_packages = current
             .iter()
-            .any(|p| p.owners.iter().any(|owner| owner.starts_with("extension:")));
+            .any(|p| p.owners.iter().any(|owner| owner.starts_with("package:")));
         if active_packages {
             registry.set_binding(service.clone(), plugin.clone())?;
         }
@@ -569,7 +558,7 @@ impl ExtensionManager {
             let root = self.package_root(package)?;
             for entry in &package.manifest.plugins {
                 let definition = load_definition(&root, &entry.manifest)?;
-                result.push(json!({"manifest":definition.manifest,"extension":package.manifest.id,"extension_version":package.manifest.version,"package_hash":package.package_hash,"state":if package.enabled {"configured"} else {"disabled"},"process_trust_required":matches!(definition.implementation,Implementation::Process{..})}));
+                result.push(json!({"manifest":definition.manifest,"package":package.manifest.id,"package_version":package.manifest.version,"package_hash":package.package_hash,"state":if package.enabled {"configured"} else {"disabled"},"process_trust_required":matches!(definition.implementation,Implementation::Process{..})}));
             }
         }
         Ok(result)
@@ -577,7 +566,7 @@ impl ExtensionManager {
 
     pub fn configuration(&self, explicit: &Value) -> Result<Value> {
         let mut result = json!({});
-        for id in extension_order(&self.catalog)? {
+        for id in package_order(&self.catalog)? {
             merge_defaults(
                 &mut result,
                 &self.catalog.packages[&id].manifest.configuration_defaults,
@@ -598,19 +587,19 @@ impl ExtensionManager {
         })
     }
 
-    pub fn asset(&self, extension: &str, relative: &str) -> Result<Vec<u8>> {
-        let package = self.inspect(extension)?;
+    pub fn asset(&self, package: &str, relative: &str) -> Result<Vec<u8>> {
+        let package = self.inspect(package)?;
         if !package.enabled || !package.manifest.assets.iter().any(|a| a.path == relative) {
             return Err(Error::new(
                 "not_found",
-                "The enabled extension does not declare this asset.",
+                "The enabled package does not declare this asset.",
             ));
         }
         let path = checked_file(&self.package_root(&package)?, relative)?;
         let bytes = bounded_read(&path, MAX_PACKAGE_BYTES)?;
         if package.files.get(relative) != Some(&digest(&bytes)) {
             return Err(Error::new(
-                "invalid_extension_hash",
+                "invalid_package_hash",
                 "The installed asset changed.",
             ));
         }
@@ -619,7 +608,7 @@ impl ExtensionManager {
 
     pub fn commands(&self) -> Result<BTreeMap<String, CommandDefinition>> {
         let mut commands = BTreeMap::new();
-        for id in extension_order(&self.catalog)? {
+        for id in package_order(&self.catalog)? {
             for command in &self.catalog.packages[&id].manifest.commands {
                 commands.insert(command.name.clone(), command.clone());
             }
@@ -645,8 +634,8 @@ impl ExtensionManager {
     ) -> Result<Value> {
         let command = self.commands()?.remove(name).ok_or_else(|| {
             Error::new(
-                "invalid_extension_command",
-                "The extension command does not exist.",
+                "invalid_package_command",
+                "The package command does not exist.",
             )
         })?;
         let lease = self.registry.lock().await.freeze()?;
@@ -655,7 +644,7 @@ impl ExtensionManager {
                 let decoder = lease.service::<Arc<dyn CardDecoder>>("card.decoder/1")?;
                 let url = arguments["url"].as_str().ok_or_else(|| {
                     Error::new(
-                        "invalid_extension_command",
+                        "invalid_package_command",
                         "The source command requires a URL.",
                     )
                 })?;
@@ -666,7 +655,7 @@ impl ExtensionManager {
                 Ok(result)
             }
             Ok(_) => Err(Error::new(
-                "unsupported_extension_command",
+                "unsupported_package_command",
                 "The source does not support this operation.",
             )),
             Err(error) if error.code == "invalid_service_type" => {
@@ -727,9 +716,9 @@ impl ExtensionManager {
             &serde_json::to_value(catalog)?,
         )
     }
-    fn package_root(&self, package: &InstalledExtension) -> Result<PathBuf> {
+    fn package_root(&self, package: &InstalledPackage) -> Result<PathBuf> {
         safe_relative(&package.directory)?;
-        Ok(self.data_dir.join("extensions").join(&package.directory))
+        Ok(self.data_dir.join("packages").join(&package.directory))
     }
 
     fn build_plugin(
@@ -740,16 +729,22 @@ impl ExtensionManager {
         definition.manifest.configuration_hash =
             digest(&serde_json::to_vec(&definition.implementation)?);
         match &mut definition.implementation {
-            Implementation::Builtin { name, .. } => {
+            Implementation::Builtin {
+                name,
+                configuration,
+            } => {
                 definition.manifest.artifact_hash = native_artifact_hash()?;
                 if let Some(factory) = self.factories.get(name) {
                     return factory(&definition);
                 }
-                Ok(Arc::new(BuiltinPlugin {
-                    definition,
-                    store: self.store.clone(),
-                    data_dir: Some(self.data_dir.clone()),
-                }))
+                let environment =
+                    Environment::new(self.store.clone()).with_data_dir(&self.data_dir);
+                Ok(Arc::new(Builtin::new(
+                    definition.manifest.clone(),
+                    name.clone(),
+                    configuration.clone(),
+                    environment,
+                )))
             }
             Implementation::Process { process } => {
                 let executable = process.executable.to_string_lossy().to_string();
@@ -780,191 +775,16 @@ impl ExtensionManager {
     }
 }
 
-fn extension_owner(id: &str) -> String {
-    format!("extension:{id}")
+fn package_owner(id: &str) -> String {
+    format!("package:{id}")
 }
 
-#[derive(Default, Deserialize)]
-#[serde(default, deny_unknown_fields)]
-struct StaticPromptEdits {
-    policy: HookPolicy,
-    edits: Vec<SectionEdit>,
-}
-#[async_trait]
-impl PromptHook for StaticPromptEdits {
-    fn policy(&self) -> HookPolicy {
-        self.policy.clone()
-    }
-    fn transform(&self, _input: &TransformInput<'_>) -> Result<Vec<SectionEdit>> {
-        Ok(self.edits.clone())
-    }
-}
-
-struct BuiltinPlugin {
-    definition: PluginDefinition,
-    store: Arc<dyn StoreBackend>,
-    data_dir: Option<PathBuf>,
-}
-#[async_trait]
-impl RuntimePlugin for BuiltinPlugin {
-    fn manifest(&self) -> &PluginManifest {
-        &self.definition.manifest
-    }
-    async fn activate(&self, context: &mut PluginContext) -> Result<()> {
-        let Implementation::Builtin {
-            name,
-            configuration,
-        } = &self.definition.implementation
-        else {
-            return Err(Error::new(
-                "invalid_plugin_factory",
-                "The native factory received another implementation kind.",
-            ));
-        };
-        match name.as_str() {
-            "decoder.cc-v2-v3" => {
-                let decoder: Arc<dyn CardDecoder> = Arc::new(CcDecoder);
-                context.register("card.decoder/1", Arc::new(decoder))?;
-            }
-            "driver.single-reply" => {
-                for capability in DRIVER_CAPABILITIES {
-                    context.authorize(capability)?;
-                }
-                let driver: Arc<dyn ConversationDriver> = Arc::new(SingleReplyDriver);
-                context.register("driver/1", Arc::new(driver))?;
-            }
-            "driver.agent" => {
-                for capability in DRIVER_CAPABILITIES {
-                    context.authorize(capability)?;
-                }
-                let steps = configuration["max_steps"].as_u64().unwrap_or(8) as usize;
-                let driver: Arc<dyn ConversationDriver> = Arc::new(AgentDriver::new(steps));
-                context.register("driver/1", Arc::new(driver))?;
-            }
-            "tools.web" => tools::web(context)?,
-            "tools.skills" | "tools.mcp" => {
-                let data_dir = self.data_dir.as_deref().ok_or_else(|| {
-                    Error::new(
-                        "invalid_plugin_factory",
-                        "The tool plugin requires a data directory.",
-                    )
-                })?;
-                if name == "tools.skills" {
-                    tools::skills(context, data_dir)?;
-                } else {
-                    tools::mcp(context, data_dir).await?;
-                }
-            }
-            "profile.core-v1" => {
-                let profile: Arc<dyn PromptProfile> = Arc::new(CoreProfile);
-                context.register("profile/1", Arc::new(profile))?;
-            }
-            "provider.http" => {
-                let provider: Arc<dyn ProviderAdapter> = Arc::new(HttpProvider);
-                context.register("provider/1", Arc::new(provider))?;
-            }
-            "store.sqlite" => {
-                context.register("store/1", Arc::new(self.store.clone()))?;
-            }
-            "prompt.contributions" => {
-                let contributions: Vec<Contribution> =
-                    serde_json::from_value(configuration["contributions"].clone())?;
-                for contribution in contributions {
-                    context.contribute(contribution)?;
-                }
-            }
-            "prompt.edits" => {
-                let hook: Arc<dyn PromptHook> = Arc::new(serde_json::from_value::<
-                    StaticPromptEdits,
-                >(configuration.clone())?);
-                for service in &self.definition.manifest.provides {
-                    if !service.starts_with("prompt.hook.") || !service.ends_with("/1") {
-                        return Err(Error::new(
-                            "unsupported_plugin_service",
-                            "The edit factory provides prompt hooks only.",
-                        ));
-                    }
-                    context.register(service, Arc::new(hook.clone()))?;
-                }
-            }
-            "source.chub" | "source.risurealm" => {
-                let (host, service) = if name == "source.chub" {
-                    ("api.chub.ai", "card.source.chub/1")
-                } else {
-                    ("realm.risuai.net", "card.source.risurealm/1")
-                };
-                context.authorize(&format!("network:https:{host}"))?;
-                let hosts = context
-                    .grants()
-                    .iter()
-                    .filter_map(|g| g.strip_prefix("network:https:").map(str::to_owned));
-                let fetcher: Arc<dyn ArtifactFetcher> = Arc::new(PublicFetcher::new(hosts));
-                let source: Arc<dyn CardSource> = if name == "source.chub" {
-                    Arc::new(ChubSource::new(fetcher))
-                } else {
-                    Arc::new(RisuRealmSource::new(fetcher))
-                };
-                context.register(service, Arc::new(source))?;
-            }
-            _ => {
-                return Err(Error::new(
-                    "unsupported_plugin_factory",
-                    "The application does not provide this native plugin factory.",
-                ));
-            }
-        }
-        Ok(())
-    }
-}
-
+/// The function activates the essential plugins of the standard agent.
 pub async fn default_registry(store: Arc<dyn StoreBackend>) -> Result<Arc<Mutex<PluginRegistry>>> {
-    let mut plugins: Vec<Arc<dyn RuntimePlugin>> = Vec::new();
-    for (name, service) in [
-        ("decoder.cc-v2-v3", "card.decoder/1"),
-        ("driver.single-reply", "driver/1"),
-        ("profile.core-v1", "profile/1"),
-        ("provider.http", "provider/1"),
-        ("store.sqlite", "store/1"),
-    ] {
-        let definition = PluginDefinition {
-            manifest: PluginManifest {
-                id: format!("org.rustytavern.{name}"),
-                provides: vec![service.into()],
-                artifact_hash: native_artifact_hash()?,
-                configuration_hash: digest(name.as_bytes()),
-                requested_capabilities: if service == "driver/1" {
-                    DRIVER_CAPABILITIES.into_iter().map(str::to_owned).collect()
-                } else {
-                    BTreeSet::new()
-                },
-                ..Default::default()
-            },
-            implementation: Implementation::Builtin {
-                name: name.into(),
-                configuration: json!({}),
-            },
-        };
-        plugins.push(Arc::new(BuiltinPlugin {
-            definition,
-            store: store.clone(),
-            data_dir: None,
-        }));
-    }
-    let mut registry = PluginRegistry::default();
-    let grants = plugins
-        .iter()
-        .map(|plugin| {
-            (
-                plugin.manifest().id.clone(),
-                plugin.manifest().requested_capabilities.clone(),
-            )
-        })
-        .collect();
-    registry.inject(plugins, "core-product", &grants).await?;
-    Ok(Arc::new(Mutex::new(registry)))
+    plugins::registry(&Environment::new(store), &BTreeSet::new()).await
 }
 
-pub async fn runtime(manager: &ExtensionManager) -> Result<Runtime> {
+pub async fn runtime(manager: &PackageManager) -> Result<Runtime> {
     let lease = manager.registry.lock().await.freeze()?;
     let store = lease
         .service::<Arc<dyn StoreBackend>>("store/1")?
@@ -976,53 +796,6 @@ pub async fn runtime(manager: &ExtensionManager) -> Result<Runtime> {
         )))
         .with_plugins(manager.registry.clone())
         .with_product_composition(manager.composition().await?))
-}
-
-fn valid_id(id: &str) -> bool {
-    !id.is_empty()
-        && id.len() <= 128
-        && id.as_bytes()[0].is_ascii_alphanumeric()
-        && id
-            .bytes()
-            .all(|b| b.is_ascii_alphanumeric() || b"._-".contains(&b))
-}
-
-fn safe_relative(value: &str) -> Result<PathBuf> {
-    let path = PathBuf::from(value);
-    if value.is_empty()
-        || value.len() > 512
-        || path
-            .components()
-            .any(|part| !matches!(part, Component::Normal(_)))
-    {
-        return Err(Error::new(
-            "invalid_extension_asset_path",
-            "The package path must stay inside its directory.",
-        ));
-    }
-    Ok(path)
-}
-
-fn checked_file(root: &Path, relative: &str) -> Result<PathBuf> {
-    let relative = safe_relative(relative)?;
-    let root = root.canonicalize()?;
-    let mut path = root.clone();
-    for component in relative.components() {
-        path.push(component.as_os_str());
-        if std::fs::symlink_metadata(&path)?.file_type().is_symlink() {
-            return Err(Error::new(
-                "invalid_extension_asset_path",
-                "The package cannot contain a symbolic link.",
-            ));
-        }
-    }
-    if !path.is_file() || !path.canonicalize()?.starts_with(root) {
-        return Err(Error::new(
-            "invalid_extension_asset_path",
-            "The declared package file is unavailable.",
-        ));
-    }
-    Ok(path)
 }
 
 fn package_files(root: &Path) -> Result<BTreeMap<String, String>> {
@@ -1037,7 +810,7 @@ fn package_files(root: &Path) -> Result<BTreeMap<String, String>> {
             let kind = entry.file_type()?;
             if kind.is_symlink() {
                 return Err(Error::new(
-                    "invalid_extension_asset_path",
+                    "invalid_package_asset_path",
                     "The package cannot contain a symbolic link.",
                 ));
             }
@@ -1045,7 +818,7 @@ fn package_files(root: &Path) -> Result<BTreeMap<String, String>> {
                 pending.push(path);
                 if pending.len() + files.len() > MAX_PACKAGE_FILES {
                     return Err(Error::new(
-                        "invalid_extension_size",
+                        "invalid_package_size",
                         "The package contains too many paths.",
                     ));
                 }
@@ -1053,26 +826,26 @@ fn package_files(root: &Path) -> Result<BTreeMap<String, String>> {
             }
             if !kind.is_file() {
                 return Err(Error::new(
-                    "invalid_extension_asset_path",
+                    "invalid_package_asset_path",
                     "The package requires regular files and directories.",
                 ));
             }
             if files.len() >= MAX_PACKAGE_FILES {
                 return Err(Error::new(
-                    "invalid_extension_size",
+                    "invalid_package_size",
                     "The package contains too many files.",
                 ));
             }
             let relative = path
                 .strip_prefix(&root)
                 .map_err(Error::context(
-                    "invalid_extension_asset_path",
+                    "invalid_package_asset_path",
                     "The package path is invalid.",
                 ))?
                 .to_str()
                 .ok_or_else(|| {
                     Error::new(
-                        "invalid_extension_asset_path",
+                        "invalid_package_asset_path",
                         "The package filename requires UTF-8.",
                     )
                 })?
@@ -1089,7 +862,7 @@ fn package_files(root: &Path) -> Result<BTreeMap<String, String>> {
 fn verify_files(root: &Path, expected: &BTreeMap<String, String>) -> Result<()> {
     if package_files(root)? != *expected {
         return Err(Error::new(
-            "invalid_extension_hash",
+            "invalid_package_hash",
             "The installed package changed.",
         ));
     }
@@ -1117,34 +890,34 @@ fn load_definition(root: &Path, relative: &str) -> Result<PluginDefinition> {
     Ok(definition)
 }
 
-fn validate_package(root: &Path) -> Result<(ExtensionManifest, BTreeMap<String, String>)> {
-    let bytes = bounded_read(&checked_file(root, "extension.json")?, 1024 * 1024)?;
-    let manifest: ExtensionManifest = serde_json::from_slice(&bytes)?;
+fn validate_package(root: &Path) -> Result<(PackageManifest, BTreeMap<String, String>)> {
+    let bytes = bounded_read(&checked_file(root, "manifest.json")?, 1024 * 1024)?;
+    let manifest: PackageManifest = serde_json::from_slice(&bytes)?;
     if !valid_id(&manifest.id) || manifest.product_api != "1" {
         return Err(Error::new(
-            "invalid_extension_manifest",
-            "The extension ID or product API is invalid.",
+            "invalid_package_manifest",
+            "The package ID or product API is invalid.",
         ));
     }
     semver::Version::parse(&manifest.version).map_err(Error::context(
-        "invalid_extension_version",
-        "The extension version is invalid.",
+        "invalid_package_version",
+        "The package version is invalid.",
     ))?;
     if !manifest.configuration_defaults.is_object() {
         return Err(Error::new(
-            "invalid_extension_manifest",
-            "The extension defaults must form an object.",
+            "invalid_package_manifest",
+            "The package defaults must form an object.",
         ));
     }
     for (id, version) in &manifest.dependencies {
         if !valid_id(id) {
             return Err(Error::new(
-                "invalid_extension_dependency",
+                "invalid_package_dependency",
                 "The dependency ID is invalid.",
             ));
         }
         semver::VersionReq::parse(version).map_err(Error::context(
-            "invalid_extension_dependency",
+            "invalid_package_dependency",
             "The dependency version range is invalid.",
         ))?;
     }
@@ -1154,7 +927,7 @@ fn validate_package(root: &Path) -> Result<(ExtensionManifest, BTreeMap<String, 
         if !plugins.insert(definition.manifest.id) {
             return Err(Error::new(
                 "invalid_plugin_id",
-                "The extension declares a plugin twice.",
+                "The package declares a plugin twice.",
             ));
         }
     }
@@ -1166,8 +939,8 @@ fn validate_package(root: &Path) -> Result<(ExtensionManifest, BTreeMap<String, 
             || command.operation.is_empty()
         {
             return Err(Error::new(
-                "invalid_extension_command",
-                "The extension command is invalid or duplicated.",
+                "invalid_package_command",
+                "The package command is invalid or duplicated.",
             ));
         }
     }
@@ -1177,7 +950,7 @@ fn validate_package(root: &Path) -> Result<(ExtensionManifest, BTreeMap<String, 
         checked_file(root, &asset.path)?;
         if !assets.insert(asset.path.clone()) || files.get(&asset.path) != Some(&asset.sha256) {
             return Err(Error::new(
-                "invalid_extension_hash",
+                "invalid_package_hash",
                 "The asset hash is absent, duplicated, or incorrect.",
             ));
         }
@@ -1185,7 +958,7 @@ fn validate_package(root: &Path) -> Result<(ExtensionManifest, BTreeMap<String, 
     Ok((manifest, files))
 }
 
-fn extension_order(catalog: &Catalog) -> Result<Vec<String>> {
+fn package_order(catalog: &Catalog) -> Result<Vec<String>> {
     let enabled = catalog
         .packages
         .values()
@@ -1196,8 +969,8 @@ fn extension_order(catalog: &Catalog) -> Result<Vec<String>> {
         for command in &package.manifest.commands {
             if !commands.insert(&command.name) {
                 return Err(Error::new(
-                    "invalid_extension_command",
-                    "Enabled extensions declare the same command.",
+                    "invalid_package_command",
+                    "Enabled packages declare the same command.",
                 ));
             }
         }
@@ -1208,22 +981,22 @@ fn extension_order(catalog: &Catalog) -> Result<Vec<String>> {
                 .filter(|p| p.enabled)
                 .ok_or_else(|| {
                     Error::new(
-                        "missing_extension_dependency",
-                        "The extension requires an enabled dependency.",
+                        "missing_package_dependency",
+                        "The package requires an enabled dependency.",
                     )
                 })?;
             let version = semver::VersionReq::parse(version).map_err(Error::context(
-                "invalid_extension_dependency",
+                "invalid_package_dependency",
                 "The dependency version range is invalid.",
             ))?;
             let actual =
                 semver::Version::parse(&dependency.manifest.version).map_err(Error::context(
-                    "invalid_extension_version",
+                    "invalid_package_version",
                     "The dependency version is invalid.",
                 ))?;
             if !version.matches(&actual) {
                 return Err(Error::new(
-                    "incompatible_extension_dependency",
+                    "incompatible_package_dependency",
                     "The enabled dependency has another version.",
                 ));
             }
@@ -1241,8 +1014,8 @@ fn extension_order(catalog: &Catalog) -> Result<Vec<String>> {
             .map(|p| p.manifest.id.clone());
         let Some(id) = next else {
             return Err(Error::new(
-                "extension_dependency_cycle",
-                "The enabled extension graph contains a cycle.",
+                "package_dependency_cycle",
+                "The enabled package graph contains a cycle.",
             ));
         };
         seen.insert(id.clone());
@@ -1253,7 +1026,7 @@ fn extension_order(catalog: &Catalog) -> Result<Vec<String>> {
 
 fn resolved_bindings(catalog: &Catalog) -> Result<BTreeMap<String, String>> {
     let mut bindings = BTreeMap::new();
-    for id in extension_order(catalog)? {
+    for id in package_order(catalog)? {
         for (service, selected) in &catalog.packages[&id].manifest.bindings {
             if bindings
                 .get(service)
@@ -1262,7 +1035,7 @@ fn resolved_bindings(catalog: &Catalog) -> Result<BTreeMap<String, String>> {
             {
                 return Err(Error::new(
                     "ambiguous_service",
-                    "Extension defaults require an explicit service binding.",
+                    "Package defaults require an explicit service binding.",
                 ));
             }
             bindings.insert(service.clone(), selected.clone());
@@ -1285,81 +1058,14 @@ fn merge_defaults(target: &mut Value, update: &Value) {
     }
 }
 
-impl ExtensionManager {
-    pub fn install_builtin(&mut self, name: &str) -> Result<InstalledExtension> {
-        let (file, manifest, plugin, readme, plugin_readme): (&str, &[u8], &[u8], &[u8], &[u8]) =
-            match name {
-                "agent" => (
-                    "plugins/driver.json",
-                    include_bytes!("../../bundled/agent/extension.json"),
-                    include_bytes!("../../bundled/agent/plugins/driver.json"),
-                    include_bytes!("../../bundled/agent/README.md"),
-                    include_bytes!("../../bundled/agent/plugins/README.md"),
-                ),
-                "web" => (
-                    "plugins/tools.json",
-                    include_bytes!("../../bundled/web/extension.json"),
-                    include_bytes!("../../bundled/web/plugins/tools.json"),
-                    include_bytes!("../../bundled/web/README.md"),
-                    include_bytes!("../../bundled/web/plugins/README.md"),
-                ),
-                "skills" => (
-                    "plugins/tools.json",
-                    include_bytes!("../../bundled/skills/extension.json"),
-                    include_bytes!("../../bundled/skills/plugins/tools.json"),
-                    include_bytes!("../../bundled/skills/README.md"),
-                    include_bytes!("../../bundled/skills/plugins/README.md"),
-                ),
-                "mcp" => (
-                    "plugins/tools.json",
-                    include_bytes!("../../bundled/mcp/extension.json"),
-                    include_bytes!("../../bundled/mcp/plugins/tools.json"),
-                    include_bytes!("../../bundled/mcp/README.md"),
-                    include_bytes!("../../bundled/mcp/plugins/README.md"),
-                ),
-                "chub" => (
-                    "plugins/source.json",
-                    include_bytes!("../../bundled/chub/extension.json"),
-                    include_bytes!("../../bundled/chub/plugins/source.json"),
-                    include_bytes!("../../bundled/chub/README.md"),
-                    include_bytes!("../../bundled/chub/plugins/README.md"),
-                ),
-                "risurealm" => (
-                    "plugins/source.json",
-                    include_bytes!("../../bundled/risurealm/extension.json"),
-                    include_bytes!("../../bundled/risurealm/plugins/source.json"),
-                    include_bytes!("../../bundled/risurealm/README.md"),
-                    include_bytes!("../../bundled/risurealm/plugins/README.md"),
-                ),
-                _ => {
-                    return Err(Error::new(
-                        "invalid_extension_name",
-                        "The bundled extension does not exist.",
-                    ));
-                }
-            };
-        let stage = self.data_dir.join("extensions").join(new_id("template"));
-        std::fs::create_dir_all(stage.join("plugins"))?;
-        let result = (|| {
-            std::fs::write(stage.join("extension.json"), manifest)?;
-            std::fs::write(stage.join(file), plugin)?;
-            std::fs::write(stage.join("README.md"), readme)?;
-            std::fs::write(stage.join("plugins/README.md"), plugin_readme)?;
-            self.install(&stage)
-        })();
-        let _ = std::fs::remove_dir_all(stage);
-        result
-    }
-}
-
-impl ExtensionManager {
+impl PackageManager {
     pub async fn composition(&self) -> Result<Value> {
         let registry = self.registry.lock().await;
         let lease = registry.freeze()?;
         let packages = self.catalog.packages.values().filter(|p| p.enabled).map(|p| json!({"id":p.manifest.id,"version":p.manifest.version,"package_hash":p.package_hash,"assets":p.manifest.assets})).collect::<Vec<_>>();
         let mut record = lease.snapshot();
         record["preset"] = json!("tavern");
-        record["extensions"] = json!(packages);
+        record["packages"] = json!(packages);
         Ok(record)
     }
 }

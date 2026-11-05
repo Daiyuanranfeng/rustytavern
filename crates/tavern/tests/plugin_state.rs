@@ -488,8 +488,8 @@ fn future_schema_markers_block_writes_and_survive_export() {
 }
 
 #[tokio::test]
-async fn extension_upgrade_restores_its_native_migration_factory() {
-    use rustytavern::app::{ExtensionManager, NativeFactory, PluginDefinition};
+async fn package_upgrade_restores_its_native_migration_factory() {
+    use rustytavern::app::{NativeFactory, PackageManager, PluginDefinition};
     fn factory(store: Arc<SqliteStore>) -> NativeFactory {
         Arc::new(move |definition: &PluginDefinition| {
             let saved = store.clone();
@@ -521,12 +521,12 @@ async fn extension_upgrade_restores_its_native_migration_factory() {
     let store = Arc::new(SqliteStore::open(&path).unwrap());
     store.state_write(ID, "counter", &json!(7)).unwrap();
     let registry = Arc::new(tokio::sync::Mutex::new(PluginRegistry::default()));
-    let mut manager = ExtensionManager::open(data.path(), store.clone(), registry).unwrap();
+    let mut manager = PackageManager::open(data.path(), store.clone(), registry).unwrap();
     manager
         .register_factory("fixture.state".into(), factory(store.clone()))
         .unwrap();
     for schema in [1, 2] {
-        std::fs::write(source.path().join("extension.json"),serde_json::to_vec(&json!({"id":"example.state-package","version":format!("{schema}.0.0"),"product_api":"1","plugins":[{"manifest":"plugin.json"}]})).unwrap()).unwrap();
+        std::fs::write(source.path().join("manifest.json"),serde_json::to_vec(&json!({"id":"example.state-package","version":format!("{schema}.0.0"),"product_api":"1","plugins":[{"manifest":"plugin.json"}]})).unwrap()).unwrap();
         std::fs::write(
             source.path().join("README.md"),
             "The fixture tests native state upgrades.\n",
@@ -550,7 +550,7 @@ async fn extension_upgrade_restores_its_native_migration_factory() {
     drop(manager);
     let store = Arc::new(SqliteStore::open(&path).unwrap());
     let before = store.plugin_state_snapshot(ID).unwrap();
-    let mut restored = ExtensionManager::open(
+    let mut restored = PackageManager::open(
         data.path(),
         store.clone(),
         Arc::new(tokio::sync::Mutex::new(PluginRegistry::default())),

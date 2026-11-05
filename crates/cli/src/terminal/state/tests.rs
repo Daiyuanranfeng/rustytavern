@@ -411,10 +411,15 @@ fn character_input_accepts_dropped_paths_and_detects_the_website() {
         &["https://chub.ai/characters/someone/someone-123".into()],
     )
     .unwrap();
-    assert!(
-        matches!(ui.overlay, Some(Overlay::Menu { ref title, .. }) if title == "Allow downloads from api.chub.ai?")
-    );
-    assert!(ui.pending.is_none());
+    assert!(matches!(
+        ui.pending.take(),
+        Some(Job::Command(
+            Command::Card {
+                command: CardCommand::Fetch { ref source, .. }
+            },
+            After::Card
+        )) if source == "chub"
+    ));
     assert_eq!(
         ui.submit(&FormKind::Import, &["https://example.com/card".into()])
             .unwrap_err()

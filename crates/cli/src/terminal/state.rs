@@ -19,7 +19,7 @@ pub(super) const COMMANDS: &[(&str, &str)] = &[
     ("/retry", "Regenerate the last reply"),
     (
         "/settings",
-        "Lorebooks, branches, export, extensions, and more",
+        "Lorebooks, branches, export, packages, and more",
     ),
     ("/help", "Read commands and keys"),
     ("/quit", "Close the terminal"),
@@ -51,7 +51,6 @@ pub(super) enum After {
     Provider(String),
     Setup(String),
     Models(Vec<String>),
-    Then(Box<Command>, Box<After>),
     Session,
     Refresh,
     View(&'static str),
@@ -821,10 +820,6 @@ impl Ui {
                 }
                 After::Setup(name) => {
                     self.catalogs(vec![name]);
-                    return Ok(());
-                }
-                After::Then(command, after) => {
-                    self.command(*command, *after);
                     return Ok(());
                 }
                 After::Card => self.preferences.character = value["id"].as_str().map(str::to_owned),

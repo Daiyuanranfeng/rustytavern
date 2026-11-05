@@ -262,12 +262,12 @@ async fn changed_and_missing_plugins_block_generation_until_explicit_adoption() 
 }
 
 #[tokio::test]
-async fn extension_package_and_asset_changes_require_adoption() {
+async fn package_and_asset_changes_require_adoption() {
     let store = Arc::new(SqliteStore::memory().unwrap());
     let registry = Arc::new(tokio::sync::Mutex::new(PluginRegistry::default()));
     let lock = registry.lock().await.freeze().unwrap().snapshot();
     let mut initial = lock.clone();
-    initial["extensions"] = json!([{"id":"theme","version":"1.0.0","package_hash":"first","assets":[{"path":"theme.txt","sha256":"asset-first"}]}]);
+    initial["packages"] = json!([{"id":"theme","version":"1.0.0","package_hash":"first","assets":[{"path":"theme.txt","sha256":"asset-first"}]}]);
     let runtime = Runtime::new(store.clone())
         .with_provider(provider("Reply.", false))
         .with_plugins(registry.clone())
@@ -278,7 +278,7 @@ async fn extension_package_and_asset_changes_require_adoption() {
         .unwrap();
     for key in ["package_hash", "assets"] {
         let mut update = initial.clone();
-        update["extensions"][0][key] = if key == "assets" {
+        update["packages"][0][key] = if key == "assets" {
             json!([{"path":"theme.txt","sha256":"asset-second"}])
         } else {
             json!("second")
@@ -432,7 +432,7 @@ async fn legacy_sessions_require_configuration_and_invalid_settings_never_enter_
 async fn configuration_history_limits_roll_back_without_losing_previous_revisions() {
     let (runtime, store, session) = setup().await;
     let oversized = runtime.clone().with_product_composition(
-        json!({"extensions":[{"id":"large","asset_metadata":"x".repeat(8 * 1024 * 1024)}]}),
+        json!({"packages":[{"id":"large","asset_metadata":"x".repeat(8 * 1024 * 1024)}]}),
     );
     assert_eq!(
         oversized

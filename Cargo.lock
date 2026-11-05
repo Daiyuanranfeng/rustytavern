@@ -1618,13 +1618,13 @@ dependencies = [
  "clap",
  "crc32fast",
  "futures-util",
- "rmcp",
  "rusqlite",
  "rustytavern-adapters",
  "rustytavern-card",
  "rustytavern-conversation",
  "rustytavern-core",
  "rustytavern-plugin",
+ "rustytavern-plugins",
  "rustytavern-runtime",
  "rustytavern-store",
  "semver",
@@ -1725,6 +1725,25 @@ dependencies = [
  "tokio",
  "tokio-util",
  "url",
+]
+
+[[package]]
+name = "rustytavern-plugins"
+version = "0.1.0"
+dependencies = [
+ "async-trait",
+ "rmcp",
+ "rustytavern-adapters",
+ "rustytavern-card",
+ "rustytavern-conversation",
+ "rustytavern-core",
+ "rustytavern-plugin",
+ "rustytavern-runtime",
+ "rustytavern-store",
+ "serde",
+ "serde_json",
+ "tokio",
+ "tokio-util",
 ]
 
 [[package]]

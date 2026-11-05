@@ -142,9 +142,12 @@ impl DriverContext {
             .transpose()
     }
     /// The method dispatches one step with the composed tools and the continuation.
-    /// Without composed tools, the method dispatches the saved text request.
+    /// Without tools in the saved request, the method dispatches the saved text request.
     pub async fn open_agent_step(&mut self, continuation: &[AgentTurn]) -> Result<()> {
-        let agent = self.runtime.agent_request(continuation.to_vec());
+        let agent = match self.request.body.get("tools") {
+            Some(_) => self.runtime.agent_request(continuation.to_vec()),
+            None => None,
+        };
         let result = self.open(agent.as_ref()).await;
         if let Err(error) = &result {
             self.failure = Some(error.clone());

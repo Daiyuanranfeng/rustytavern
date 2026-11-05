@@ -15,7 +15,7 @@ rustytavern-adapters.workspace = true
 rustytavern-runtime.workspace = true
 rustytavern-store = { workspace = true, features = ["sqlite"] }
 async-trait.workspace = true
-rmcp.workspace = true
+rustytavern-plugins.workspace = true
 semver.workspace = true
 serde.workspace = true
 serde_json.workspace = true

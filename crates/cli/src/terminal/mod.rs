@@ -13,7 +13,7 @@ use crossterm::{
 };
 use futures_util::StreamExt;
 use rustytavern::{
-    app::{ExtensionManager, default_registry},
+    app::PackageManager,
     config::{Application, StoredCredentials, default_data_dir},
     runtime::RuntimeEvent,
     session::Generation,
@@ -168,10 +168,10 @@ async fn generate(
     sender: &mpsc::Sender<Update>,
 ) -> Result<Generation> {
     let app = Application::open(path)?;
-    let registry = default_registry(app.store.clone()).await?;
-    let mut extensions = ExtensionManager::open(&app.data_dir, app.store, registry)?;
-    extensions.restore().await?;
-    let runtime = rustytavern::app::runtime(&extensions).await?;
+    let registry = app.registry().await?;
+    let mut packages = PackageManager::open(&app.data_dir, app.store, registry)?;
+    packages.restore().await?;
+    let runtime = rustytavern::app::runtime(&packages).await?;
     let provider = runtime.provider_config(&session).await?;
     let mut handle = if retry {
         runtime.regenerate(&session, provider).await?

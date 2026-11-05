@@ -5,7 +5,7 @@ use std::{
 
 use rustytavern::{
     Error, Result,
-    app::{ExtensionManager, default_registry},
+    app::PackageManager,
     card::{Card, MAX_INPUT_BYTES},
     config::{Application, default_data_dir},
     prompt::PromptOptions,
@@ -90,19 +90,18 @@ async fn execute(
         None => default_data_dir()?,
     };
     let mut app = Application::open(path)?;
-    let registry = default_registry(app.store.clone()).await?;
-    let mut extensions =
-        ExtensionManager::open(&app.data_dir, app.store.clone(), registry.clone())?;
+    let registry = app.registry().await?;
+    let mut packages = PackageManager::open(&app.data_dir, app.store.clone(), registry.clone())?;
     let needs_runtime = matches!(
         &command,
         Command::Chat { .. }
             | Command::Prompt { .. }
-            | Command::ExtensionAlias(_)
+            | Command::PackageAlias(_)
             | Command::Card {
                 command: CardCommand::Fetch { .. } | CardCommand::Import { .. }
             }
-            | Command::Extension {
-                command: ExtensionCommand::Enable { .. } | ExtensionCommand::Run { .. }
+            | Command::Package {
+                command: PackageCommand::Enable { .. } | PackageCommand::Run { .. }
             }
             | Command::Session {
                 command: SessionCommand::New { .. }
@@ -115,9 +114,9 @@ async fn execute(
             }
     );
     if needs_runtime {
-        extensions.restore().await?;
+        packages.restore().await?;
     }
-    let runtime = rustytavern::app::runtime(&extensions).await?;
+    let runtime = rustytavern::app::runtime(&packages).await?;
     match command {
         Command::Model { command } => match command {
             ModelCommand::Discover {
@@ -128,7 +127,7 @@ async fn execute(
                 parameter,
             } => {
                 use rustytavern::provider::catalog::{CatalogClient, CatalogFilter};
-                let config = extensions.provider(&app.config, &provider)?;
+                let config = packages.provider(&app.config, &provider)?;
                 let mut catalog = CatalogClient::default()
                     .fetch(
                         &config,
@@ -147,7 +146,7 @@ async fn execute(
             }
             ModelCommand::Select { provider, model } => {
                 use rustytavern::provider::ProviderAdapter;
-                let mut config = extensions.provider(&app.config, &provider)?;
+                let mut config = packages.provider(&app.config, &provider)?;
                 let model = if config.kind == ProviderKind::Gemini {
                     model.strip_prefix("models/").unwrap_or(&model).to_owned()
                 } else {
@@ -198,55 +197,46 @@ async fn execute(
                 )?)?;
             }
         },
-        Command::Extension { command } => match command {
-            ExtensionCommand::Install { path, builtin } => {
-                let package = match (path, builtin) {
-                    (Some(path), None) => extensions.install(&path)?,
-                    (None, Some(name)) => extensions.install_builtin(&name)?,
-                    _ => {
-                        return Err(Error::new(
-                            "invalid_extension_path",
-                            "The install command requires a path or --builtin name.",
-                        ));
-                    }
-                };
+        Command::Package { command } => match command {
+            PackageCommand::Install { path } => {
+                let package = packages.install(&path)?;
                 output.write(&package)?;
             }
-            ExtensionCommand::List { .. } => output.write(&extensions.list())?,
-            ExtensionCommand::Inspect { extension, .. } => {
-                output.write(&extensions.inspect(&extension)?)?
+            PackageCommand::List { .. } => output.write(&packages.list())?,
+            PackageCommand::Inspect { package, .. } => {
+                output.write(&packages.inspect(&package)?)?
             }
-            ExtensionCommand::Enable {
-                extensions: ids,
+            PackageCommand::Enable {
+                packages: ids,
                 grant,
                 trust_processes,
             } => {
-                extensions
+                packages
                     .enable(&ids, grant.into_iter().collect(), trust_processes)
                     .await?;
                 output.write(&json!({"enabled":ids}))?;
             }
-            ExtensionCommand::Disable { extension } => {
-                extensions.disable(&extension).await?;
-                output.write(&json!({"disabled":extension}))?;
+            PackageCommand::Disable { package } => {
+                packages.disable(&package).await?;
+                output.write(&json!({"disabled":package}))?;
             }
-            ExtensionCommand::Uninstall { extension } => {
-                extensions.uninstall(&extension)?;
-                output.write(&json!({"uninstalled":extension}))?;
+            PackageCommand::Uninstall { package } => {
+                packages.uninstall(&package)?;
+                output.write(&json!({"uninstalled":package}))?;
             }
-            ExtensionCommand::Asset {
-                extension,
+            PackageCommand::Asset {
+                package,
                 path,
                 output: destination,
             } => {
-                std::fs::write(&destination, extensions.asset(&extension, &path)?)?;
+                std::fs::write(&destination, packages.asset(&package, &path)?)?;
                 output.write(&json!({"output":destination}))?;
             }
-            ExtensionCommand::Run { command, input } => {
+            PackageCommand::Run { command, input } => {
                 let arguments = input.read()?;
                 let cancellation = cancellation.clone();
                 let result = cancel_operation(
-                    extensions.run_command(&command, arguments, cancellation.clone()),
+                    packages.run_command(&command, arguments, cancellation.clone()),
                     cancellation,
                 )
                 .await?;
@@ -262,7 +252,7 @@ async fn execute(
                     .iter()
                     .map(serde_json::to_value)
                     .collect::<std::result::Result<Vec<_>, _>>()?;
-                records.extend(extensions.declared_plugins()?);
+                records.extend(packages.declared_plugins()?);
                 if let Some(id) = plugin {
                     output.write(
                         &records
@@ -275,7 +265,7 @@ async fn execute(
                 }
             }
             PluginCommand::Bind { service, plugin } => {
-                extensions.bind(service.clone(), plugin.clone()).await?;
+                packages.bind(service.clone(), plugin.clone()).await?;
                 output.write(&json!({"service":service,"plugin":plugin}))?;
             }
         },
@@ -288,18 +278,18 @@ async fn execute(
                 return Err(Error::new("invalid_preset", "The preset does not exist."));
             }
             if resolved {
-                output.write(&extensions.composition().await?)?;
+                output.write(&packages.composition().await?)?;
             } else {
                 output.write(
-                    &json!({"preset":preset,"standard_plugins":registry.lock().await.inspect(),"extensions":extensions.list()}),
+                    &json!({"preset":preset,"standard_plugins":registry.lock().await.inspect(),"packages":packages.list()}),
                 )?;
             }
         }
-        Command::ExtensionAlias(arguments) => {
+        Command::PackageAlias(arguments) => {
             let (name, rest) = arguments.split_first().ok_or_else(|| {
                 Error::new(
-                    "invalid_extension_command",
-                    "The extension command name is missing.",
+                    "invalid_package_command",
+                    "The package command name is missing.",
                 )
             })?;
             let input = match rest {
@@ -310,14 +300,14 @@ async fn execute(
                 _ => {
                     return Err(Error::new(
                         "invalid_command_arguments",
-                        "The extension alias accepts a URL or --args JSON.",
+                        "The package alias accepts a URL or --args JSON.",
                     ));
                 }
             };
             let cancellation = cancellation.clone();
             output.write(
                 &cancel_operation(
-                    extensions.run_command(name, input, cancellation.clone()),
+                    packages.run_command(name, input, cancellation.clone()),
                     cancellation,
                 )
                 .await?,
@@ -346,7 +336,7 @@ async fn execute(
             CardCommand::Fetch { url, source, .. } => {
                 let cancellation = cancellation.clone();
                 let result = cancel_operation(
-                    extensions.fetch_card(&url, &source, cancellation.clone()),
+                    packages.fetch_card(&url, &source, cancellation.clone()),
                     cancellation,
                 )
                 .await?;
@@ -414,7 +404,7 @@ async fn execute(
             } => {
                 let mut target = app.store.session(&session)?;
                 target.provider = provider.unwrap_or(target.provider);
-                let config = extensions.provider(&app.config, &target.provider)?;
+                let config = packages.provider(&app.config, &target.provider)?;
                 target.model = model.unwrap_or_else(|| {
                     if config.model.is_empty() {
                         target.model.clone()
@@ -445,7 +435,7 @@ async fn execute(
                 ..
             } => {
                 let card = app.store.card(&character)?;
-                let config = extensions.provider(&app.config, &provider)?;
+                let config = packages.provider(&app.config, &provider)?;
                 let selected = if greeting == 0 {
                     card.text("first_mes").to_owned()
                 } else {
@@ -566,7 +556,7 @@ async fn execute(
         }
         Command::Config { command } => match command {
             ConfigCommand::Show => {
-                output.write(&extensions.configuration(&serde_json::to_value(&app.config)?)?)?
+                output.write(&packages.configuration(&serde_json::to_value(&app.config)?)?)?
             }
             ConfigCommand::Capabilities => output.write(
                 &[

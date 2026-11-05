@@ -748,7 +748,11 @@ impl Runtime {
         loop {
             let mut prepared = self.provider.prepare(&plan, &session.model, config)?;
             if let Some(agent) = self.agent_request(Vec::new()) {
-                prepared = self.provider.prepare_agent(prepared, &agent)?;
+                match self.provider.prepare_agent(prepared.clone(), &agent) {
+                    Ok(request) => prepared = request,
+                    Err(error) if error.code == "unsupported_provider_tools" => {}
+                    Err(error) => return Err(error),
+                }
             }
             let units = serde_json::to_vec(&prepared.body)?.len();
             if units <= 8 * 1024 * 1024
