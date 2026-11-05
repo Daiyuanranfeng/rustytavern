@@ -44,3 +44,5 @@ ratatui-textarea = "0.9.4"
 syntect = { version = "5.3", default-features = false, features = ["default-syntaxes", "default-themes", "regex-fancy"] }
 pulldown-cmark = { version = "0.13", default-features = false }
 unicode-width = "0.2"
+ratatui-image = { version = "11", default-features = false, features = ["crossterm"] }
+image = { version = "0.25", default-features = false, features = ["png", "jpeg", "webp", "gif"] }
