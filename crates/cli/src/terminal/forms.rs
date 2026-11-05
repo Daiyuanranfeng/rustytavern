@@ -389,6 +389,7 @@ impl Ui {
             items,
         );
         self.folder = folder;
+        self.notice = "Enter opens a folder or a card. Type to filter.".into();
         Ok(())
     }
     /// The method reads a character file and shows it. The store does not change.

@@ -12,7 +12,7 @@ The existing command surface remains available for scripts.
 | --- | --- |
 | `/provider` | The user connects a provider with an API key or replaces its key. Several providers can stay connected. |
 | `/model` | The user selects a model from the combined catalogs of all connected providers. The model selects its provider. |
-| `/character` | The user selects a character or adds one from a file or web address. |
+| `/character` | The user selects a character, or previews and adds one from a file or web address. |
 | `/persona` | The user selects or creates a persona. |
 | `/new` | The user starts a chat and selects the first greeting. |
 | `/chats` | The user resumes a saved chat. |
@@ -66,10 +66,15 @@ The model list shows recommended roleplay models first, with context length and 
 
 ### Characters
 
-The `/character` menu adds a character from one input. The input accepts a PNG, JSON, or CHARX file path.
-A dropped file path can contain quotes, shell escapes, or a leading `~/`. The terminal removes them.
-The input also accepts a `chub.ai` or `realm.risuai.net` address. The terminal selects the source from the address.
+The `/character` menu adds a character from a file or from a web address.
+The file browser starts in `~/Downloads`. It lists folders and PNG, JSON, and CHARX files. Type to filter the list.
+The web address form accepts a `chub.ai` or `realm.risuai.net` address. The terminal selects the source from the address.
+The form also accepts a dropped file path. The terminal removes quotes, shell escapes, and a leading `~/`.
 The essential Chub and RisuRealm source plugins download the card.
+A preview shows the card before the import. The store does not change until you press Enter.
+The preview has four tabs: Overview, Greetings, Lorebook, and Prompts. The Overview tab shows the card picture.
+The terminal uses the Kitty, iTerm2, or Sixel image protocol when available. Other terminals show colored half blocks.
+A Chub card is JSON and has no picture.
 
 ### Ownership
 
@@ -242,6 +247,7 @@ The resolved inspection can start enabled trusted processes.
 The `plugin run NAME --args JSON` command calls an enabled plugin command.
 The command also accepts `--args-file PATH` or `--url URL`. The root alias form accepts `NAME --url URL` or `NAME --args JSON`.
 The `card fetch URL --source NAME` command imports through a source plugin. Source imports retain provenance in the stored card record.
+The `--preview` option prints the complete card and does not save it.
 Ctrl+C cancels a source or plugin operation.
 The [installed plugin guide](developer.md#installed-plugins) includes the manifest and implementation instructions. The [example index](../crates/tavern/examples/README.md) links executable examples.
 
