@@ -10,10 +10,10 @@ use crossterm::{
         DisableBracketedPaste, DisableMouseCapture, EnableBracketedPaste, EnableMouseCapture,
         Event, KeyCode, KeyEventKind, KeyModifiers,
     },
-    execute,
+    execute, queue,
     terminal::{
-        Clear, ClearType, EnterAlternateScreen, LeaveAlternateScreen, disable_raw_mode,
-        enable_raw_mode,
+        BeginSynchronizedUpdate, Clear, ClearType, EndSynchronizedUpdate, EnterAlternateScreen,
+        LeaveAlternateScreen, disable_raw_mode, enable_raw_mode,
     },
 };
 use ratatui::{
@@ -84,7 +84,7 @@ fn input() -> mpsc::UnboundedReceiver<std::io::Result<Event>> {
     receiver
 }
 /// The function draws one frame. A dialog uses the alternate screen with mouse capture.
-/// The chat uses an inline area below the native scrollback.
+/// The chat uses an inline area below the native scrollback. A synchronized update shows each frame at once.
 fn present(
     ui: &mut Ui,
     terminal: &mut DefaultTerminal,
@@ -114,14 +114,20 @@ fn present(
         full.draw(|frame| view::draw(frame, ui))?;
         return Ok(());
     }
+    queue!(stdout(), BeginSynchronizedUpdate)?;
     terminal.autoresize()?;
     let (width, rows) = crossterm::terminal::size()?;
     let height = view::height(ui, width, rows);
     let area = terminal.get_frame().area();
     if rebuild || height != area.height {
-        terminal.clear()?;
+        // The cursor query runs before the clear, so the area is never blank while the query waits.
         execute!(stdout(), MoveTo(0, area.y))?;
         *terminal = inline(height)?;
+        queue!(
+            stdout(),
+            MoveTo(0, terminal.get_frame().area().y),
+            Clear(ClearType::FromCursorDown)
+        )?;
     }
     if !ui.history.is_empty() {
         let lines = view::history(&std::mem::take(&mut ui.history), width, ui.bubbles);
@@ -131,6 +137,7 @@ fn present(
         })?;
     }
     terminal.draw(|frame| view::draw(frame, ui))?;
+    execute!(stdout(), EndSynchronizedUpdate)?;
     Ok(())
 }
 
