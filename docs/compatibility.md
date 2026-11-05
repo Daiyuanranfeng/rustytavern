@@ -10,13 +10,14 @@
 | Conversations | The product stores branches, alternatives, drafts, configuration revisions, and native exports. | The product needs broader reference workflow coverage. |
 | Providers | Five adapters stream text. OpenRouter has local and authorized live evidence. | Other direct vendor endpoints need live validation. |
 | Model discovery | The library fetches and filters advertised model capabilities. CLI and terminal selectors exist. | Integrated checks remain pending. Advertisements do not prove model behavior. |
-| Tools, MCP, and skills | The [agent extension](../crates/tavern/bundled/agent/README.md) runs a bounded tool loop on OpenRouter and custom adapters. Separate tool plugins connect stdio and HTTP MCP servers through `rmcp` and add Agent Skills. | Durable tool records, saved continuations for each tool step, and per-character skill selection remain pending. |
-| Web search and fetch | The [web extension](../crates/tavern/bundled/web/README.md) `web_fetch` tool reads public HTTPS pages through the scoped host fetcher. | Web search remains pending. |
+| Tools, MCP, and skills | The essential [agent driver](../crates/plugins/README.md#agent-and-tools) runs a bounded tool loop on OpenRouter and custom adapters. Separate tool plugins connect stdio and HTTP MCP servers through `rmcp` and add Agent Skills. | Durable tool records, saved continuations for each tool step, and per-character skill selection remain pending. |
+| Web search and fetch | The essential `web_fetch` tool reads public HTTPS pages through the scoped host fetcher. | Web search remains pending. |
 | Voice and image input | The provider contract accepts text only. | Typed media inputs, storage, permissions, and adapters remain pending. |
 | Speech and realtime audio | The runtime has no audio operation. | Recognition, synthesis, and realtime sessions remain pending. |
 | Image generation | The runtime has no image generation operation. | Typed generation operations and artifact storage remain pending. |
 | Embeddings and reranking | The runtime has no dedicated operations. | Typed operations and adapters remain pending. |
-| Extensions | The product installs local packages and restores granted plugins. External processes supply card sources. | External processes do not supply arbitrary runtime service families. |
+| Plugin packages | The product installs local packages and restores granted plugins. External processes supply card sources. | External processes do not supply arbitrary runtime service families. |
+| Extensions | An extension sets the terminal bubble colors. | Other appearance settings remain pending. |
 
 The product reports an adapter contract separately from a remote model capability. The product must not infer model support from a provider name.
 A trait definition does not establish complete feature support. The following sections record format, provider, and validation limits.
@@ -37,7 +38,7 @@ The private vector adapter executes 56 selected assertions without expected outp
 Three source-policy cases substitute DNS and HTTP operations in the exact source module. Those cases do not verify live DNS, TLS, or website availability.
 The external timeout case uses an actual process deadline.
 
-The 136 Rust tests pass on macOS with Rust 1.85 and 1.94 and Linux with Rust 1.85. The suite covers archives, prompt compilation, provider protocols, durable sessions, fencing, cancellation, plugins, extensions, configuration adoption, and exports.
+The Rust tests pass on macOS with Rust 1.99.1. The suite covers archives, prompt compilation, provider protocols, durable sessions, fencing, cancellation, plugins, packages, extensions, tools, configuration adoption, and exports.
 Request tests compare inspection, persistence, and dispatch. The suite uses local model endpoints and makes no paid model request.
 Two terminal workflows and separate authorized live OpenRouter checks pass. The live checks cover character and persona names, restart, inspection, and credential-free storage.
 Other direct vendor endpoints have no live credential test yet. Private records retain the candidate hash, commands, model, and usage.
@@ -267,7 +268,7 @@ The fixed reply only checks transport, response handling, and saved conversation
 ### Reference comparison
 
 Each case must identify one reference application and one source revision. Each case must freeze the card, persona, conversation, preset, provider, model, and generation options.
-The case must record the effective plugin and extension configuration. The capture server must record the complete request body at the model API boundary.
+The case must record the effective plugin and package configuration. The capture server must record the complete request body at the model API boundary.
 The comparator must compare the reference capture with the candidate dispatch. The comparator must also compare candidate inspection with candidate dispatch.
 
 The comparator must retain every message role and every message position. The comparator must retain whitespace and Unicode text exactly.

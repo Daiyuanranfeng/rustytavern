@@ -1,23 +1,23 @@
-# Harbor asset extension
+# Harbor asset package
 
-This extension provides an asset and a configuration default without a plugin.
+This package provides an asset and a configuration default without a plugin.
 The package ID is `example.harbor-assets`.
-The [manifest](extension.json) declares `templates/harbor.txt` with its SHA-256 hash.
+The [manifest](manifest.json) declares `templates/harbor.txt` with its SHA-256 hash.
 The package supplies `example.location: harbor` as a library default.
 The package does not insert its template into a prompt automatically.
 
 ## Interface and use
 
-The application reads the declared asset through `ExtensionManager::asset`.
-The application reads defaults through `ExtensionManager::configuration`.
+The application reads the declared asset through `PackageManager::asset`.
+The application reads defaults through `PackageManager::configuration`.
 An explicit `example.location` value overrides the package default.
 
 ```sh
-cargo run --locked -- --data-dir ./data extension install crates/tavern/examples/extensions/harbor-assets
-cargo run --locked -- --data-dir ./data extension enable example.harbor-assets
-cargo run --locked -- --data-dir ./data extension asset example.harbor-assets templates/harbor.txt --output ./harbor.txt
-cargo run --locked -- --data-dir ./data extension disable example.harbor-assets
-cargo run --locked -- --data-dir ./data extension uninstall example.harbor-assets
+cargo run --locked -- --data-dir ./data package install crates/tavern/examples/packages/harbor-assets
+cargo run --locked -- --data-dir ./data package enable example.harbor-assets
+cargo run --locked -- --data-dir ./data package asset example.harbor-assets templates/harbor.txt --output ./harbor.txt
+cargo run --locked -- --data-dir ./data package disable example.harbor-assets
+cargo run --locked -- --data-dir ./data package uninstall example.harbor-assets
 ```
 
 The commands require no grants, process trust, or model credentials.
@@ -32,4 +32,4 @@ The manager refuses an asset read after disable.
 5. Connect those defaults to the feature in the host application.
 6. Verify installation, restart, asset access, and disable.
 
-The [extension guide](../../../../../docs/developer.md#product-extensions) defines the complete package contract.
+The [package guide](../../../../../docs/developer.md#plugin-packages) defines the complete package contract.

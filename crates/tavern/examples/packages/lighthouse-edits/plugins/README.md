@@ -19,7 +19,7 @@ The [package README](../README.md) supplies complete CLI commands.
 
 ## Lifecycle and verification
 
-The extension manager activates this plugin when the package becomes enabled.
+The package manager activates this plugin when the package becomes enabled.
 The registry keeps the plugin while another owner or operation needs it.
 The registry releases its resources after its final owner and operation release it.
 The [plugin guide](../../../../../../docs/developer.md#runtime-plugins) defines the complete lifecycle.

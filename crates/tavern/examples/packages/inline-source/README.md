@@ -1,13 +1,13 @@
-# Inline source extension
+# Inline source package
 
-This extension runs a separate Rust card-source process.
+This package runs a separate Rust card-source process.
 The process returns the authored Lumen card for an accepted example URL.
 The process makes no network request or model request.
 The package ID is `example.inline-source`.
 
 ## Design and interface
 
-The [extension manifest](extension.json) declares `example-import`.
+The [package manifest](manifest.json) declares `example-import`.
 The command calls `card.source.example/1` with the `fetch` operation.
 The [plugin manifest](plugins/source.json) selects `{package}/source-plugin`.
 The [plugin README](plugins/README.md) defines the process boundary.
@@ -22,14 +22,14 @@ The temporary directory holds the platform-specific binary.
 ```sh
 cargo build --locked --example source_plugin
 rustytavern_example_dir=$(mktemp -d)
-cp -R crates/tavern/examples/extensions/inline-source/. "$rustytavern_example_dir/"
+cp -R crates/tavern/examples/packages/inline-source/. "$rustytavern_example_dir/"
 cp target/debug/examples/source_plugin "$rustytavern_example_dir/source-plugin"
-cargo run --locked -- --data-dir ./data extension install "$rustytavern_example_dir"
-cargo run --locked -- --data-dir ./data extension enable example.inline-source --trust-processes
-cargo run --locked -- --data-dir ./data extension run example-import --url https://example.com/lumen
+cargo run --locked -- --data-dir ./data package install "$rustytavern_example_dir"
+cargo run --locked -- --data-dir ./data package enable example.inline-source --trust-processes
+cargo run --locked -- --data-dir ./data package run example-import --url https://example.com/lumen
 cargo run --locked -- --data-dir ./data card fetch https://example.com/lumen --source example
-cargo run --locked -- --data-dir ./data extension disable example.inline-source
-cargo run --locked -- --data-dir ./data extension uninstall example.inline-source
+cargo run --locked -- --data-dir ./data package disable example.inline-source
+cargo run --locked -- --data-dir ./data package uninstall example.inline-source
 rm -rf "$rustytavern_example_dir"
 ```
 
@@ -50,4 +50,4 @@ The Windows build requires an executable filename and manifest path for that pla
 7. Test invalid handshake, timeout, cancellation, and malformed responses.
 
 The [protocol guide](../../../../../docs/developer.md#external-card-source-protocol) defines every supported message.
-The [extension guide](../../../../../docs/developer.md#product-extensions) defines package activation and restart.
+The [package guide](../../../../../docs/developer.md#plugin-packages) defines package activation and restart.

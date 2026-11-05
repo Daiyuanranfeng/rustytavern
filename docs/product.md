@@ -25,7 +25,7 @@ The roadmap sets product outcomes without dates. The current implementation does
 | H1-05 | I ask the character to search the web and fetch a page so its answer uses inspectable source material. |
 | H1-06 | I approve or deny a requested action and stop active work so I keep control of external effects and cost. |
 | H1-07 | I resume a session, choose a branch, and export its records so I can continue work without losing identity or history. |
-| H1-08 | I install an extension or embed the library so I can add a tool without changing the core host. |
+| H1-08 | I install a plugin package or embed the library so I can add a tool without changing the core host. |
 
 **Observable exit criteria:**
 
@@ -106,7 +106,8 @@ The roadmap defines required outcomes. The implementation evidence does not esta
 ## Ownership and acceptance
 
 The core host owns persistence, permissions, cancellation, resource limits, and bounded execution loops.
-Plugins implement behavior and adapters. Extensions package plugins, commands, defaults, and assets.
+Plugins change agent behavior or add content to the agent context. Packages deliver third-party plugins with commands, defaults, and assets.
+Extensions change only the application appearance, such as the message bubbles.
 The [architecture](architecture.md#target-runtime) defines those boundaries. The [developer guide](developer.md) defines current technical contracts.
 The [compatibility guide](compatibility.md) records tested behavior and open limits.
 No horizon claims complete SillyTavern or RisuAI parity. Each exit criterion requires observable library and terminal evidence.

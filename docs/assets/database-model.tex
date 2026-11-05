@@ -81,7 +81,7 @@
 \node[table,fill=storefill] (sessions) at (9.5,11) {\textbf{sessions}\\\texttt{id} PK\\\texttt{payload} JSON\\{\scriptsize Configuration history in payload}\\\texttt{version}\\\texttt{head} logical reference\\\texttt{owner} logical reference\\\texttt{lease\_until}\\\texttt{fence}};
 \node[table,fill=storefill] (messages) at (18,11) {\textbf{messages}\\\texttt{seq} PK, autoincrement\\\texttt{id} UNIQUE, NOT NULL\\\texttt{session\_id} FK, NOT NULL\\\texttt{parent\_id} FK, optional\\\texttt{role}, \texttt{text}\\\texttt{generation\_id} logical reference};
 \node[table,fill=storefill] (generations) at (9.5,4.8) {\textbf{generations}\\\texttt{id} PK\\\texttt{session\_id} FK, NOT NULL\\\texttt{idempotency\_key} optional\\\texttt{payload} JSON\\{\scriptsize\texttt{UNIQUE(session\_id,idempotency\_key)}}};
-\node[table,fill=storefill] (state) at (2,-0.7) {\textbf{plugin\_state}\\\texttt{namespace}, \texttt{key}, \texttt{revision}\\\texttt{payload} JSON\\PK(namespace, key, revision)\\{\scriptsize Includes the extension catalog}};
+\node[table,fill=storefill] (state) at (2,-0.7) {\textbf{plugin\_state}\\\texttt{namespace}, \texttt{key}, \texttt{revision}\\\texttt{payload} JSON\\PK(namespace, key, revision)\\{\scriptsize Includes the package catalog}};
 \node[table,fill=storefill] (worldbooks) at (2,4.4) {\textbf{worldbooks}\\\texttt{id} PK\\\texttt{payload} JSON};
 \draw[fk] ([yshift=-5mm]messages.west) -- node[edge label,below] {session\_id $\to$ id} ([yshift=-5mm]sessions.east);
 \draw[fk] (generations.north) -- node[edge label,left] {session\_id $\to$ id} (sessions.south);

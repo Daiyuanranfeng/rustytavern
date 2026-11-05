@@ -39,4 +39,4 @@ The program prints this JSON after the assertions pass.
 
 The stock CLI cannot load this Rust type from a package at runtime.
 An embedded application can expose the type through a registered `NativeFactory`.
-An independent process can use the [external source example](../extensions/inline-source/README.md).
+An independent process can use the [external source example](../packages/inline-source/README.md).

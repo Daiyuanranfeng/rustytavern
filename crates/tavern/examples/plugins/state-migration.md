@@ -68,7 +68,7 @@ The callback must retain unknown fields within each replacement when its format 
 The host retains keys that the callback omits.
 The [state guide](../../../../docs/developer.md#plugin-state-schemas-and-migration) defines atomicity and concurrent updates.
 The [plugin guide](../../../../docs/developer.md#runtime-plugins) defines native activation and grants.
-The [extension guide](../../../../docs/developer.md#product-extensions) explains how an embedded host exposes the plugin through a compiled factory.
+The [package guide](../../../../docs/developer.md#plugin-packages) explains how an embedded host exposes the plugin through a compiled factory.
 
 ## Verification
 
