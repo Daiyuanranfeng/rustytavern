@@ -38,10 +38,9 @@ The binary opens an interactive terminal without a subcommand.
 cargo run --locked -p rustytavern-cli
 ```
 
-The `/setup` command opens the model provider form.
+The `/provider` command connects a model provider. The `/model` command selects a model.
 The `/character` and `/persona` commands select identities.
-The `/new` command starts a conversation.
-The `/plugins` and `/extensions` commands open product controls.
+The `/new` command starts a chat. The `/settings` command opens the other controls.
 The [terminal guide](docs/user-guide.md#interactive-terminal) defines commands, keys, and persistence.
 
 ## Script commands

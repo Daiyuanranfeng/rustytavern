@@ -4,15 +4,23 @@ use super::*;
 impl Ui {
     pub(super) fn form(&mut self, kind: FormKind) {
         let (title, fields) = match &kind {
-            FormKind::Models(_) => (
-                "Discover model capabilities",
-                vec![
-                    field("Catalog endpoint: optional", ""),
-                    field("Required input modality: optional", ""),
-                    field("Required output modality: optional", ""),
-                    field("Required parameter: optional", ""),
-                ],
-            ),
+            FormKind::Setup(vendor) => {
+                let mut fields = vec![Field {
+                    secret: true,
+                    ..field(
+                        "API key, or the name of an environment variable that holds it",
+                        "",
+                    )
+                }];
+                if vendor == "custom" {
+                    fields[0].name = "API key or environment variable: optional";
+                    fields.push(field(
+                        "Server URL, for example http://127.0.0.1:8080/v1/chat/completions",
+                        "",
+                    ));
+                }
+                ("Connect a model provider", fields)
+            }
             FormKind::WorldbookImport => ("Import a worldbook", vec![field("File path", "")]),
             FormKind::WorldbookExport => (
                 "Export a worldbook",
@@ -21,8 +29,7 @@ impl Ui {
                     field("Output file", "worldbook.json"),
                 ],
             ),
-            FormKind::Provider => {
-                let name = self.preferences.provider.as_deref().unwrap_or("default");
+            FormKind::Provider(name) => {
                 let selected = Application::open(&self.path)
                     .ok()
                     .and_then(|app| app.config.providers.get(name).cloned());
@@ -80,24 +87,16 @@ impl Ui {
                     ],
                 )
             }
-            FormKind::Import => ("Import a character", vec![field("File path", "")]),
-            FormKind::Fetch => (
-                "Fetch a character",
-                vec![
-                    field("Website URL", ""),
-                    field("Enabled source: chub or risurealm", "chub"),
-                ],
+            FormKind::Import => (
+                "Add a character",
+                vec![field(
+                    "PNG, JSON, or CHARX file path, or a chub.ai or realm.risuai.net address",
+                    "",
+                )],
             ),
             FormKind::Persona => (
                 "Create a persona",
                 vec![field("Name", ""), field("Description", "")],
-            ),
-            FormKind::New => (
-                "Start a conversation",
-                vec![
-                    field("Greeting index", "0"),
-                    field("Accept preserved unsupported behavior: yes or no", "no"),
-                ],
             ),
             FormKind::Export => (
                 "Export this conversation",
@@ -137,6 +136,17 @@ impl Ui {
                 vec![field("Command name", ""), field("Arguments as JSON", "{}")],
             ),
         };
+        if let FormKind::Setup(vendor) = &kind {
+            self.notice = VENDORS.iter().find(|v| v.0 == vendor).map_or_else(
+                || "Enter the server URL. A local server often needs no key.".into(),
+                |v| {
+                    format!(
+                        "Paste a key from {}, or leave it empty to use {}.",
+                        v.4, v.1
+                    )
+                },
+            );
+        }
         self.overlay = Some(Overlay::Form {
             title: title.into(),
             kind,
@@ -156,23 +166,6 @@ impl Ui {
                 .map_err(|_| Error::new("invalid_input", "The field requires an unsigned number."))
         };
         let (command, after) = match kind {
-            FormKind::Models(provider) => {
-                let optional = |index: usize| {
-                    (!values[index].trim().is_empty()).then(|| values[index].trim().to_owned())
-                };
-                (
-                    Command::Model {
-                        command: ModelCommand::Discover {
-                            provider: provider.clone(),
-                            endpoint: optional(0),
-                            input: optional(1),
-                            output: optional(2),
-                            parameter: optional(3),
-                        },
-                    },
-                    After::Models(provider.clone()),
-                )
-            }
             FormKind::WorldbookImport => {
                 if values[0] == "-"
                     || !std::fs::metadata(&values[0]).is_ok_and(|metadata| metadata.is_file())
@@ -200,7 +193,45 @@ impl Ui {
                 },
                 After::Notice,
             ),
-            FormKind::Provider => {
+            FormKind::Setup(vendor) => {
+                let endpoint = values.get(1).map_or("", |value| value.trim());
+                let (kind, reference, key) = connection(vendor, values[0].trim(), endpoint)?;
+                let old = Application::open(&self.path)?
+                    .config
+                    .providers
+                    .remove(kind)
+                    .unwrap_or_default();
+                let reference = match key {
+                    Some(key) => Some(StoredCredentials::new(&self.path).save(kind, key)?),
+                    None => reference,
+                };
+                (
+                    Command::Config {
+                        command: ConfigCommand::Provider {
+                            name: kind.into(),
+                            kind: kind.into(),
+                            model: if old.model.is_empty() {
+                                DEFAULT_MODELS
+                                    .iter()
+                                    .find(|(vendor, _)| *vendor == kind)
+                                    .map_or("default", |(_, model)| model)
+                                    .into()
+                            } else {
+                                old.model
+                            },
+                            endpoint: (!endpoint.is_empty()).then(|| endpoint.into()),
+                            api_key_env: reference,
+                            context_limit: old.context_limit,
+                            output_limit: old.output_limit,
+                            parameters: serde_json::to_string(&old.parameters)?,
+                            routing: old.routing.map(|r| serde_json::to_string(&r)).transpose()?,
+                            merge_system_messages: old.merge_system_messages,
+                        },
+                    },
+                    After::Setup(kind.into()),
+                )
+            }
+            FormKind::Provider(_) => {
                 if values[1] == "custom" && values[3].trim().is_empty() {
                     return Err(Error::new(
                         "invalid_input",
@@ -231,34 +262,24 @@ impl Ui {
                 )
             }
             FormKind::Import => {
-                if values[0] == "-"
-                    || !std::fs::metadata(&values[0]).is_ok_and(|metadata| metadata.is_file())
-                {
+                let value = values[0].trim();
+                if value.starts_with("https://") || value.starts_with("http://") {
+                    return self.fetch(value);
+                }
+                let path = local_path(value);
+                if !path.is_file() {
                     return Err(Error::new(
                         "invalid_input",
-                        "Select a regular character file.",
+                        "The file does not exist. Select a PNG, JSON, or CHARX character file.",
                     ));
                 }
                 (
                     Command::Card {
-                        command: CardCommand::Import {
-                            path: values[0].clone().into(),
-                            json: true,
-                        },
+                        command: CardCommand::Import { path, json: true },
                     },
                     After::Card,
                 )
             }
-            FormKind::Fetch => (
-                Command::Card {
-                    command: CardCommand::Fetch {
-                        url: values[0].clone(),
-                        source: values[1].clone(),
-                        json: true,
-                    },
-                },
-                After::Card,
-            ),
             FormKind::Persona => (
                 Command::Persona {
                     command: PersonaCommand::Create {
@@ -270,29 +291,6 @@ impl Ui {
                 },
                 After::Persona,
             ),
-            FormKind::New => {
-                self.new_requested = false;
-                (
-                    Command::Session {
-                        command: SessionCommand::New {
-                            character: self.preferences.character.clone().ok_or_else(|| {
-                                Error::new("invalid_character", "Select a character.")
-                            })?,
-                            persona: self.preferences.persona.clone().ok_or_else(|| {
-                                Error::new("invalid_persona", "Select a persona.")
-                            })?,
-                            provider: self.preferences.provider.clone().ok_or_else(|| {
-                                Error::new("invalid_provider", "Select a provider.")
-                            })?,
-                            model: None,
-                            greeting: number(&values[0])?,
-                            accept_reduced: yes(&values[1])?,
-                            json: true,
-                        },
-                    },
-                    After::Session,
-                )
-            }
             FormKind::Export => (
                 Command::Session {
                     command: SessionCommand::Export {
@@ -367,5 +365,179 @@ impl Ui {
         };
         self.command(command, after);
         Ok(())
+    }
+    /// The method selects the source from the address and asks once for its network grant.
+    fn fetch(&mut self, url: &str) -> Result<()> {
+        use rustytavern::source::{ChubSource, RisuRealmSource};
+        let (source, host) = if ChubSource::resolve(url).is_ok() {
+            ("chub", "api.chub.ai")
+        } else if RisuRealmSource::resolve(url).is_ok() {
+            ("risurealm", "realm.risuai.net")
+        } else {
+            return Err(Error::new(
+                "invalid_input",
+                "RustyTavern downloads characters from chub.ai and realm.risuai.net only.",
+            ));
+        };
+        let fetch = Command::Card {
+            command: CardCommand::Fetch {
+                url: url.into(),
+                source: source.into(),
+                json: true,
+            },
+        };
+        let id = format!("org.rustytavern.extension.{source}");
+        let app = Application::open(&self.path)?;
+        let registry = std::sync::Arc::new(tokio::sync::Mutex::new(
+            rustytavern::plugin::PluginRegistry::default(),
+        ));
+        if ExtensionManager::open(&app.data_dir, app.store.clone(), registry)?
+            .inspect(&id)
+            .is_ok_and(|package| package.enabled)
+        {
+            self.command(fetch, After::Card);
+            return Ok(());
+        }
+        let enable = Command::Extension {
+            command: ExtensionCommand::Enable {
+                extensions: vec![id],
+                grant: vec![format!("network:https:{host}")],
+                trust_processes: false,
+            },
+        };
+        let install = Command::Extension {
+            command: ExtensionCommand::Install {
+                path: None,
+                builtin: Some(source.into()),
+            },
+        };
+        let then = |command, after| After::Then(Box::new(command), Box::new(after));
+        self.menu(
+            &format!("Allow downloads from {host}?"),
+            vec![(
+                format!("Allow network access to {host} and download the character"),
+                Choice::Command(install, then(enable, then(fetch, After::Card))),
+            )],
+        );
+        Ok(())
+    }
+}
+
+const DEFAULT_MODELS: &[(&str, &str)] = &[
+    ("openrouter", "openrouter/auto"),
+    ("openai", "gpt-5"),
+    ("anthropic", "claude-sonnet-4-5"),
+    ("gemini", "gemini-2.5-flash"),
+];
+/// Each vendor has an ID, a default environment variable, a key prefix, a label, and a key page.
+/// The OpenAI prefix comes last because it is the most general.
+pub(super) const VENDORS: &[(&str, &str, &str, &str, &str)] = &[
+    (
+        "openrouter",
+        "OPENROUTER_API_KEY",
+        "sk-or-",
+        "OpenRouter · one key for hundreds of models (recommended)",
+        "openrouter.ai/keys",
+    ),
+    (
+        "anthropic",
+        "ANTHROPIC_API_KEY",
+        "sk-ant-",
+        "Anthropic · Claude",
+        "console.anthropic.com/settings/keys",
+    ),
+    (
+        "gemini",
+        "GEMINI_API_KEY",
+        "AIza",
+        "Google Gemini",
+        "aistudio.google.com/apikey",
+    ),
+    (
+        "openai",
+        "OPENAI_API_KEY",
+        "sk-",
+        "OpenAI · GPT",
+        "platform.openai.com/api-keys",
+    ),
+];
+
+/// The function returns the vendor, an environment reference, and a pasted key.
+/// An upper-case name is an environment variable. Other input is a key. An empty input uses the default variable.
+pub(super) fn connection<'a>(
+    vendor: &str,
+    input: &'a str,
+    endpoint: &str,
+) -> Result<(&'static str, Option<String>, Option<&'a str>)> {
+    let invalid = |message: String| Error::new("invalid_input", message);
+    let variable = !input.is_empty()
+        && input.starts_with(|c: char| c.is_ascii_uppercase())
+        && input
+            .bytes()
+            .all(|b| b.is_ascii_uppercase() || b.is_ascii_digit() || b == b'_');
+    let exported = |name: &str| std::env::var(name).ok().filter(|v| !v.trim().is_empty());
+    let unset = |name: &str| {
+        invalid(format!(
+            "Paste a key, or export {name} and restart RustyTavern."
+        ))
+    };
+    let Some(&(kind, default, ..)) = VENDORS.iter().find(|v| v.0 == vendor) else {
+        if endpoint.is_empty() {
+            return Err(invalid("Enter the server URL.".into()));
+        }
+        return match input {
+            "" => Ok(("custom", None, None)),
+            _ if variable => exported(input)
+                .map(|_| ("custom", Some(input.into()), None))
+                .ok_or_else(|| unset(input)),
+            _ => Ok(("custom", None, Some(input))),
+        };
+    };
+    let name = if input.is_empty() { default } else { input };
+    let key = if input.is_empty() || variable {
+        exported(name).ok_or_else(|| unset(name))?
+    } else {
+        input.to_owned()
+    };
+    if let Some(other) = VENDORS.iter().find(|v| key.starts_with(v.2)) {
+        if other.0 != kind {
+            return Err(invalid(format!(
+                "The key looks like a {} key. Go back and select {}.",
+                other.0, other.0
+            )));
+        }
+    }
+    Ok(if input.is_empty() || variable {
+        (kind, Some(name.into()), None)
+    } else {
+        (kind, None, Some(input))
+    })
+}
+
+/// The function removes quotes and shell escapes that terminals add when a file is dropped.
+pub(super) fn local_path(value: &str) -> PathBuf {
+    let quoted = value.len() >= 2
+        && ['\'', '"']
+            .iter()
+            .any(|q| value.starts_with(*q) && value.ends_with(*q));
+    let path = if quoted {
+        value[1..value.len() - 1].to_owned()
+    } else if cfg!(unix) {
+        let mut chars = value.chars();
+        let mut path = String::new();
+        while let Some(c) = chars.next() {
+            path.push(if c == '\\' {
+                chars.next().unwrap_or(c)
+            } else {
+                c
+            });
+        }
+        path
+    } else {
+        value.to_owned()
+    };
+    match (path.strip_prefix("~/"), std::env::var_os("HOME")) {
+        (Some(rest), Some(home)) => PathBuf::from(home).join(rest),
+        _ => path.into(),
     }
 }

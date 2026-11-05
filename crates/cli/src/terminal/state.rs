@@ -1,5 +1,6 @@
 use super::*;
-use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
+use crossterm::event::{KeyCode, KeyEvent, KeyModifiers, MouseButton, MouseEvent, MouseEventKind};
+use ratatui::layout::{Position, Rect};
 use rustytavern::{
     config::Application,
     session::{Generation, GenerationStatus},
@@ -9,22 +10,17 @@ use std::io::{Read, Write};
 use tui_textarea::TextArea;
 
 pub(super) const COMMANDS: &[(&str, &str)] = &[
-    ("/setup", "Configure a model provider"),
-    ("/model", "Select or edit a provider"),
-    ("/models", "Discover advertised models"),
-    ("/character", "Select or import a character"),
-    ("/worldbook", "Import or bind worldbooks"),
-    ("/persona", "Select or create a persona"),
-    ("/new", "Start a conversation"),
-    ("/sessions", "Resume a conversation"),
-    ("/config", "Inspect configuration"),
-    ("/plugins", "Inspect plugins and bind services"),
-    ("/extensions", "Manage product packages"),
-    ("/prompt", "Inspect a complete model request"),
-    ("/adopt", "Adopt current configuration"),
-    ("/retry", "Retry or regenerate the turn"),
-    ("/branch", "Select a conversation head"),
-    ("/export", "Export the conversation"),
+    ("/provider", "Connect or switch a model provider"),
+    ("/model", "Choose a model from the current provider"),
+    ("/character", "Select or add a character"),
+    ("/persona", "Select or create your persona"),
+    ("/new", "Start a chat"),
+    ("/chats", "Resume a chat"),
+    ("/retry", "Regenerate the last reply"),
+    (
+        "/settings",
+        "Lorebooks, branches, export, extensions, and more",
+    ),
     ("/help", "Read commands and keys"),
     ("/quit", "Close the terminal"),
 ];
@@ -40,6 +36,8 @@ pub(super) struct Preferences {
 
 pub(super) enum Job {
     Command(Command, After),
+    /// The job loads the model catalogs of several providers at the same time.
+    Catalogs(Vec<String>),
     Generate {
         session: String,
         message: String,
@@ -51,7 +49,9 @@ pub(super) enum After {
     Card,
     Persona,
     Provider(String),
-    Models(String),
+    Setup(String),
+    Models(Vec<String>),
+    Then(Box<Command>, Box<After>),
     Session,
     Refresh,
     View(&'static str),
@@ -59,14 +59,12 @@ pub(super) enum After {
 }
 #[derive(Clone)]
 pub(super) enum FormKind {
-    Models(String),
     WorldbookImport,
     WorldbookExport,
-    Provider,
+    Setup(String),
+    Provider(String),
     Import,
-    Fetch,
     Persona,
-    New,
     Export,
     Prompt,
     Bind,
@@ -82,9 +80,9 @@ pub(super) enum Choice {
 }
 pub(super) enum Selection {
     DiscoveredModel(String),
+    Greeting(bool),
     Card,
     Persona,
-    Provider,
     Session,
     Branch,
     Enable,
@@ -94,12 +92,27 @@ pub(super) enum Selection {
 pub(super) struct Field {
     pub name: &'static str,
     pub editor: TextArea<'static>,
+    pub secret: bool,
+}
+#[derive(Clone, Copy)]
+pub(super) enum Hit {
+    Transcript,
+    Step(usize),
+    Tab(usize),
+    Item(usize),
+    Slash(&'static str),
+    Apply,
+    Close,
 }
 pub(super) enum Overlay {
     Menu {
         title: String,
         items: Vec<(String, Choice)>,
         selected: usize,
+        filter: String,
+        /// Each tab has a label and the item indexes that it shows. An empty list shows all items.
+        tabs: Vec<(String, Vec<usize>)>,
+        tab: usize,
     },
     Form {
         title: String,
@@ -113,12 +126,26 @@ pub(super) enum Overlay {
         scroll: u16,
     },
 }
+/// A step is a thinking trace or a tool call that comes before the reply. `tool` is absent for thinking.
+pub(super) struct Step {
+    pub tool: Option<String>,
+    pub body: String,
+    pub done: bool,
+    pub open: bool,
+}
+pub(super) struct Message {
+    pub user: bool,
+    pub label: String,
+    pub text: String,
+}
 pub(super) struct Ui {
     pub path: PathBuf,
     pub preferences: Preferences,
     pub composer: TextArea<'static>,
     pub overlay: Option<Overlay>,
-    pub transcript: String,
+    pub transcript: Vec<Message>,
+    pub outgoing: String,
+    pub names: [String; 2],
     pub reply: String,
     pub title: String,
     pub notice: String,
@@ -128,6 +155,112 @@ pub(super) struct Ui {
     pub tick: usize,
     pub pending: Option<Job>,
     pub new_requested: bool,
+    pub hits: Vec<(Rect, Hit)>,
+    pub slash: usize,
+    pub streaming: bool,
+    pub steps: Vec<Step>,
+    /// The model and provider of the open chat, or of new chats.
+    pub model: Option<[String; 2]>,
+    pub failure: Option<String>,
+    /// The anchor and the end of a mouse selection in screen cells.
+    pub selection: Option<(Position, Position)>,
+    pub copy: bool,
+    pub copied: Option<String>,
+}
+
+pub(super) fn slash_matches(
+    prefix: &str,
+) -> impl Iterator<Item = &'static (&'static str, &'static str)> {
+    COMMANDS
+        .iter()
+        .filter(move |(name, _)| name.starts_with(prefix))
+}
+
+/// The function returns the item indexes whose labels contain the filter.
+pub(super) fn visible(
+    items: &[(String, Choice)],
+    filter: &str,
+    tabs: &[(String, Vec<usize>)],
+    tab: usize,
+) -> Vec<usize> {
+    let filter = filter.to_lowercase();
+    let all: Vec<usize> = (0..items.len()).collect();
+    let members = tabs.get(tab).map_or(&all, |(_, members)| members);
+    members
+        .iter()
+        .copied()
+        .filter(|&index| items[index].0.to_lowercase().contains(&filter))
+        .collect()
+}
+
+/// Each pair recommends the newest catalog model whose ID starts with the prefix and contains the part.
+const RECOMMENDED: &[(&str, &str)] = &[
+    ("anthropic/claude-sonnet", ""),
+    ("deepseek/deepseek-chat", ""),
+    ("google/gemini-", "-pro"),
+    ("moonshotai/kimi-k2", ""),
+    ("z-ai/glm-", ""),
+    ("x-ai/grok-4", ""),
+    ("mistralai/mistral-nemo", ""),
+];
+
+/// The function returns the release day as days since 1970-01-01. Catalogs supply `created` seconds or a `created_at` date.
+fn released(model: &rustytavern::provider::catalog::ModelMetadata) -> Option<i64> {
+    if let Some(seconds) = model.raw["created"].as_i64() {
+        return Some(seconds.div_euclid(86_400));
+    }
+    let date = model.raw["created_at"].as_str()?.get(..10)?;
+    let mut parts = date.split('-').map(|part| part.parse::<i64>().ok());
+    let (y, m, d) = (parts.next()??, parts.next()??, parts.next()??);
+    let y = if m <= 2 { y - 1 } else { y };
+    let era = y.div_euclid(400);
+    let year = y - era * 400;
+    let day = (153 * (m + if m > 2 { -3 } else { 9 }) + 2) / 5 + d - 1;
+    Some(era * 146_097 + (year * 365 + year / 4 - year / 100 + day) - 719_468)
+}
+
+fn date(days: i64) -> String {
+    let z = days + 719_468;
+    let era = z.div_euclid(146_097);
+    let day = z - era * 146_097;
+    let year = (day - day / 1460 + day / 36_524 - day / 146_096) / 365;
+    let in_year = day - (365 * year + year / 4 - year / 100);
+    let month = (5 * in_year + 2) / 153;
+    let d = in_year - (153 * month + 2) / 5 + 1;
+    let m = if month < 10 { month + 3 } else { month - 9 };
+    format!("{}-{m:02}-{d:02}", year + era * 400 + i64::from(m <= 2))
+}
+
+fn model_label(model: &rustytavern::provider::catalog::ModelMetadata, recommended: bool) -> String {
+    let advertised = &model.advertised;
+    let mut parts = vec![format!(
+        "{}{}",
+        if recommended { "★ " } else { "  " },
+        text(&model.id)
+    )];
+    if let Some(days) = released(model) {
+        parts.push(date(days));
+    }
+    if let Some(length) = advertised.context_length {
+        parts.push(format!("{}K context", length / 1000));
+    }
+    let price = |key: &str| {
+        advertised.pricing.as_ref()?[key]
+            .as_str()?
+            .parse::<f64>()
+            .ok()
+            .filter(|value| *value >= 0.0)
+    };
+    match (price("prompt"), price("completion")) {
+        (Some(0.0), Some(0.0)) => parts.push("free".into()),
+        (Some(input), Some(output)) => parts.push(format!(
+            "${:.2} in, ${:.2} out per 1M tokens",
+            input * 1e6,
+            output * 1e6
+        )),
+        _ => {}
+    }
+    parts.join(" · ")
 }
 
 pub(super) fn text(source: &str) -> String {
@@ -141,6 +274,9 @@ pub(super) fn text(source: &str) -> String {
     }
     result
 }
+fn text_label(value: &str) -> String {
+    text(value).replace('\n', " ")
+}
 fn editor(value: &str) -> TextArea<'static> {
     TextArea::from(text(value).lines().map(str::to_owned).collect::<Vec<_>>())
 }
@@ -148,6 +284,7 @@ pub(super) fn field(name: &'static str, value: &str) -> Field {
     Field {
         name,
         editor: editor(value),
+        secret: false,
     }
 }
 
@@ -164,14 +301,13 @@ impl Ui {
                 Ok(value) if bytes.len() <= 65536 => (value, String::new()),
                 _ => (
                     Preferences::default(),
-                    "The terminal preferences are invalid. Use /sessions to select a conversation."
-                        .into(),
+                    "The terminal preferences are invalid. Use /chats to select a chat.".into(),
                 ),
             }
         } else {
             (
                 Preferences::default(),
-                "Use /setup, /character, /persona, then /new.".into(),
+                "Use /provider, /character, /persona, then /new.".into(),
             )
         };
         let mut ui = Self {
@@ -179,7 +315,9 @@ impl Ui {
             preferences,
             composer: editor(""),
             overlay: None,
-            transcript: String::new(),
+            transcript: Vec::new(),
+            outgoing: String::new(),
+            names: ["Character".into(), "You".into()],
             reply: String::new(),
             title: "RustyTavern".into(),
             notice,
@@ -189,6 +327,15 @@ impl Ui {
             tick: 0,
             pending: None,
             new_requested: false,
+            hits: Vec::new(),
+            slash: 0,
+            streaming: false,
+            model: None,
+            steps: Vec::new(),
+            failure: None,
+            selection: None,
+            copy: false,
+            copied: None,
         };
         if let Err(error) = ui.refresh() {
             ui.notice = error.to_string();
@@ -206,44 +353,62 @@ impl Ui {
         Ok(())
     }
     pub fn refresh(&mut self) -> Result<()> {
+        let app = Application::open(&self.path)?;
         let Some(id) = &self.preferences.session else {
+            self.model = self.preferences.provider.as_ref().and_then(|name| {
+                Some([app.config.providers.get(name)?.model.clone(), name.clone()])
+            });
             return Ok(());
         };
-        let app = Application::open(&self.path)?;
         let session = app.store.session(id)?;
         let card = app.store.card(&session.character_id)?;
         let persona = app.store.persona(&session.persona_id)?;
-        self.title = format!("{} · {} · {}", card.name(), persona.name, session.model);
+        self.title = format!("{} · {}", card.name(), persona.name);
+        self.model = Some([session.model.clone(), session.provider.clone()]);
+        self.names = [text_label(card.name()), text_label(&persona.name)];
         let history = app.store.history(id)?;
-        let mut parts = Vec::new();
-        if history.len() > 100 {
-            parts.push(
-                "The display shows the last 100 messages. Export retains the full history.".into(),
-            );
-        }
-        for message in history.iter().skip(history.len().saturating_sub(100)) {
-            let label = match message.role {
-                rustytavern::session::Role::User => &persona.name,
-                rustytavern::session::Role::Assistant => card.name(),
-                _ => "System",
-            };
-            parts.push(format!("{label}\n{}", text(&message.text)));
-        }
-        let joined = parts.join("\n\n");
-        let start = joined
-            .char_indices()
+        let mut budget = 128 * 1024;
+        self.transcript = history
+            .iter()
             .rev()
-            .nth(128 * 1024 - 1)
-            .map_or(0, |(index, _)| index);
-        self.transcript = text(&joined[start..]);
-        if start > 0 {
-            self.transcript.insert_str(
+            .take(100)
+            .map_while(|message| {
+                let text = text(&message.text);
+                budget = usize::checked_sub(budget, text.len())?;
+                let user = message.role == rustytavern::session::Role::User;
+                let label = match message.role {
+                    rustytavern::session::Role::User => &persona.name,
+                    rustytavern::session::Role::Assistant => card.name(),
+                    _ => "System",
+                };
+                Some(Message {
+                    user,
+                    label: text_label(label),
+                    text,
+                })
+            })
+            .collect();
+        self.transcript.reverse();
+        if self.transcript.len() < history.len() {
+            self.transcript.insert(
                 0,
-                "The display shows recent text. The export retains all history.\n\n",
+                Message {
+                    user: false,
+                    label: "RustyTavern".into(),
+                    text: "The display shows recent messages. The export retains all history."
+                        .into(),
+                },
             );
         }
+        self.outgoing.clear();
         self.scroll = 0;
         Ok(())
+    }
+    /// The method returns the composer text while it is a partial slash command.
+    pub(super) fn typed_command(&self) -> Option<String> {
+        let typed = self.composer.lines().join("\n");
+        (self.overlay.is_none() && typed.starts_with('/') && !typed.contains(['\n', ' ']))
+            .then_some(typed)
     }
     pub fn clear_input(&mut self) {
         self.overlay = None;
@@ -276,21 +441,45 @@ impl Ui {
                 title,
                 mut items,
                 mut selected,
+                mut filter,
+                tabs,
+                mut tab,
             }) => {
                 match key.code {
+                    KeyCode::Left | KeyCode::Right if !tabs.is_empty() => {
+                        let step = if key.code == KeyCode::Left {
+                            tabs.len() - 1
+                        } else {
+                            1
+                        };
+                        tab = (tab + step) % tabs.len();
+                        selected = 0;
+                    }
                     KeyCode::Up => selected = selected.saturating_sub(1),
-                    KeyCode::Down => selected = (selected + 1).min(items.len().saturating_sub(1)),
-                    KeyCode::Enter if !items.is_empty() => {
-                        let (_, choice) = items.remove(selected);
-                        self.choose(choice)?;
-                        return Ok(());
+                    KeyCode::Down => selected += 1,
+                    KeyCode::Backspace => _ = filter.pop(),
+                    KeyCode::Char(character) if !key.modifiers.contains(KeyModifiers::CONTROL) => {
+                        filter.push(character);
+                        selected = 0;
+                    }
+                    KeyCode::Enter => {
+                        if let Some(&index) = visible(&items, &filter, &tabs, tab).get(selected) {
+                            let (_, choice) = items.remove(index);
+                            self.choose(choice)?;
+                            return Ok(());
+                        }
                     }
                     _ => {}
                 }
+                selected =
+                    selected.min(visible(&items, &filter, &tabs, tab).len().saturating_sub(1));
                 self.overlay = Some(Overlay::Menu {
                     title,
                     items,
                     selected,
+                    filter,
+                    tabs,
+                    tab,
                 });
             }
             Some(Overlay::Document {
@@ -354,20 +543,26 @@ impl Ui {
                 });
             }
             None => match key.code {
+                KeyCode::Char('o') if key.modifiers.contains(KeyModifiers::CONTROL) => {
+                    let open = !self.steps.iter().any(|step| step.open);
+                    self.steps.iter_mut().for_each(|step| step.open = open);
+                }
                 KeyCode::PageUp => self.scroll = self.scroll.saturating_add(10),
                 KeyCode::PageDown => self.scroll = self.scroll.saturating_sub(10),
-                KeyCode::Tab if self.composer.lines().join("\n").starts_with('/') => {
-                    let prefix = self.composer.lines().join("\n");
-                    self.menu(
-                        "Commands",
-                        COMMANDS
-                            .iter()
-                            .filter(|(name, _)| name.starts_with(&prefix))
-                            .map(|(name, description)| {
-                                (format!("{name}  {description}"), Choice::Slash(name))
-                            })
-                            .collect(),
-                    );
+                KeyCode::Up | KeyCode::Down | KeyCode::Tab if self.typed_command().is_some() => {
+                    let typed = self.typed_command().unwrap_or_default();
+                    let count = slash_matches(&typed).count();
+                    match key.code {
+                        KeyCode::Up => self.slash = self.slash.saturating_sub(1),
+                        KeyCode::Down => self.slash = (self.slash + 1).min(count.saturating_sub(1)),
+                        _ => {
+                            if let Some((name, _)) = slash_matches(&typed).nth(self.slash) {
+                                self.composer = editor(name);
+                                self.composer.move_cursor(tui_textarea::CursorMove::End);
+                                self.slash = 0;
+                            }
+                        }
+                    }
                 }
                 KeyCode::Enter
                     if key
@@ -380,11 +575,20 @@ impl Ui {
                     let value = self.composer.lines().join("\n");
                     if value.starts_with('/') {
                         self.composer = editor("");
-                        if let Err(error) = self.slash(value.trim()) {
+                        let typed = value.trim();
+                        let name = slash_matches(typed)
+                            .nth(self.slash)
+                            .map_or(typed, |(name, _)| *name);
+                        self.slash = 0;
+                        if let Err(error) = self.slash(name) {
                             self.notice = error.to_string();
                         }
                     } else if !value.trim().is_empty() {
                         if let Some(session) = self.preferences.session.clone() {
+                            self.outgoing = text(&value);
+                            self.streaming = true;
+                            self.failure = None;
+                            self.steps.clear();
                             self.pending = Some(Job::Generate {
                                 session,
                                 message: value,
@@ -394,7 +598,7 @@ impl Ui {
                             self.reply.clear();
                             self.notice = "The model is replying. Ctrl+C cancels.".into();
                         } else {
-                            self.notice = "Select a conversation with /new or /sessions.".into();
+                            self.notice = "Select a chat with /new or /chats.".into();
                         }
                     }
                 }
@@ -402,16 +606,115 @@ impl Ui {
                     if self.composer.lines().iter().map(String::len).sum::<usize>() < 128 * 1024 {
                         self.composer.input(key);
                     }
+                    self.slash = 0;
                 }
             },
         }
         Ok(())
     }
+    /// The wheel scrolls. A pointer over a list item selects it. A left click activates the target.
+    pub fn mouse(&mut self, event: MouseEvent) -> Result<()> {
+        let hit = self
+            .hits
+            .iter()
+            .rev()
+            .find(|(area, _)| area.contains(Position::new(event.column, event.row)))
+            .map(|(_, hit)| *hit);
+        let down = event.kind == MouseEventKind::ScrollDown;
+        let position = Position::new(event.column, event.row);
+        match event.kind {
+            MouseEventKind::Down(MouseButton::Left) if self.overlay.is_none() => {
+                if let Some(Hit::Step(index)) = hit {
+                    if let Some(step) = self.steps.get_mut(index) {
+                        step.open = !step.open;
+                    }
+                    return Ok(());
+                }
+                self.selection = (self.overlay.is_none() && matches!(hit, Some(Hit::Transcript)))
+                    .then_some((position, position));
+            }
+            MouseEventKind::Drag(MouseButton::Left) => {
+                if let Some((_, end)) = &mut self.selection {
+                    *end = position;
+                }
+                return Ok(());
+            }
+            MouseEventKind::Up(MouseButton::Left) => {
+                self.copy = self.selection.is_some_and(|(start, end)| start != end);
+                return Ok(());
+            }
+            MouseEventKind::ScrollUp | MouseEventKind::ScrollDown => self.selection = None,
+            _ => {}
+        }
+        match (event.kind, &mut self.overlay) {
+            (MouseEventKind::ScrollUp | MouseEventKind::ScrollDown, overlay) => match overlay {
+                Some(Overlay::Menu {
+                    items,
+                    selected,
+                    filter,
+                    tabs,
+                    tab,
+                    ..
+                }) => {
+                    let last = visible(items, filter, tabs, *tab).len().saturating_sub(1);
+                    *selected = if down {
+                        (*selected + 1).min(last)
+                    } else {
+                        selected.saturating_sub(1)
+                    };
+                }
+                Some(Overlay::Document { scroll, .. }) if down => {
+                    *scroll = scroll.saturating_add(3)
+                }
+                Some(Overlay::Document { scroll, .. }) => *scroll = scroll.saturating_sub(3),
+                Some(Overlay::Form { .. }) => {}
+                None if down => self.scroll = self.scroll.saturating_sub(3),
+                None => self.scroll = self.scroll.saturating_add(3),
+            },
+            _ if self.busy => {}
+            (MouseEventKind::Moved, Some(Overlay::Menu { selected, .. })) => {
+                if let Some(Hit::Item(index)) = hit {
+                    *selected = index;
+                }
+            }
+            (MouseEventKind::Down(MouseButton::Left), overlay) => match (hit, overlay) {
+                (Some(Hit::Close), _) => self.key(KeyCode::Esc.into())?,
+                (Some(Hit::Slash(name)), _) => {
+                    self.composer = editor("");
+                    self.slash(name)?;
+                }
+                (Some(Hit::Apply), _) => self.key(KeyCode::Enter.into())?,
+                (Some(Hit::Tab(index)), Some(Overlay::Menu { selected, tab, .. })) => {
+                    *tab = index;
+                    *selected = 0;
+                }
+                (Some(Hit::Item(index)), Some(Overlay::Menu { selected, .. })) => {
+                    *selected = index;
+                    self.key(KeyCode::Enter.into())?;
+                }
+                (Some(Hit::Item(index)), Some(Overlay::Form { selected, .. })) => *selected = index,
+                _ => {}
+            },
+            _ => {}
+        }
+        Ok(())
+    }
     pub(super) fn menu(&mut self, title: &str, items: Vec<(String, Choice)>) {
+        self.tabbed_menu(title, items, Vec::new());
+    }
+    pub(super) fn tabbed_menu(
+        &mut self,
+        title: &str,
+        items: Vec<(String, Choice)>,
+        tabs: Vec<(String, Vec<usize>)>,
+    ) {
         self.overlay = Some(Overlay::Menu {
             title: title.into(),
             items,
             selected: 0,
+            filter: String::new(),
+            tabs,
+            tab: 0,
         });
     }
     pub(super) fn document(&mut self, title: &str, value: &Value) {
@@ -421,59 +724,122 @@ impl Ui {
             scroll: 0,
         });
     }
+    pub(super) fn catalogs(&mut self, providers: Vec<String>) {
+        self.pending = Some(Job::Catalogs(providers));
+        self.notice = "The model lists are loading.".into();
+    }
     pub(super) fn command(&mut self, command: Command, after: After) {
         self.pending = Some(Job::Command(command, after));
         self.notice = "The application is applying the operation.".into();
     }
     pub(super) fn active(&self) -> Result<String> {
-        self.preferences.session.clone().ok_or_else(|| {
-            Error::new(
-                "invalid_session",
-                "Select a conversation with /new or /sessions.",
-            )
-        })
+        self.preferences
+            .session
+            .clone()
+            .ok_or_else(|| Error::new("invalid_session", "Select a chat with /new or /chats."))
     }
     pub fn complete(&mut self, result: Result<Vec<Value>>, after: After) {
         let result = (|| -> Result<()> {
             let values = result?;
             let value = values.last().cloned().unwrap_or(Value::Null);
             match after {
-                After::Models(provider) => {
-                    let catalog: rustytavern::provider::catalog::ModelCatalog =
-                        serde_json::from_value(value)?;
-                    let items = catalog
-                        .models
-                        .iter()
-                        .map(|model| {
-                            (
-                                format!(
-                                    "{}  {}",
-                                    text(&model.id),
-                                    model
-                                        .advertised
-                                        .output_modalities
-                                        .as_ref()
-                                        .map(|values| values.join(", "))
-                                        .unwrap_or_else(|| "unknown output".into())
-                                ),
-                                Choice::Select(
-                                    Selection::DiscoveredModel(provider.clone()),
-                                    model.id.clone(),
-                                ),
-                            )
-                        })
-                        .collect();
-                    self.menu("Advertised models: select a provider default", items);
-                    self.notice =
+                After::Models(providers) => {
+                    let mut failures = Vec::new();
+                    let mut models = Vec::new();
+                    for (provider, value) in providers.iter().zip(values) {
+                        if let Some(error) = value["error"].as_str() {
+                            failures.push(format!("{provider}: {error}"));
+                            continue;
+                        }
+                        let catalog: rustytavern::provider::catalog::ModelCatalog =
+                            serde_json::from_value(value)?;
+                        let picks: Vec<String> = RECOMMENDED
+                            .iter()
+                            .filter_map(|(prefix, part)| {
+                                catalog.models.iter().find(|model| {
+                                    model.id.starts_with(prefix)
+                                        && model.id.contains(part)
+                                        && !model.id.contains(':')
+                                })
+                            })
+                            .map(|model| model.id.clone())
+                            .collect();
+                        for model in catalog.models {
+                            let rank = picks.iter().position(|pick| *pick == model.id);
+                            models.push((rank, provider.clone(), model));
+                        }
+                    }
+                    models.sort_by_key(|(_, _, model)| std::cmp::Reverse(released(model)));
+                    let width = providers.iter().map(String::len).max().unwrap_or(0);
+                    let mut tabs = vec![
+                        ("★ Recommended".to_owned(), Vec::new()),
+                        ("All".to_owned(), (0..models.len()).collect()),
+                    ];
+                    for provider in &providers {
+                        tabs.push((provider.clone(), Vec::new()));
+                    }
+                    let mut items = Vec::new();
+                    for (index, (rank, provider, model)) in models.into_iter().enumerate() {
+                        if rank.is_some() {
+                            tabs[0].1.push(index);
+                        }
+                        if let Some(tab) =
+                            tabs.iter_mut().skip(2).find(|(name, _)| *name == provider)
+                        {
+                            tab.1.push(index);
+                        }
+                        items.push((
+                            format!(
+                                "{:width$} │ {}",
+                                text(&provider),
+                                model_label(&model, rank.is_some())
+                            ),
+                            Choice::Select(Selection::DiscoveredModel(provider), model.id),
+                        ));
+                    }
+                    for tab in &mut tabs {
+                        tab.0 = format!("{} ({})", tab.0, tab.1.len());
+                    }
+                    if tabs[0].1.is_empty() {
+                        tabs.remove(0);
+                    }
+                    self.tabbed_menu(
+                        "Models · newest first · ←→ changes the tab · type to filter",
+                        items,
+                        tabs,
+                    );
+                    self.notice = if failures.is_empty() {
                         "The catalog advertises capabilities. The catalog does not verify them."
-                            .into();
+                            .into()
+                    } else {
+                        format!(
+                            "Some catalogs failed. {} Use /settings to type a model ID.",
+                            failures.join(" ")
+                        )
+                    };
+                    return Ok(());
+                }
+                After::Setup(name) => {
+                    self.catalogs(vec![name]);
+                    return Ok(());
+                }
+                After::Then(command, after) => {
+                    self.command(*command, *after);
                     return Ok(());
                 }
                 After::Card => self.preferences.character = value["id"].as_str().map(str::to_owned),
                 After::Persona => {
                     self.preferences.persona = value["id"].as_str().map(str::to_owned)
                 }
-                After::Provider(name) => self.preferences.provider = Some(name),
+                After::Provider(name) => {
+                    self.preferences.provider = Some(name);
+                    self.save()?;
+                    if self.preferences.session.is_some() && !self.new_requested {
+                        self.slash("/adopt")?;
+                        self.notice = "New chats use this model. Apply it to this chat too?".into();
+                        return Ok(());
+                    }
+                }
                 After::Session => {
                     self.preferences.session = value["id"].as_str().map(str::to_owned)
                 }
@@ -500,36 +866,88 @@ impl Ui {
             self.notice = error.to_string();
         }
     }
+    /// The method renders `text_delta`, `reasoning_delta`, `tool_call`, and `tool_result` events.
     pub fn event(&mut self, event: RuntimeEvent) {
-        if event.r#type == "text_delta" {
-            if let Some(value) = event.text {
-                if self.reply.len() < 128 * 1024 {
-                    self.reply.push_str(&text(&value));
+        let value = event.text.as_deref().map(text).unwrap_or_default();
+        let thinking = |step: &Step| step.tool.is_none();
+        match event.r#type.as_str() {
+            "text_delta" if self.reply.len() < 128 * 1024 => {
+                self.steps
+                    .iter_mut()
+                    .filter(|s| thinking(s))
+                    .for_each(|s| s.done = true);
+                self.reply.push_str(&value);
+            }
+            "reasoning_delta" => match self.steps.last_mut() {
+                Some(step) if thinking(step) && !step.done => {
+                    if step.body.len() < 128 * 1024 {
+                        step.body.push_str(&value);
+                    }
+                }
+                _ => self.steps.push(Step {
+                    tool: None,
+                    body: value,
+                    done: false,
+                    open: false,
+                }),
+            },
+            "tool_call" => {
+                self.steps
+                    .iter_mut()
+                    .filter(|s| thinking(s))
+                    .for_each(|s| s.done = true);
+                self.steps.push(Step {
+                    tool: Some(value),
+                    body: String::new(),
+                    done: false,
+                    open: false,
+                });
+            }
+            "tool_result" => {
+                if let Some(step) = self
+                    .steps
+                    .iter_mut()
+                    .rev()
+                    .find(|s| !thinking(s) && !s.done)
+                {
+                    step.body = value;
+                    step.done = true;
                 }
             }
+            _ => {}
         }
     }
     pub fn finish(&mut self, result: Result<Generation>) {
+        self.streaming = false;
+        self.steps.iter_mut().for_each(|step| step.done = true);
+        let unsent = std::mem::take(&mut self.outgoing);
+        self.reply.clear();
+        let _ = self.refresh();
         match result {
+            Ok(generation) if generation.status == GenerationStatus::Completed => {
+                self.notice = "The reply is saved.".into();
+            }
             Ok(generation) => {
-                self.reply.clear();
-                let _ = self.refresh();
-                self.notice = if generation.status == GenerationStatus::Completed {
-                    "The reply is saved.".into()
-                } else {
-                    self.reply = text(&generation.draft);
-                    format!(
-                        "{} The draft remains saved.",
-                        generation
-                            .error
-                            .map(|e| e.to_string())
-                            .unwrap_or_else(|| "The generation ended.".into())
-                    )
-                };
+                self.reply = text(&generation.draft);
+                self.failure = Some(generation.error.map_or_else(
+                    || "The generation ended.".into(),
+                    |error| text(&error.message),
+                ));
+                self.notice = "The draft remains saved. Use /retry to try again.".into();
+            }
+            Err(error)
+                if matches!(
+                    &*error.code,
+                    "pinned_composition_unavailable" | "session_configuration_changed"
+                ) =>
+            {
+                self.composer = editor(&unsent);
+                let _ = self.slash("/adopt");
+                self.notice = "The setup changed after this conversation started. Apply the current settings, then press Enter to send again.".into();
             }
             Err(error) => {
+                self.failure = Some(text(&error.message));
                 self.notice = error.to_string();
-                let _ = self.refresh();
             }
         }
     }
