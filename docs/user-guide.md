@@ -16,13 +16,16 @@ The existing command surface remains available for scripts.
 | `/character` | The user selects a character, or previews and adds one from a file or web address. |
 | `/persona` | The user selects or creates a persona. |
 | `/new` | The user starts a chat and selects the first greeting. |
-| `/chats` | The user resumes a saved chat. |
+| `/chats` | The user resumes, renames, or deletes a saved chat. |
 | `/retry` | The user regenerates the last reply. |
+| `/messages` | The user selects a message of the open branch, then rewinds, edits, regenerates, branches, hides, or copies it. |
+| `/continue` | The model extends the last reply. |
+| `/impersonate` | The model writes the next user message into the composer. |
 | `/settings` | The user opens lorebooks, branches, export, request inspection, configuration adoption, advanced provider settings, plugins, and the configuration view. |
 | `/help` | The user reads the command and key reference. |
 | `/quit` | The user closes the terminal. |
 
-The names `/setup`, `/sessions`, and `/models` remain aliases. The `/settings` items also accept direct names: `/worldbook`, `/branch`, `/export`, `/prompt`, `/adopt`, `/profile`, `/plugins`, and `/config`.
+The names `/setup`, `/sessions`, `/models`, and `/branch` remain aliases. The `/settings` items also accept direct names: `/worldbook`, `/export`, `/prompt`, `/adopt`, `/profile`, `/plugins`, and `/config`.
 
 The composer sends ordinary text to the active conversation. A command popup opens when the composer starts with `/`.
 Up and Down select a command in the popup. Tab completes the selected command. Enter runs it.
@@ -40,6 +43,33 @@ Each message has a rounded bubble. Your message appears at once. The reply bubbl
 The reply then streams with a cursor at its end in the live area. A saved reply moves into the history. A failed reply shows its error in a red bubble.
 The status line shows the character, the persona, the model, and the provider of the open chat. Without a chat, it shows the model for new chats.
 A chat switch writes the chat name and its recent messages into the history. A retry or a branch change writes the messages after the changed point.
+
+### Message actions
+
+The scrollback belongs to the terminal, so a click on a message in it has no effect. Use the message list or the keys below.
+A dim action bar under the last message shows the keys. The keys work while the composer is empty.
+
+| Key | Action |
+| --- | --- |
+| ← and → | Show the previous or next alternative of the last message. The bar shows the position, for example `‹ 2/3 ›`. |
+| → at the newest reply | Generate another reply. The earlier replies stay as alternatives. |
+| ↑ | Edit the last message. The edit adds a new version. The original stays as an alternative. |
+| Ctrl+R | Regenerate the last reply. After an edited user message, generate its reply. |
+| Esc twice | Open the message list of the open branch, newest first. |
+
+Select a message in the list with the keyboard or a click. The action menu of the message has these items:
+
+- **Rewind to here** makes the message the end of the branch. Later messages stay in the tree.
+- **Edit** adds a new version of the message.
+- **Regenerate this reply** rewinds to the user message before a reply, then generates a new reply.
+- **Alternatives** lists the versions of the message. Select one to show it.
+- **Branch into a new chat** copies the branch up to the message into a new chat and opens it.
+- **Hide from the prompt** keeps the message in the chat but removes it from the next requests. **Include in the prompt** reverses it.
+- **Copy the text** sends the text to the clipboard with OSC 52. Some terminals block this sequence.
+
+`/continue` sends the chat with an instruction to continue the last reply. The result is a new version of the reply with the new text at its end. The original reply stays as an alternative.
+`/impersonate` sends the chat with an instruction to write the next message of your persona. The text goes into the composer. Edit it, then press Enter to send it. The chat stores no message until you send it.
+`/chats` lists the chats with their names. The menu also renames or deletes the open chat. A deletion asks for confirmation and removes the chat with its history.
 
 Steps before a reply have their own small gray bubbles: `✻` thinking, `↗` web calls, `⧉` MCP tools (`mcp__` names), and `⚙` other tools.
 A step shows a spinner while it runs and `✓` after its result. Ctrl+O expands or collapses the steps of the active reply. The history keeps the steps collapsed.
@@ -197,6 +227,25 @@ A terminal event can contain the full draft in `text`. A failed event contains `
 The optional `missed_events` field signals an observer gap. The caller should use the durable final record after a gap.
 Ctrl+C requests cancellation and waits for terminal persistence. The runtime saves usage before it emits a usage event.
 Failure, cancellation, and recovery retain saved usage.
+
+### Chat management
+
+```sh
+rustytavern session continue SESSION_ID [--events]
+rustytavern session impersonate SESSION_ID [--events]
+rustytavern session fork SESSION_ID --at MESSAGE_ID
+rustytavern session rename SESSION_ID "Harbor night"
+rustytavern session hide SESSION_ID --at MESSAGE_ID [--show]
+rustytavern session delete SESSION_ID
+```
+
+The `continue` command requires a reply at the session head. The store adds the longer reply as a sibling of the original reply and selects it as the head.
+The `impersonate` command prints the text of the next user message. The store adds no message. The generation record keeps the text as its draft.
+Both commands store a generation with `mode` set to `continue` or `impersonate`. A reply generation omits the field.
+The `fork` command copies the branch that ends at the message into a new session with the same configuration. The copies have no generation links.
+The `rename` command sets the session `title`. An empty title removes it. A rename does not change the session version.
+The `hide` command adds the message ID to the session `hidden` list. The prompt omits hidden messages. The `--show` flag removes the ID.
+The `delete` command removes the session, its messages, and its generations. The store rejects a deletion or a hide while a generation owns the session.
 
 ### Prompt inspection
 
@@ -477,7 +526,8 @@ cargo run --locked -- --home ./home session show SESSION_ID --json
 cargo run --locked -- --home ./home session accept-draft SESSION_ID GENERATION_ID
 ```
 
-The show command lists generation IDs, statuses, drafts, usage, and acceptance links. The acceptance command requires a nonempty failed, cancelled, or interrupted draft.
+The show command lists generation IDs, statuses, drafts, usage, and acceptance links. The acceptance command requires a nonempty failed, cancelled, or interrupted reply draft.
+The command rejects a continuation or an impersonation draft.
 The selected branch must end at that generation's user node. The store rejects acceptance while another writer owns the session.
 The optional `--expected-version VERSION` argument rejects a stale caller view.
 

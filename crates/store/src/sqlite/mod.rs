@@ -3,8 +3,8 @@ use rusqlite::{Connection, OptionalExtension, TransactionBehavior, params};
 use rustytavern_card::{Card, WorldBook};
 use rustytavern_conversation::prompt::expand;
 use rustytavern_conversation::{
-    Generation, GenerationStatus, Message, Persona, PluginStateRevision, Role, Session,
-    SessionConfiguration, SessionExport,
+    Generation, GenerationMode, GenerationStatus, Message, Persona, PluginStateRevision, Role,
+    Session, SessionConfiguration, SessionExport,
 };
 use rustytavern_core::{Error, Result, digest, now_ms};
 use serde::{Serialize, de::DeserializeOwned};
@@ -380,15 +380,31 @@ impl StoreBackend for SqliteStore {
         {
             return Err(conflict());
         }
-        let user_node = if let Some(id) = input.retry_user {
-            let role: Option<String> = transaction
+        let role = |id: &str| -> Result<Option<String>> {
+            Ok(transaction
                 .query_row(
                     "SELECT role FROM messages WHERE id=?1 AND session_id=?2",
                     params![id, session.id],
                     |row| row.get(0),
                 )
-                .optional()?;
-            if role.as_deref() != Some("\"user\"") {
+                .optional()?)
+        };
+        let user_node = if !input.mode.is_reply() {
+            let head = session
+                .head
+                .clone()
+                .ok_or_else(|| Error::new("invalid_generation_mode", "The chat has no message."))?;
+            if input.mode == GenerationMode::Continue
+                && role(&head)?.as_deref() != Some("\"assistant\"")
+            {
+                return Err(Error::new(
+                    "invalid_continue",
+                    "A continuation requires a reply at the end of the chat.",
+                ));
+            }
+            head
+        } else if let Some(id) = input.retry_user {
+            if role(id)?.as_deref() != Some("\"user\"") {
                 return Err(Error::new(
                     "invalid_retry",
                     "A retry requires a user node in this session.",
@@ -421,6 +437,7 @@ impl StoreBackend for SqliteStore {
             id: new_id("generation"),
             session_id: input.session_id.to_owned(),
             user_node: user_node.clone(),
+            mode: input.mode,
             status: GenerationStatus::Prepared,
             draft: String::new(),
             accepted_message: None,
@@ -589,18 +606,37 @@ impl StoreBackend for SqliteStore {
                     "The completed generation has no request snapshot.",
                 ));
             }
-            let node = Message {
-                id: new_id("message"),
-                parent_id: Some(generation.user_node.clone()),
-                role: Role::Assistant,
-                text: generation.draft.clone(),
-                generation_id: Some(generation.id.clone()),
+            let (parent_id, text) = match generation.mode {
+                GenerationMode::Reply => {
+                    (Some(generation.user_node.clone()), generation.draft.clone())
+                }
+                GenerationMode::Continue => {
+                    let original = read_messages(&transaction, &generation.session_id)?
+                        .into_iter()
+                        .find(|m| m.id == generation.user_node)
+                        .ok_or_else(absent)?;
+                    let space = !original.text.ends_with(char::is_whitespace)
+                        && generation.draft.starts_with(char::is_alphanumeric);
+                    let space = if space { " " } else { "" };
+                    let text = format!("{}{space}{}", original.text, generation.draft);
+                    (original.parent_id, text)
+                }
+                GenerationMode::Impersonate => (None, String::new()),
             };
-            insert_message(&transaction, &generation.session_id, &node)?;
-            transaction.execute(
-                "UPDATE sessions SET head=?2 WHERE id=?1",
-                params![generation.session_id, node.id],
-            )?;
+            if generation.mode != GenerationMode::Impersonate {
+                let node = Message {
+                    id: new_id("message"),
+                    parent_id,
+                    role: Role::Assistant,
+                    text,
+                    generation_id: Some(generation.id.clone()),
+                };
+                insert_message(&transaction, &generation.session_id, &node)?;
+                transaction.execute(
+                    "UPDATE sessions SET head=?2 WHERE id=?1",
+                    params![generation.session_id, node.id],
+                )?;
+            }
         }
         generation.status = status;
         generation.usage = usage.or(generation.usage);
@@ -668,6 +704,104 @@ impl StoreBackend for SqliteStore {
         transaction.commit()?;
         Ok(new)
     }
+    fn fork_session(&self, id: &str, node: &str) -> Result<Session> {
+        let mut connection = self.lock()?;
+        let transaction = connection.transaction_with_behavior(TransactionBehavior::Immediate)?;
+        let mut session = read_session(&transaction, id)?;
+        let messages = read_messages(&transaction, id)?;
+        let mut path = Vec::new();
+        let mut cursor = Some(node);
+        while let Some(current) = cursor {
+            let message = messages
+                .iter()
+                .find(|m| m.id == current)
+                .ok_or_else(absent)?;
+            path.push(message);
+            cursor = message.parent_id.as_deref();
+            if path.len() > messages.len() {
+                return Err(Error::new("storage", "The branch contains a cycle."));
+            }
+        }
+        let hidden = std::mem::take(&mut session.hidden);
+        session.id = new_id("session");
+        transaction.execute(
+            "INSERT INTO sessions(id,payload,version,head) VALUES(?1,?2,0,NULL)",
+            params![session.id, encode(&session)?],
+        )?;
+        let mut parent: Option<String> = None;
+        for message in path.into_iter().rev() {
+            let copy = Message {
+                id: new_id("message"),
+                parent_id: parent.take(),
+                role: message.role.clone(),
+                text: message.text.clone(),
+                generation_id: None,
+            };
+            insert_message(&transaction, &session.id, &copy)?;
+            if hidden.contains(&message.id) {
+                session.hidden.push(copy.id.clone());
+            }
+            parent = Some(copy.id);
+        }
+        transaction.execute(
+            "UPDATE sessions SET payload=?2,head=?3 WHERE id=?1",
+            params![session.id, encode(&session)?, parent],
+        )?;
+        let session = read_session(&transaction, &session.id)?;
+        transaction.commit()?;
+        Ok(session)
+    }
+    fn rename_session(&self, id: &str, title: &str) -> Result<Session> {
+        let mut connection = self.lock()?;
+        let transaction = connection.transaction_with_behavior(TransactionBehavior::Immediate)?;
+        let mut session = read_session(&transaction, id)?;
+        let title = title.trim();
+        session.title = (!title.is_empty()).then(|| title.to_owned());
+        // The title is not prompt input, so the version stays. An active generation keeps its lease.
+        transaction.execute(
+            "UPDATE sessions SET payload=?2 WHERE id=?1",
+            params![id, encode(&session)?],
+        )?;
+        transaction.commit()?;
+        Ok(session)
+    }
+    fn delete_session(&self, id: &str) -> Result<()> {
+        let mut connection = self.lock()?;
+        let transaction = connection.transaction_with_behavior(TransactionBehavior::Immediate)?;
+        if active_owner(&transaction, id, now_ms())? {
+            return Err(conflict());
+        }
+        transaction.execute("DELETE FROM generations WHERE session_id=?1", [id])?;
+        transaction.execute("DELETE FROM messages WHERE session_id=?1", [id])?;
+        transaction.execute("DELETE FROM sessions WHERE id=?1", [id])?;
+        transaction.commit()?;
+        Ok(())
+    }
+    fn hide_message(&self, id: &str, node: &str, hidden: bool) -> Result<Session> {
+        let mut connection = self.lock()?;
+        let transaction = connection.transaction_with_behavior(TransactionBehavior::Immediate)?;
+        if active_owner(&transaction, id, now_ms())? {
+            return Err(conflict());
+        }
+        let mut session = read_session(&transaction, id)?;
+        if !read_messages(&transaction, id)?
+            .iter()
+            .any(|m| m.id == node)
+        {
+            return Err(absent());
+        }
+        session.hidden.retain(|item| item != node);
+        if hidden {
+            session.hidden.push(node.to_owned());
+        }
+        transaction.execute(
+            "UPDATE sessions SET payload=?2,version=version+1 WHERE id=?1",
+            params![id, encode(&session)?],
+        )?;
+        session.version += 1;
+        transaction.commit()?;
+        Ok(session)
+    }
     fn rebind(
         &self,
         id: &str,
@@ -733,10 +867,14 @@ impl StoreBackend for SqliteStore {
             transaction.commit()?;
             return Ok(node);
         }
-        if !matches!(
-            generation.status,
-            GenerationStatus::Failed | GenerationStatus::Cancelled | GenerationStatus::Interrupted
-        ) || generation.draft.is_empty()
+        if !generation.mode.is_reply()
+            || !matches!(
+                generation.status,
+                GenerationStatus::Failed
+                    | GenerationStatus::Cancelled
+                    | GenerationStatus::Interrupted
+            )
+            || generation.draft.is_empty()
             || session.head.as_ref() != Some(&generation.user_node)
         {
             return Err(Error::new(

@@ -1,5 +1,6 @@
 use super::state::*;
 use super::*;
+use rustytavern::session::{GenerationMode, Role};
 
 impl Ui {
     pub(super) fn slash(&mut self, name: &str) -> Result<()> {
@@ -8,6 +9,7 @@ impl Ui {
             "/setup" => "/provider",
             "/sessions" => "/chats",
             "/models" => "/model",
+            "/branch" => "/messages",
             other => other,
         };
         match name {
@@ -82,7 +84,7 @@ impl Ui {
                 self.overlay = Some(Overlay::Document {
                     title: "Commands and keys".into(),
                     text: format!(
-                        "{}\n\nEnter sends. Alt+Enter inserts a newline.\nTab completes commands or changes fields. Escape closes dialogs.\nThe chat history stays in the terminal scrollback. Scroll and select it as usual.\nDialogs accept the mouse wheel and clicks.\nCtrl+O expands or collapses the steps of the active reply.\nCtrl+C cancels. Ctrl+D exits.",
+                        "{}\n\nEnter sends. Alt+Enter inserts a newline.\nTab completes commands or changes fields. Escape closes dialogs.\nThe chat history stays in the terminal scrollback. Scroll and select it as usual.\nDialogs accept the mouse wheel and clicks.\nCtrl+O expands or collapses the steps of the active reply.\nCtrl+C cancels. Ctrl+D exits.\n\nThese keys work while the message box is empty:\n← and → show the alternatives of the last message. → after the newest reply generates another reply.\n↑ edits the last message. Ctrl+R regenerates the last reply.\nEsc twice lists the messages of this branch. Select a message to rewind, edit, regenerate, branch, hide, or copy it.",
                         COMMANDS
                             .iter()
                             .map(|(a, b)| format!("{a}  {b}"))
@@ -146,7 +148,13 @@ impl Ui {
                     } else if kind == "persona" {
                         record["name"].as_str().unwrap_or(&id).to_owned()
                     } else {
-                        format!("{}  {}", id, record["model"].as_str().unwrap_or_default())
+                        let title = record["title"].as_str().unwrap_or(&id);
+                        let active = self.preferences.session.as_deref() == Some(id.as_str());
+                        format!(
+                            "{}{title}  {}",
+                            if active { "● " } else { "" },
+                            record["model"].as_str().unwrap_or_default()
+                        )
                     };
                     items.push((
                         text(&label),
@@ -176,6 +184,18 @@ impl Ui {
                         Choice::Form(FormKind::Persona),
                     ));
                 }
+                if let Some(session) = self
+                    .preferences
+                    .session
+                    .clone()
+                    .filter(|_| kind == "session")
+                {
+                    items.push(("Rename this chat...".into(), Choice::Form(FormKind::Rename)));
+                    items.push((
+                        "Delete this chat...".into(),
+                        Choice::Select(Selection::Delete, session),
+                    ));
+                }
                 self.menu(title, items);
             }
             "/model" if app.config.providers.is_empty() => self.slash("/provider")?,
@@ -184,7 +204,7 @@ impl Ui {
                 "Settings",
                 [
                     ("Lorebooks for this chat", "/worldbook"),
-                    ("Conversation branches", "/branch"),
+                    ("Messages and branches", "/messages"),
                     ("Export this chat", "/export"),
                     ("Inspect the next model request", "/prompt"),
                     (
@@ -305,30 +325,48 @@ impl Ui {
                     )],
                 );
             }
-            "/retry" => {
+            "/retry" | "/continue" | "/impersonate" => {
+                let session = self.active()?;
+                self.mode = match name {
+                    "/continue" => GenerationMode::Continue,
+                    "/impersonate" => GenerationMode::Impersonate,
+                    _ => GenerationMode::Reply,
+                };
                 self.streaming = true;
                 self.failure = None;
                 self.steps.clear();
                 self.pending = Some(Job::Generate {
-                    session: self.active()?,
+                    session,
                     message: String::new(),
-                    retry: true,
+                    retry: name == "/retry",
+                    mode: self.mode,
                 });
                 self.reply.clear();
             }
-            "/branch" => {
-                let mut items = Vec::new();
-                for message in app.store.messages(&self.active()?)? {
-                    items.push((
-                        format!(
-                            "{}  {}",
-                            message.id,
-                            text(&message.text).chars().take(60).collect::<String>()
-                        ),
-                        Choice::Select(Selection::Branch, message.id),
-                    ));
-                }
-                self.menu("Conversation heads", items);
+            "/messages" => {
+                let session = app.store.session(&self.active()?)?;
+                let items = app
+                    .store
+                    .history(&session.id)?
+                    .into_iter()
+                    .rev()
+                    .map(|message| {
+                        let name = &self.names[usize::from(message.role == Role::User)];
+                        let hidden = if session.hidden.contains(&message.id) {
+                            " · hidden"
+                        } else {
+                            ""
+                        };
+                        (
+                            format!("{name}{hidden} · {}", preview(&message.text)),
+                            Choice::Select(Selection::Message, message.id),
+                        )
+                    })
+                    .collect();
+                self.menu(
+                    "Messages in this branch · newest first · Enter shows the actions",
+                    items,
+                );
             }
             _ => {
                 return Err(Error::new(
@@ -345,6 +383,14 @@ impl Ui {
             Choice::Form(kind) => self.form(kind),
             Choice::Command(command, after) => self.command(command, after),
             Choice::Browse(folder) => self.browse(folder)?,
+            Choice::Copy(value) => {
+                use base64::Engine;
+                let encoded = base64::engine::general_purpose::STANDARD.encode(value);
+                print!("\x1b]52;c;{encoded}\x07");
+                std::io::Write::flush(&mut std::io::stdout())?;
+                self.notice =
+                    "The terminal copied the text if it allows clipboard access (OSC 52).".into();
+            }
             Choice::Open(path) => {
                 if let Err(error) = self.open_card(path) {
                     self.browse(self.folder.clone())?;
@@ -416,7 +462,21 @@ impl Ui {
                             at: id,
                         },
                     },
-                    After::Refresh,
+                    After::Say("The chat continues from the selected message."),
+                ),
+                Selection::Message => self.actions(&id)?,
+                Selection::Alternatives => self.alternatives(&id)?,
+                Selection::Delete => self.menu(
+                    "Delete this chat and its history? You cannot undo this.",
+                    vec![(
+                        "Delete the chat".into(),
+                        Choice::Command(
+                            Command::Session {
+                                command: SessionCommand::Delete { session: id },
+                            },
+                            After::Session,
+                        ),
+                    )],
                 ),
                 Selection::Enable => self.command(
                     Command::Plugin {
@@ -455,6 +515,109 @@ impl Ui {
         }
         Ok(())
     }
+    /// The method lists the actions for one message of the open chat.
+    fn actions(&mut self, id: &str) -> Result<()> {
+        let app = Application::open(&self.path)?;
+        let session = app.store.session(&self.active()?)?;
+        let messages = app.store.messages(&session.id)?;
+        let message = messages
+            .iter()
+            .find(|m| m.id == id)
+            .ok_or_else(|| Error::new("not_found", "The message does not exist."))?;
+        let count = messages
+            .iter()
+            .filter(|m| m.parent_id == message.parent_id && m.role == message.role)
+            .count();
+        let hidden = session.hidden.iter().any(|item| item == id);
+        let command = |command| Command::Session { command };
+        let branch = |at: &str| {
+            command(SessionCommand::Branch {
+                session: session.id.clone(),
+                at: at.to_owned(),
+            })
+        };
+        let mut items = vec![
+            (
+                "Rewind to here".into(),
+                Choice::Command(
+                    branch(id),
+                    After::Say("The chat continues from the selected message."),
+                ),
+            ),
+            ("Edit...".into(), Choice::Form(FormKind::Edit(id.into()))),
+        ];
+        if message.role == Role::Assistant
+            && let Some(parent) = &message.parent_id
+        {
+            items.push((
+                "Regenerate this reply".into(),
+                Choice::Command(branch(parent), After::Retry),
+            ));
+        }
+        if count > 1 {
+            items.push((
+                format!("Alternatives ({count})..."),
+                Choice::Select(Selection::Alternatives, id.into()),
+            ));
+        }
+        items.push((
+            "Branch into a new chat".into(),
+            Choice::Command(
+                command(SessionCommand::Fork {
+                    session: session.id.clone(),
+                    at: id.into(),
+                }),
+                After::Session,
+            ),
+        ));
+        items.push((
+            if hidden {
+                "Include in the prompt"
+            } else {
+                "Hide from the prompt"
+            }
+            .into(),
+            Choice::Command(
+                command(SessionCommand::Hide {
+                    session: session.id.clone(),
+                    at: id.into(),
+                    show: hidden,
+                }),
+                After::Say(if hidden {
+                    "The prompt includes the message."
+                } else {
+                    "The prompt omits the message. The chat still shows it."
+                }),
+            ),
+        ));
+        items.push(("Copy the text".into(), Choice::Copy(message.text.clone())));
+        self.menu(&format!("Message · {}", preview(&message.text)), items);
+        Ok(())
+    }
+    /// The method lists the message and its siblings with the same role, oldest first.
+    fn alternatives(&mut self, id: &str) -> Result<()> {
+        let app = Application::open(&self.path)?;
+        let session = self.active()?;
+        let messages = app.store.messages(&session)?;
+        let message = messages
+            .iter()
+            .find(|m| m.id == id)
+            .ok_or_else(|| Error::new("not_found", "The message does not exist."))?;
+        let items = messages
+            .iter()
+            .filter(|m| m.parent_id == message.parent_id && m.role == message.role)
+            .enumerate()
+            .map(|(index, sibling)| {
+                let mark = if sibling.id == id { "● " } else { "" };
+                (
+                    format!("{}. {mark}{}", index + 1, preview(&sibling.text)),
+                    Choice::Select(Selection::Branch, sibling.id.clone()),
+                )
+            })
+            .collect();
+        self.menu("Alternatives · ● marks the current one", items);
+        Ok(())
+    }
     /// The method lists the card greetings. A card with unsupported features starts with the reduced profile.
     fn greetings(&mut self) -> Result<()> {
         let app = Application::open(&self.path)?;
@@ -469,15 +632,8 @@ impl Ui {
             .chain(alternates.filter_map(|value| value.as_str()))
             .enumerate()
             .map(|(index, greeting)| {
-                let preview: String = text(greeting)
-                    .split_whitespace()
-                    .collect::<Vec<_>>()
-                    .join(" ")
-                    .chars()
-                    .take(120)
-                    .collect();
                 (
-                    format!("{}. {preview}", index + 1),
+                    format!("{}. {}", index + 1, preview(greeting)),
                     Choice::Select(Selection::Greeting(reduced), index.to_string()),
                 )
             })

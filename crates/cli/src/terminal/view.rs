@@ -1,4 +1,6 @@
-use super::state::{Hit, Message, Overlay, PREVIEW_TABS, Step, Ui, slash_matches, text, visible};
+use super::state::{
+    FormKind, Hit, Message, Overlay, PREVIEW_TABS, Step, Ui, slash_matches, text, visible,
+};
 use pulldown_cmark::{CodeBlockKind, Event, Options, Parser, Tag, TagEnd};
 use ratatui::{
     Frame,
@@ -7,6 +9,7 @@ use ratatui::{
     text::{Line, Span},
     widgets::{Block, Borders, Clear, List, ListItem, ListState, Paragraph, Wrap},
 };
+use rustytavern::session::{GenerationMode, Role};
 use std::sync::OnceLock;
 use syntect::{
     easy::HighlightLines, highlighting::ThemeSet, parsing::SyntaxSet, util::LinesWithEndings,
@@ -591,7 +594,10 @@ fn live(ui: &Ui, width: u16) -> Vec<Line<'static>> {
         );
     }
     steps(&mut lines, &ui.steps, ui.tick, width);
-    if ui.streaming || !ui.reply.is_empty() {
+    if ui.streaming && ui.mode == GenerationMode::Impersonate {
+        let body = markdown(&format!("{}▍", ui.reply));
+        message(&mut lines, (width, ui.bubbles), true, &ui.names[1], body);
+    } else if ui.streaming || !ui.reply.is_empty() {
         let mut body = markdown(&ui.reply);
         let dim = Style::default().fg(Color::DarkGray);
         if ui.reply.is_empty() {
@@ -601,7 +607,12 @@ fn live(ui: &Ui, width: u16) -> Vec<Line<'static>> {
         {
             line.spans.push(Span::styled("▍", dim));
         }
-        message(&mut lines, (width, ui.bubbles), false, &ui.names[0], body);
+        let label = if ui.mode == GenerationMode::Continue {
+            format!("{} · continues", ui.names[0])
+        } else {
+            ui.names[0].clone()
+        };
+        message(&mut lines, (width, ui.bubbles), false, &label, body);
     }
     if let Some(failure) = &ui.failure {
         let style = Style::default().fg(Color::Red);
@@ -613,7 +624,40 @@ fn live(ui: &Ui, width: u16) -> Vec<Line<'static>> {
         lines.push(Line::styled(label, style.add_modifier(Modifier::BOLD)));
         lines.extend(bubble(body, width, Color::Red));
     }
+    if let Some(head) = ui.head.as_ref().filter(|_| ui.idle() && lines.is_empty()) {
+        lines.push(actions(ui, head));
+    }
     lines
+}
+
+/// The function returns the action bar for the last message. The keys work while the message box is empty.
+fn actions(ui: &Ui, head: &rustytavern::session::Message) -> Line<'static> {
+    let assistant = head.role == Role::Assistant;
+    // A greeting has no user message before it, so it has no retry.
+    let reply = assistant && head.parent_id.is_some();
+    let mut parts = Vec::new();
+    if ui.alternatives.len() > 1 {
+        let index = ui.alternatives.iter().position(|id| *id == head.id);
+        parts.push(format!(
+            "‹ {}/{} › ←→ alternatives",
+            index.map_or(0, |i| i + 1),
+            ui.alternatives.len()
+        ));
+    } else if reply {
+        parts.push("→ another reply".into());
+    }
+    parts.push("↑ edit".into());
+    if reply {
+        parts.push("Ctrl+R retry".into());
+    } else if !assistant {
+        parts.push("Ctrl+R reply".into());
+    }
+    if assistant {
+        parts.push("/continue".into());
+    }
+    parts.push("/impersonate".into());
+    parts.push("Esc Esc messages".into());
+    Line::styled(parts.join(" · "), Style::default().fg(Color::DarkGray))
 }
 
 fn composer_height(ui: &Ui) -> u16 {
@@ -930,10 +974,11 @@ pub(super) fn draw(frame: &mut Frame<'_>, ui: &mut Ui) {
         }
         Overlay::Form {
             title,
+            kind,
             fields,
             selected,
-            ..
         } => {
+            let tall = matches!(kind, FormKind::Edit(_));
             let block = Block::default().borders(Borders::ALL).title(format!(
                 " {} · field {}/{} ",
                 text(title),
@@ -985,7 +1030,12 @@ pub(super) fn draw(frame: &mut Frame<'_>, ui: &mut Ui) {
                         .editor
                         .set_cursor_style(Style::default().add_modifier(Modifier::REVERSED));
                 }
-                frame.render_widget(&field.editor, Rect::new(inner.x, y + 1, inner.width, 3));
+                let rows = if tall {
+                    inner.height.saturating_sub(3).max(3)
+                } else {
+                    3
+                };
+                frame.render_widget(&field.editor, Rect::new(inner.x, y + 1, inner.width, rows));
             }
             frame.render_widget(
                 Paragraph::new(text(&ui.notice)).style(Style::default().fg(Color::Yellow)),

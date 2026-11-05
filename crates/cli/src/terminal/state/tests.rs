@@ -858,3 +858,133 @@ fn downloaded_previews_fetch_the_card_again_on_enter() {
             .is_empty()
     );
 }
+
+#[tokio::test]
+async fn an_empty_message_box_gives_keys_and_a_message_list_for_the_branch() {
+    let directory = tempfile::tempdir().unwrap();
+    let mut app = Application::open(directory.path()).unwrap();
+    app.config.set_provider(
+        "local",
+        rustytavern::provider::ProviderConfig {
+            model: "fixture".into(),
+            ..Default::default()
+        },
+        None,
+    );
+    app.save_config().unwrap();
+    let card = std::fs::read("../card/tests/fixtures/full-v3.json").unwrap();
+    let card = rustytavern::card::Card::import(&card).unwrap();
+    app.store.save_card(&card).unwrap();
+    let persona = rustytavern::session::Persona::new("Alex".into(), String::new()).unwrap();
+    app.store.save_persona(&persona).unwrap();
+    let mut ui = Ui::open(directory.path().into()).unwrap();
+    ui.preferences.provider = Some("local".into());
+    ui.preferences.character = Some(card.id.clone());
+    ui.preferences.persona = Some(persona.id);
+    ui.new_requested = true;
+    ui.advance_new().unwrap();
+    let Some(Overlay::Menu { items, .. }) = ui.overlay.take() else {
+        panic!("The greeting menu is missing.");
+    };
+    ui.choose(items.into_iter().next().unwrap().1).unwrap();
+    let Some(Job::Command(command, after)) = ui.pending.take() else {
+        panic!("The greeting does not start a chat.")
+    };
+    let result =
+        crate::batch::collect(directory.path().into(), command, CancellationToken::new()).await;
+    ui.complete(result, after);
+    let greeting = ui.head.clone().expect("The greeting is the head.");
+    let bar = screen(&mut ui).join("\n");
+    assert!(bar.contains("↑ edit") && bar.contains("/continue") && !bar.contains("Ctrl+R"));
+
+    let esc = KeyEvent::new(KeyCode::Esc, KeyModifiers::NONE);
+    ui.key(esc).unwrap();
+    assert!(ui.overlay.is_none() && ui.notice.contains("Esc again"));
+    ui.key(esc).unwrap();
+    assert!(
+        matches!(ui.overlay, Some(Overlay::Menu { ref title, ref items, .. }) if title.starts_with("Messages in this branch") && items.len() == 1)
+    );
+    ui.key(KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE))
+        .unwrap();
+    let Some(Overlay::Menu { items, .. }) = &ui.overlay else {
+        panic!("The message actions are missing.");
+    };
+    let labels: Vec<_> = items.iter().map(|(label, _)| label.as_str()).collect();
+    assert_eq!(
+        labels,
+        [
+            "Rewind to here",
+            "Edit...",
+            "Branch into a new chat",
+            "Hide from the prompt",
+            "Copy the text"
+        ]
+    );
+    ui.key(esc).unwrap();
+
+    ui.key(KeyEvent::new(KeyCode::Up, KeyModifiers::NONE))
+        .unwrap();
+    let Some(Overlay::Form { kind, fields, .. }) = &ui.overlay else {
+        panic!("The edit form is missing.");
+    };
+    assert!(matches!(kind, FormKind::Edit(id) if *id == greeting.id));
+    assert_eq!(fields[0].editor.lines().join("\n"), greeting.text);
+    ui.key(esc).unwrap();
+
+    ui.key(KeyEvent::new(KeyCode::Right, KeyModifiers::NONE))
+        .unwrap();
+    assert!(ui.pending.is_none(), "A greeting has no retry.");
+
+    let session = ui.preferences.session.clone().unwrap();
+    app.store.edit(&session, &greeting.id, "Edited.").unwrap();
+    ui.refresh().unwrap();
+    assert_eq!(ui.alternatives.len(), 2);
+    assert!(screen(&mut ui).join("\n").contains("‹ 2/2 ›"));
+    ui.key(KeyEvent::new(KeyCode::Left, KeyModifiers::NONE))
+        .unwrap();
+    assert!(matches!(
+        ui.pending.take(),
+        Some(Job::Command(Command::Session { command: SessionCommand::Branch { ref at, .. } }, _)) if *at == greeting.id
+    ));
+
+    ui.key(KeyEvent::new(KeyCode::Char('x'), KeyModifiers::NONE))
+        .unwrap();
+    ui.key(KeyEvent::new(KeyCode::Left, KeyModifiers::NONE))
+        .unwrap();
+    assert!(ui.pending.is_none());
+    assert!(!screen(&mut ui).join("\n").contains("↑ edit"));
+    ui.clear_input();
+
+    // The test stores a user message as the head. A recovery releases the writer lease.
+    app.store.select_head(&session, &greeting.id).unwrap();
+    let user = app
+        .store
+        .prepare(rustytavern::store::Submit {
+            session_id: &session,
+            expected_version: app.store.session(&session).unwrap().version,
+            text: "Hello.",
+            idempotency_key: None,
+            retry_user: None,
+            mode: GenerationMode::Reply,
+            snapshot: serde_json::json!({}),
+            now: rustytavern::store::now_ms(),
+            lease_ms: 1,
+        })
+        .unwrap()
+        .generation
+        .user_node;
+    app.store.recover(&session, i64::MAX).unwrap();
+    ui.refresh().unwrap();
+    assert_eq!(ui.head.as_ref().map(|m| &m.id), Some(&user));
+    assert!(screen(&mut ui).join("\n").contains("Ctrl+R reply"));
+    ui.key(KeyEvent::new(KeyCode::Char('r'), KeyModifiers::CONTROL))
+        .unwrap();
+    assert!(matches!(
+        ui.pending.take(),
+        Some(Job::Generate {
+            retry: true,
+            mode: GenerationMode::Reply,
+            ..
+        })
+    ));
+}

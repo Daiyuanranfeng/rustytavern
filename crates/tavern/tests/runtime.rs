@@ -10,7 +10,7 @@ use rustytavern::{
         ProviderEvent, ProviderStream,
     },
     runtime::Runtime,
-    session::{GenerationStatus, Persona, Role, Session},
+    session::{GenerationMode, GenerationStatus, Persona, Role, Session},
     store::{SqliteStore, StoreBackend},
 };
 use serde_json::json;
@@ -77,6 +77,8 @@ async fn setup(delayed: bool, chunks: usize) -> (Runtime, Arc<SqliteStore>, Stri
                 accept_reduced: false,
                 options: PromptOptions::default(),
                 composition: json!({}),
+                title: None,
+                hidden: Vec::new(),
             },
             None,
         )
@@ -253,4 +255,107 @@ async fn injecting_and_ejecting_a_plugin_changes_the_actual_runtime() {
         .await
         .unwrap();
     assert_eq!(handle.wait().await.unwrap().draft, "x");
+}
+
+async fn reply(runtime: &Runtime, session: &str, text: &str) {
+    let mut handle = runtime
+        .start(session, text, None, ProviderConfig::default())
+        .await
+        .unwrap();
+    assert_eq!(
+        handle.wait().await.unwrap().status,
+        GenerationStatus::Completed
+    );
+}
+
+#[tokio::test]
+async fn a_continuation_keeps_the_original_and_an_impersonation_stores_no_message() {
+    let (runtime, store, session) = setup(false, 2).await;
+    reply(&runtime, &session, "Hello.").await;
+    let original = store.history(&session).unwrap().pop().unwrap();
+    let mut handle = runtime
+        .continue_reply(&session, ProviderConfig::default())
+        .await
+        .unwrap();
+    let continued = handle.wait().await.unwrap();
+    assert_eq!(continued.mode, GenerationMode::Continue);
+    assert!(
+        continued.snapshot["submitted_text"]
+            .as_str()
+            .unwrap()
+            .contains("Continue your last message")
+    );
+    let head = store.history(&session).unwrap().pop().unwrap();
+    assert_eq!(head.text, "xx xx");
+    assert_eq!(head.parent_id, original.parent_id);
+    assert!(store.messages(&session).unwrap().contains(&original));
+    let count = store.messages(&session).unwrap().len();
+    let mut handle = runtime
+        .impersonate(&session, ProviderConfig::default())
+        .await
+        .unwrap();
+    let written = handle.wait().await.unwrap();
+    assert_eq!(written.status, GenerationStatus::Completed);
+    assert_eq!(written.draft, "xx");
+    assert!(
+        written.snapshot["submitted_text"]
+            .as_str()
+            .unwrap()
+            .contains("next message of Alex")
+    );
+    assert_eq!(store.messages(&session).unwrap().len(), count);
+    assert_eq!(store.session(&session).unwrap().head, Some(head.id));
+    let export = store.export_session(&session, true).unwrap();
+    assert!(export.encode().is_ok());
+    let error = store
+        .accept_draft(
+            &session,
+            &written.id,
+            store.session(&session).unwrap().version,
+        )
+        .unwrap_err();
+    assert_eq!(error.code, "invalid_draft_acceptance");
+}
+
+#[tokio::test]
+async fn hidden_messages_leave_the_prompt_and_forks_copy_the_branch() {
+    let (runtime, store, session) = setup(false, 1).await;
+    reply(&runtime, &session, "First.").await;
+    reply(&runtime, &session, "Second.").await;
+    let history = store.history(&session).unwrap();
+    let version = store.session(&session).unwrap().version;
+    let hidden = store.hide_message(&session, &history[0].id, true).unwrap();
+    assert_eq!(hidden.hidden, vec![history[0].id.clone()]);
+    assert_eq!(hidden.version, version + 1);
+    let request = runtime
+        .inspect_request(&session, "Third.", ProviderConfig::default())
+        .await
+        .unwrap();
+    assert!(!request.plan.history_ids.contains(&history[0].id));
+    assert!(request.plan.history_ids.contains(&history[1].id));
+    let fork = store
+        .fork_session(&session, &history.last().unwrap().id)
+        .unwrap();
+    let copied = store.history(&fork.id).unwrap();
+    assert_ne!(fork.id, session);
+    assert_eq!(
+        copied.iter().map(|m| &m.text).collect::<Vec<_>>(),
+        history.iter().map(|m| &m.text).collect::<Vec<_>>()
+    );
+    assert_eq!(fork.hidden, vec![copied[0].id.clone()]);
+    assert!(
+        store
+            .export_session(&fork.id, false)
+            .unwrap()
+            .encode()
+            .is_ok()
+    );
+    reply(&runtime, &fork.id, "Third.").await;
+    assert_eq!(store.history(&session).unwrap().len(), 4);
+    let renamed = store.rename_session(&fork.id, " Harbor ").unwrap();
+    assert_eq!(renamed.title.as_deref(), Some("Harbor"));
+    assert_eq!(renamed.version, store.session(&fork.id).unwrap().version);
+    store.delete_session(&fork.id).unwrap();
+    assert_eq!(store.session(&fork.id).unwrap_err().code, "not_found");
+    assert_eq!(store.list("session").unwrap().len(), 1);
 }

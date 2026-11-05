@@ -145,6 +145,8 @@ async fn main() -> Result<()> {
         accept_reduced: false,
         options: PromptOptions::default(),
         composition: json!({}),
+        title: None,
+        hidden: Vec::new(),
     };
     let session = runtime
         .create_session(&target, None, ProviderConfig::default())

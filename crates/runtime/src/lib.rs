@@ -28,10 +28,14 @@ use provider::{
     AgentRequest, CredentialResolver, HttpProvider, NoCredentials, PreparedRequest,
     ProviderAdapter, ProviderConfig, ProviderStream,
 };
-use session::{Generation, GenerationStatus, Role, Session, SessionConfiguration};
+use session::{Generation, GenerationMode, GenerationStatus, Role, Session, SessionConfiguration};
 use store::{Preparation, StoreBackend, Submit, now_ms};
 
 const LEASE_MS: i64 = 30_000;
+/// The final user turn of a continuation.
+const CONTINUE: &str = "[Continue your last message from the point where it stops. Do not repeat the existing text. Write only the new text.]";
+/// The final user turn of an impersonation.
+const IMPERSONATE: &str = "[Write the next message of {{user}} in this chat. Use the earlier messages of {{user}} as a guide for the style. Write only as {{user}}. Do not write as {{char}}.]";
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct CompiledRequest {
@@ -509,6 +513,7 @@ impl Runtime {
         {
             history.truncate(position);
         }
+        history.retain(|m| !session.hidden.contains(&m.id));
         let mut state = serde_json::Map::new();
         if let Some(composition) = &self.composition {
             for plugin in &composition.plugins {
@@ -542,7 +547,54 @@ impl Runtime {
         idempotency_key: Option<&str>,
         config: ProviderConfig,
     ) -> Result<GenerationHandle> {
-        self.start_inner(session_id, message, idempotency_key, None, config)
+        self.start_inner(
+            session_id,
+            message,
+            idempotency_key,
+            None,
+            GenerationMode::Reply,
+            config,
+        )
+        .await
+    }
+
+    /// The method extends the reply at the session head. The original reply stays as an alternative.
+    pub async fn continue_reply(
+        &self,
+        session_id: &str,
+        config: ProviderConfig,
+    ) -> Result<GenerationHandle> {
+        self.instructed(session_id, CONTINUE, GenerationMode::Continue, config)
+            .await
+    }
+
+    /// The method writes the next user message. The generation draft holds the text. The store adds no message.
+    pub async fn impersonate(
+        &self,
+        session_id: &str,
+        config: ProviderConfig,
+    ) -> Result<GenerationHandle> {
+        self.instructed(session_id, IMPERSONATE, GenerationMode::Impersonate, config)
+            .await
+    }
+
+    async fn instructed(
+        &self,
+        session_id: &str,
+        template: &'static str,
+        mode: GenerationMode,
+        config: ProviderConfig,
+    ) -> Result<GenerationHandle> {
+        let id = session_id.to_owned();
+        let text = self
+            .store_call(move |store| {
+                let session = store.session(&id)?;
+                let card = store.card(&session.character_id)?;
+                let persona = store.persona(&session.persona_id)?;
+                Ok(prompt::expand(template, card.name(), &persona.name, None))
+            })
+            .await?;
+        self.start_inner(session_id, &text, None, None, mode, config)
             .await
     }
 
@@ -565,8 +617,15 @@ impl Runtime {
                 Ok((user.id.clone(), user.text.clone()))
             })
             .await?;
-        self.start_inner(session_id, &text, None, Some(node), config)
-            .await
+        self.start_inner(
+            session_id,
+            &text,
+            None,
+            Some(node),
+            GenerationMode::Reply,
+            config,
+        )
+        .await
     }
 
     async fn start_inner(
@@ -575,6 +634,7 @@ impl Runtime {
         message: &str,
         key: Option<&str>,
         retry_user: Option<String>,
+        mode: GenerationMode,
         config: ProviderConfig,
     ) -> Result<GenerationHandle> {
         let runtime = self.composed().await?;
@@ -600,6 +660,7 @@ impl Runtime {
                     text: &message,
                     idempotency_key: key.as_deref(),
                     retry_user: retry_user.as_deref(),
+                    mode,
                     snapshot,
                     now: now_ms(),
                     lease_ms: LEASE_MS,

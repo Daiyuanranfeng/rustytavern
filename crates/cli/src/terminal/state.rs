@@ -4,7 +4,7 @@ use ratatui::layout::{Position, Rect};
 use ratatui_textarea::TextArea;
 use rustytavern::{
     config::Application,
-    session::{Generation, GenerationStatus},
+    session::{Generation, GenerationMode, GenerationStatus},
 };
 use serde::{Deserialize, Serialize};
 
@@ -16,6 +16,9 @@ pub(super) const COMMANDS: &[(&str, &str)] = &[
     ("/new", "Start a chat"),
     ("/chats", "Resume a chat"),
     ("/retry", "Regenerate the last reply"),
+    ("/messages", "Rewind, edit, branch, or hide a message"),
+    ("/continue", "Extend the last reply"),
+    ("/impersonate", "Let the model write your next message"),
     (
         "/settings",
         "Lorebooks, branches, export, plugins, and more",
@@ -49,6 +52,7 @@ pub(super) enum Job {
         session: String,
         message: String,
         retry: bool,
+        mode: GenerationMode,
     },
 }
 pub(super) enum After {
@@ -60,6 +64,10 @@ pub(super) enum After {
     Models(Vec<String>),
     Session,
     Refresh,
+    /// The chat refreshes. The notice shows the text.
+    Say(&'static str),
+    /// The chat refreshes. Then the model regenerates the reply.
+    Retry,
     View(&'static str),
     Request(Option<PathBuf>),
     /// The download shows a preview. The address and the source fetch the card again on Enter.
@@ -78,6 +86,9 @@ pub(super) enum FormKind {
     Bind,
     Install,
     Run,
+    /// The form edits the message with this ID.
+    Edit(String),
+    Rename,
 }
 pub(super) enum Choice {
     Slash(&'static str),
@@ -88,6 +99,8 @@ pub(super) enum Choice {
     Browse(PathBuf),
     /// The choice shows a character file.
     Open(PathBuf),
+    /// The choice copies the text to the clipboard.
+    Copy(String),
 }
 pub(super) enum Selection {
     DiscoveredModel(String),
@@ -96,6 +109,12 @@ pub(super) enum Selection {
     Persona,
     Session,
     Branch,
+    /// The selection opens the actions of a message.
+    Message,
+    /// The selection lists the alternatives of a message.
+    Alternatives,
+    /// The selection asks for confirmation before it deletes the chat.
+    Delete,
     Enable,
     Disable,
     Uninstall,
@@ -188,6 +207,14 @@ pub(super) struct Ui {
     pub picker: ratatui_image::picker::Picker,
     /// The file browser opens this folder.
     pub folder: PathBuf,
+    /// The last message of the open branch.
+    pub head: Option<rustytavern::session::Message>,
+    /// The IDs of the head and its siblings with the same role, oldest first.
+    pub alternatives: Vec<String>,
+    /// The active generation has this mode.
+    pub mode: GenerationMode,
+    /// The flag records one Esc press. A second Esc opens the message list.
+    pub escape: bool,
 }
 
 pub(super) fn slash_matches(
@@ -299,6 +326,16 @@ pub(super) fn text(source: &str) -> String {
 fn text_label(value: &str) -> String {
     text(value).replace('\n', " ")
 }
+/// The function returns the start of a text on one line.
+pub(super) fn preview(value: &str) -> String {
+    text(value)
+        .split_whitespace()
+        .collect::<Vec<_>>()
+        .join(" ")
+        .chars()
+        .take(120)
+        .collect()
+}
 fn editor(value: &str) -> TextArea<'static> {
     TextArea::from(text(value).lines().map(str::to_owned).collect::<Vec<_>>())
 }
@@ -362,6 +399,10 @@ impl Ui {
                     if downloads.is_dir() { downloads } else { home }
                 },
             ),
+            head: None,
+            alternatives: Vec::new(),
+            mode: GenerationMode::Reply,
+            escape: false,
         };
         if let Err(error) = ui.refresh() {
             ui.notice = error.to_string();
@@ -390,6 +431,8 @@ impl Ui {
         let app = Application::open(&self.path)?;
         let Some(id) = &self.preferences.session else {
             self.printed.clear();
+            self.head = None;
+            self.alternatives.clear();
             self.model = self.preferences.provider.as_ref().and_then(|name| {
                 Some([
                     app.config.providers.get(name)?.settings.model.clone(),
@@ -405,6 +448,7 @@ impl Ui {
         self.model = Some([session.model.clone(), session.provider.clone()]);
         self.names = [text_label(card.name()), text_label(&persona.name)];
         let history = app.store.history(id)?;
+        let messages = app.store.messages(id)?;
         let common = history
             .iter()
             .zip(&self.printed)
@@ -441,7 +485,16 @@ impl Ui {
             self.note("The display shows recent messages. The export retains all history.");
         }
         self.history.extend(fresh.into_iter().rev());
-        self.printed = history.into_iter().map(|message| message.id).collect();
+        self.printed = history.iter().map(|message| message.id.clone()).collect();
+        self.head = history.last().cloned();
+        self.alternatives = match &self.head {
+            Some(head) => messages
+                .into_iter()
+                .filter(|m| m.parent_id == head.parent_id && m.role == head.role)
+                .map(|m| m.id)
+                .collect(),
+            None => Vec::new(),
+        };
         self.outgoing.clear();
         Ok(())
     }
@@ -482,9 +535,36 @@ impl Ui {
         }
     }
     pub fn key(&mut self, key: KeyEvent) -> Result<()> {
+        let escape = std::mem::take(&mut self.escape);
         if key.code == KeyCode::Esc {
-            self.overlay = None;
+            if self.overlay.take().is_none() && self.idle() {
+                if escape {
+                    self.slash("/messages")?;
+                } else {
+                    self.escape = true;
+                    self.notice = "Press Esc again to pick a message.".into();
+                }
+            }
             return Ok(());
+        }
+        if self.idle()
+            && let Some(head) = &self.head
+        {
+            match key.code {
+                KeyCode::Left | KeyCode::Right
+                    if !key.modifiers.contains(KeyModifiers::CONTROL) =>
+                {
+                    return self.swipe(key.code == KeyCode::Right);
+                }
+                KeyCode::Up => {
+                    self.form(FormKind::Edit(head.id.clone()));
+                    return Ok(());
+                }
+                KeyCode::Char('r') if key.modifiers.contains(KeyModifiers::CONTROL) => {
+                    return self.slash("/retry");
+                }
+                _ => {}
+            }
         }
         match self.overlay.take() {
             Some(Overlay::Menu {
@@ -673,10 +753,12 @@ impl Ui {
                             self.streaming = true;
                             self.failure = None;
                             self.steps.clear();
+                            self.mode = GenerationMode::Reply;
                             self.pending = Some(Job::Generate {
                                 session,
                                 message: value,
                                 retry: false,
+                                mode: GenerationMode::Reply,
                             });
                             self.composer = editor("");
                             self.reply.clear();
@@ -693,6 +775,48 @@ impl Ui {
                     self.slash = 0;
                 }
             },
+        }
+        Ok(())
+    }
+    /// The method reports whether the chat waits for input with an empty message box.
+    pub(super) fn idle(&self) -> bool {
+        self.overlay.is_none()
+            && !self.busy
+            && self.preferences.session.is_some()
+            && self.composer.lines().iter().all(String::is_empty)
+    }
+    /// The method shows the previous or next alternative of the last message. The next step after the newest reply regenerates.
+    fn swipe(&mut self, next: bool) -> Result<()> {
+        let Some(head) = &self.head else {
+            return Ok(());
+        };
+        let index = self
+            .alternatives
+            .iter()
+            .position(|id| *id == head.id)
+            .unwrap_or_default();
+        let target = if next {
+            self.alternatives.get(index + 1)
+        } else {
+            index.checked_sub(1).and_then(|i| self.alternatives.get(i))
+        };
+        match target {
+            Some(id) => self.command(
+                Command::Session {
+                    command: SessionCommand::Branch {
+                        session: self.active()?,
+                        at: id.clone(),
+                    },
+                },
+                After::Say("The chat shows another alternative."),
+            ),
+            None if next
+                && head.role == rustytavern::session::Role::Assistant
+                && head.parent_id.is_some() =>
+            {
+                self.slash("/retry")?
+            }
+            None => {}
         }
         Ok(())
     }
@@ -925,6 +1049,15 @@ impl Ui {
                     self.document("Complete model request", &value);
                     return Ok(());
                 }
+                After::Retry => {
+                    self.refresh()?;
+                    return self.slash("/retry");
+                }
+                After::Say(notice) => {
+                    self.refresh()?;
+                    self.notice = notice.into();
+                    return Ok(());
+                }
                 After::Refresh | After::Notice => {}
             }
             self.refresh()?;
@@ -995,11 +1128,26 @@ impl Ui {
         self.reply.clear();
         let _ = self.refresh();
         match result {
+            Ok(generation) if generation.mode == GenerationMode::Impersonate => {
+                self.composer = editor(&generation.draft);
+                self.composer
+                    .move_cursor(ratatui_textarea::CursorMove::Bottom);
+                self.composer.move_cursor(ratatui_textarea::CursorMove::End);
+                self.steps.clear();
+                self.notice = match generation.error {
+                    None => "Edit your message, then press Enter to send it.".into(),
+                    Some(error) => text(&error.message),
+                };
+            }
             Ok(generation) if generation.status == GenerationStatus::Completed => {
                 if let Some(reply) = self.history.iter_mut().rev().find(|m| !m.user) {
                     reply.steps = std::mem::take(&mut self.steps);
                 }
-                self.notice = "The reply is saved.".into();
+                self.notice = if generation.mode == GenerationMode::Continue {
+                    "The reply is longer. ← shows the original reply.".into()
+                } else {
+                    "The reply is saved.".into()
+                };
             }
             Ok(generation) => {
                 self.reply = text(&generation.draft);
