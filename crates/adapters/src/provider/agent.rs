@@ -36,16 +36,6 @@ impl From<ProviderEvent> for AgentProviderEvent {
 fn invalid(message: &str) -> Error {
     Error::new("invalid_provider_tool", message)
 }
-pub(super) fn check_protocol(kind: ProviderKind) -> Result<()> {
-    if matches!(kind, ProviderKind::OpenRouter | ProviderKind::Custom) {
-        Ok(())
-    } else {
-        Err(Error::new(
-            "unsupported_provider_tools",
-            "This native protocol does not support the agent contract.",
-        ))
-    }
-}
 fn name(value: &str) -> bool {
     !value.is_empty()
         && value.len() <= 64
@@ -182,7 +172,6 @@ pub(super) fn prepare(
     mut request: PreparedRequest,
     agent: &AgentRequest,
 ) -> Result<PreparedRequest> {
-    check_protocol(request.protocol)?;
     if agent.tools.is_empty() || agent.tools.len() > 64 || agent.continuation.len() > 64 {
         return Err(invalid("The tool request exceeds its count bounds."));
     }
@@ -200,10 +189,25 @@ pub(super) fn prepare(
             return Err(invalid("The tool definition is invalid."));
         }
     }
-    request.body["tools"] = json!(agent.tools.iter().map(|t| json!({"type":"function","function":{"name":t.name,"description":t.description,"parameters":t.parameters}})).collect::<Vec<_>>());
-    let messages = request.body["messages"]
+    let protocol = request.protocol;
+    let tools = agent.tools.iter().map(|t| match protocol {
+        ProviderKind::OpenAi => json!({"type":"function","name":t.name,"description":t.description,"parameters":t.parameters,"strict":false}),
+        ProviderKind::Anthropic => json!({"name":t.name,"description":t.description,"input_schema":t.parameters}),
+        ProviderKind::Gemini => json!({"name":t.name,"description":t.description,"parametersJsonSchema":t.parameters}),
+        _ => json!({"type":"function","function":{"name":t.name,"description":t.description,"parameters":t.parameters}}),
+    });
+    request.body["tools"] = match protocol {
+        ProviderKind::Gemini => json!([{"functionDeclarations":tools.collect::<Vec<_>>()}]),
+        _ => json!(tools.collect::<Vec<_>>()),
+    };
+    let field = match protocol {
+        ProviderKind::OpenAi => "input",
+        ProviderKind::Gemini => "contents",
+        _ => "messages",
+    };
+    let messages = request.body[field]
         .as_array_mut()
-        .ok_or_else(|| invalid("The request has no messages array."))?;
+        .ok_or_else(|| invalid("The request has no message array."))?;
     let mut ids = BTreeSet::new();
     for turn in &agent.continuation {
         if turn.calls.is_empty()
@@ -232,22 +236,84 @@ pub(super) fn prepare(
             }
             expected.insert(call.id.as_str());
         }
-        messages.push(json!({"role":"assistant","content":turn.text,"tool_calls":turn.calls.iter().map(|c| json!({"id":c.id,"type":"function","function":{"name":c.name,"arguments":c.arguments.to_string()}})).collect::<Vec<_>>()}));
         for result in &turn.results {
             if !expected.remove(result.call_id.as_str()) || result.content.len() > 1048576 {
                 return Err(invalid("The tool result has no unique matching call."));
             }
-            messages.push(
-                json!({"role":"tool","tool_call_id":result.call_id,"content":result.content}),
-            );
         }
+        messages.extend(encode_turn(protocol, turn));
     }
     if serde_json::to_writer(Budget(8 * 1048576), &request.body).is_err() {
         return Err(invalid("The tool request exceeds its byte limit."));
     }
-    request.contract_id =
-        format!("{:?}.chat_completions.agent-v1", request.protocol).to_lowercase();
+    request.contract_id = protocol
+        .capabilities()
+        .contract_id
+        .replace("text-v1", "agent-v1");
     Ok(request)
+}
+
+/// The function maps one agent turn to the message terms of the protocol.
+/// OpenAI uses `function_call` items. Anthropic uses `tool_use` blocks. Gemini uses `functionCall` parts.
+fn encode_turn(protocol: ProviderKind, turn: &AgentTurn) -> Vec<Value> {
+    let name = |id: &str| {
+        turn.calls
+            .iter()
+            .find(|c| c.id == id)
+            .map_or("", |c| c.name.as_str())
+    };
+    let text = (!turn.text.is_empty()).then_some(&turn.text);
+    match protocol {
+        ProviderKind::OpenAi => {
+            let message = text.map(|t| json!({"role":"assistant","content":t}));
+            let calls = turn.calls.iter().map(|c| json!({"type":"function_call","call_id":c.id,"name":c.name,"arguments":c.arguments.to_string()}));
+            let results = turn.results.iter().map(
+                |r| json!({"type":"function_call_output","call_id":r.call_id,"output":r.content}),
+            );
+            message.into_iter().chain(calls).chain(results).collect()
+        }
+        ProviderKind::Anthropic => {
+            let text = text.map(|t| json!({"type":"text","text":t}));
+            let calls = turn
+                .calls
+                .iter()
+                .map(|c| json!({"type":"tool_use","id":c.id,"name":c.name,"input":c.arguments}));
+            let results = turn
+                .results
+                .iter()
+                .map(|r| json!({"type":"tool_result","tool_use_id":r.call_id,"content":r.content}))
+                .collect::<Vec<_>>();
+            vec![
+                json!({"role":"assistant","content":text.into_iter().chain(calls).collect::<Vec<_>>()}),
+                json!({"role":"user","content":results}),
+            ]
+        }
+        ProviderKind::Gemini => {
+            let text = text.map(|t| json!({"text":t}));
+            let calls = turn.calls.iter().map(|c| {
+                let mut part = json!({"functionCall":{"name":c.name,"args":c.arguments}});
+                if let Some(signature) = &c.signature {
+                    part["thoughtSignature"] = json!(signature);
+                }
+                part
+            });
+            let results = turn.results.iter().map(|r| json!({"functionResponse":{"name":name(&r.call_id),"response":{"result":r.content}}})).collect::<Vec<_>>();
+            vec![
+                json!({"role":"model","parts":text.into_iter().chain(calls).collect::<Vec<_>>()}),
+                json!({"role":"user","parts":results}),
+            ]
+        }
+        _ => {
+            let calls = turn.calls.iter().map(|c| json!({"id":c.id,"type":"function","function":{"name":c.name,"arguments":c.arguments.to_string()}})).collect::<Vec<_>>();
+            std::iter::once(json!({"role":"assistant","content":turn.text,"tool_calls":calls}))
+                .chain(
+                    turn.results.iter().map(
+                        |r| json!({"role":"tool","tool_call_id":r.call_id,"content":r.content}),
+                    ),
+                )
+                .collect()
+        }
+    }
 }
 
 #[derive(Default)]
@@ -255,7 +321,10 @@ struct PartialCall {
     id: String,
     name: String,
     arguments: String,
+    signature: Option<String>,
 }
+/// Gemini can omit call IDs. The counter makes unique IDs for one process.
+static GEMINI_CALLS: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
 pub struct AgentStreamNormalizer {
     text: StreamNormalizer,
     agent_mode: bool,
@@ -277,15 +346,24 @@ impl AgentStreamNormalizer {
     }
     pub(super) fn with_request(mut self, request: &PreparedRequest) -> Result<Self> {
         if self.agent_mode {
-            let tools = request.body["tools"]
+            let tools = match request.protocol {
+                ProviderKind::Gemini => &request.body["tools"][0]["functionDeclarations"],
+                _ => &request.body["tools"],
+            };
+            let tools = tools
                 .as_array()
                 .ok_or_else(|| invalid("The request has no tools array."))?;
             let mut definitions = BTreeMap::new();
             for tool in tools {
-                let name = tool["function"]["name"]
+                let tool = tool.get("function").unwrap_or(tool);
+                let name = tool["name"]
                     .as_str()
                     .ok_or_else(|| invalid("The request has no tool name."))?;
-                let schema = &tool["function"]["parameters"];
+                let schema = match request.protocol {
+                    ProviderKind::Anthropic => &tool["input_schema"],
+                    ProviderKind::Gemini => &tool["parametersJsonSchema"],
+                    _ => &tool["parameters"],
+                };
                 if !schema_valid(schema, 0)
                     || definitions.insert(name.into(), schema.clone()).is_some()
                 {
@@ -302,35 +380,18 @@ impl AgentStreamNormalizer {
             self.completed = self.text.completed;
             return Ok(events.into_iter().map(Into::into).collect());
         }
-        check_protocol(self.text.kind)?;
         if self.completed {
             return Err(invalid("The stream has data after completion."));
         }
+        if !matches!(
+            self.text.kind,
+            ProviderKind::Custom | ProviderKind::OpenRouter
+        ) {
+            return self.native_frame(frame);
+        }
         if frame == "[DONE]" {
             if self.finish.as_deref() == Some("tool_calls") {
-                let mut ids = BTreeSet::new();
-                let mut calls = Vec::new();
-                for call in self.calls.values() {
-                    let arguments: Value = serde_json::from_str(&call.arguments)
-                        .map_err(|_| invalid("The tool arguments contain invalid JSON."))?;
-                    if !id(&call.id)
-                        || !name(&call.name)
-                        || !ids.insert(&call.id)
-                        || !arguments.is_object()
-                        || self.definitions.as_ref().is_some_and(|tools| {
-                            !tools
-                                .get(&call.name)
-                                .is_some_and(|schema| arguments_valid(schema, &arguments))
-                        })
-                    {
-                        return Err(invalid("The completed tool call is invalid."));
-                    }
-                    calls.push(ToolCall {
-                        id: call.id.clone(),
-                        name: call.name.clone(),
-                        arguments,
-                    });
-                }
+                let calls = self.take_calls()?;
                 if calls.is_empty() {
                     return Err(invalid("The tool finish has no calls."));
                 }
@@ -436,5 +497,167 @@ impl AgentStreamNormalizer {
         let events = self.text.frame(&value.to_string())?;
         self.completed = self.text.completed;
         Ok(events.into_iter().map(Into::into).collect())
+    }
+    /// The method validates the collected calls and clears them.
+    fn take_calls(&mut self) -> Result<Vec<ToolCall>> {
+        let mut ids = BTreeSet::new();
+        let mut calls = Vec::new();
+        for call in std::mem::take(&mut self.calls).into_values() {
+            let arguments = match call.arguments.as_str() {
+                "" => json!({}),
+                text => serde_json::from_str(text)
+                    .map_err(|_| invalid("The tool arguments contain invalid JSON."))?,
+            };
+            if !id(&call.id)
+                || !name(&call.name)
+                || !ids.insert(call.id.clone())
+                || !arguments.is_object()
+                || self.definitions.as_ref().is_some_and(|tools| {
+                    !tools
+                        .get(&call.name)
+                        .is_some_and(|schema| arguments_valid(schema, &arguments))
+                })
+            {
+                return Err(invalid("The completed tool call is invalid."));
+            }
+            calls.push(ToolCall {
+                id: call.id,
+                name: call.name,
+                arguments,
+                signature: call.signature,
+            });
+        }
+        Ok(calls)
+    }
+    /// The method returns the call at an output index. A new index adds a call.
+    fn call(&mut self, index: &Value, create: bool) -> Result<&mut PartialCall> {
+        let index = index
+            .as_u64()
+            .filter(|i| *i < 256)
+            .ok_or_else(|| invalid("The tool call index exceeds its bounds."))?
+            as usize;
+        let exists = self.calls.contains_key(&index);
+        if exists == create || (create && self.calls.len() >= 32) {
+            return Err(invalid("The tool call order is invalid."));
+        }
+        Ok(self.calls.entry(index).or_default())
+    }
+    fn check_limits(&self) -> Result<Vec<AgentProviderEvent>> {
+        if self
+            .calls
+            .values()
+            .any(|c| c.name.len() > 64 || c.arguments.len() > 65536)
+        {
+            return Err(invalid("The tool delta exceeds its byte limit."));
+        }
+        Ok(Vec::new())
+    }
+    /// The method reads the native tool terms of OpenAI, Anthropic, and Gemini.
+    /// The text normalizer reads the other events.
+    fn native_frame(&mut self, frame: &str) -> Result<Vec<AgentProviderEvent>> {
+        let mut value: Value = serde_json::from_str(frame)
+            .map_err(Error::context("invalid_provider_stream", "Frame failed."))?;
+        let text = |value: &Value, key: &str| -> Result<String> {
+            value[key]
+                .as_str()
+                .map(str::to_owned)
+                .ok_or_else(|| invalid("The tool field must be text."))
+        };
+        match self.text.kind {
+            ProviderKind::OpenAi => match value["type"].as_str() {
+                Some(kind @ ("response.output_item.added" | "response.output_item.done"))
+                    if value["item"]["type"] == "function_call" =>
+                {
+                    let item = &value["item"];
+                    let call = self.call(&value["output_index"], kind.ends_with("added"))?;
+                    call.id = text(item, "call_id")?;
+                    call.name = text(item, "name")?;
+                    call.arguments = text(item, "arguments")?;
+                    return self.check_limits();
+                }
+                Some("response.function_call_arguments.delta") => {
+                    let delta = text(&value, "delta")?;
+                    self.call(&value["output_index"], false)?
+                        .arguments
+                        .push_str(&delta);
+                    return self.check_limits();
+                }
+                _ => {}
+            },
+            ProviderKind::Anthropic => match value["type"].as_str() {
+                Some("content_block_start") if value["content_block"]["type"] == "tool_use" => {
+                    let block = &value["content_block"];
+                    let (id, name) = (text(block, "id")?, text(block, "name")?);
+                    let call = self.call(&value["index"], true)?;
+                    (call.id, call.name) = (id, name);
+                    return self.check_limits();
+                }
+                Some("content_block_delta") if value["delta"]["type"] == "input_json_delta" => {
+                    let delta = text(&value["delta"], "partial_json")?;
+                    self.call(&value["index"], false)?
+                        .arguments
+                        .push_str(&delta);
+                    return self.check_limits();
+                }
+                Some("message_delta") => match value["delta"]["stop_reason"].as_str() {
+                    Some("tool_use") if self.calls.is_empty() => {
+                        return Err(invalid("The tool finish has no calls."));
+                    }
+                    Some("tool_use") => value["delta"]["stop_reason"] = json!("end_turn"),
+                    Some("end_turn" | "stop_sequence") if !self.calls.is_empty() => {
+                        return Err(invalid("The calls have an invalid finish reason."));
+                    }
+                    _ => {}
+                },
+                _ => {}
+            },
+            _ => {
+                if let Some(parts) = value["candidates"][0]["content"]["parts"].as_array_mut() {
+                    let mut kept = Vec::new();
+                    for part in std::mem::take(parts) {
+                        let Some(call) = part.get("functionCall") else {
+                            kept.push(part);
+                            continue;
+                        };
+                        let index = json!(self.calls.keys().next_back().map_or(0, |i| i + 1));
+                        let id = match call["id"].as_str() {
+                            Some(id) => id.to_owned(),
+                            None => format!(
+                                "gemini_{}",
+                                GEMINI_CALLS.fetch_add(1, std::sync::atomic::Ordering::Relaxed)
+                            ),
+                        };
+                        let (name, arguments) = (text(call, "name")?, call["args"].to_string());
+                        let signature = part
+                            .get("thoughtSignature")
+                            .map(|_| text(&part, "thoughtSignature"))
+                            .transpose()?;
+                        let target = self.call(&index, true)?;
+                        (target.id, target.name, target.signature) = (id, name, signature);
+                        target.arguments = if call["args"].is_null() {
+                            String::new()
+                        } else {
+                            arguments
+                        };
+                    }
+                    *parts = kept;
+                }
+            }
+        }
+        self.check_limits()?;
+        let mut events: Vec<AgentProviderEvent> = self
+            .text
+            .frame(&value.to_string())?
+            .into_iter()
+            .map(Into::into)
+            .collect();
+        self.completed = self.text.completed;
+        if matches!(events.last(), Some(AgentProviderEvent::Complete)) {
+            let calls = self.take_calls()?;
+            if !calls.is_empty() {
+                events.insert(events.len() - 1, AgentProviderEvent::ToolCalls { calls });
+            }
+        }
+        Ok(events)
     }
 }

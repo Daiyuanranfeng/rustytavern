@@ -126,8 +126,8 @@ The document must specify purpose, plugin ID, service, Rust type or protocol, in
 
 The [plugin crate](../crates/plugins/README.md) holds every essential plugin. Each plugin family is one module.
 The standard agent activates the essential plugins through `plugins::registry`. The owner ID is `core-product`.
-The host grants each requested capability of an essential plugin. The `plugins.enabled` list in `config.toml` selects the optional plugins.
-Each `[plugins.ID]` table configures one plugin. Without `agent`, the `single-reply` driver serves `driver/1`.
+The host grants each requested capability of an essential plugin. Every essential plugin is always on.
+The `plugins.enabled` list in `config.toml` selects the installed plugins. Each `[plugins.ID]` table configures one plugin.
 
 | Plugin ID | Service | Registered Rust type | Requested capabilities |
 | --- | --- | --- | --- |
@@ -136,7 +136,6 @@ Each `[plugins.ID]` table configures one plugin. Without `agent`, the `single-re
 | `provider` | `provider/1` | `Arc<dyn ProviderAdapter>` | None. Always on. |
 | `store` | `store/1` | `Arc<dyn StoreBackend>` | None. Always on. |
 | `agent` | `driver/1` | `Arc<dyn ConversationDriver>` | The three driver capabilities |
-| `single-reply` | `driver/1` | `Arc<dyn ConversationDriver>` | The three driver capabilities |
 | `web` | `tools.web/1` | `agent::ToolSet` | `network:https:*` |
 | `skills` | `tools.skills/1` | `agent::ToolSet` | `skills.read`, `prompt.contribute:before_history` |
 | `mcp` | `tools.mcp/1` | `agent::ToolSet` | `mcp.connect` |
@@ -223,7 +222,7 @@ The worker retains the selected composition until it returns. The low-level `Car
 ### Conversation driver
 
 The [driver module](../crates/runtime/src/driver.rs) defines `ConversationDriver` and `DriverContext`. The native service name is `driver/1`.
-The registered type is an outer `Arc` around `Arc<dyn ConversationDriver>`. The essential agent driver policy is `agent/1`. The `SingleReplyDriver` policy is `single-reply/1`.
+The registered type is an outer `Arc` around `Arc<dyn ConversationDriver>`. The `agent::AgentDriver` policy is `agent/1`. It is the default driver and the only built-in driver.
 
 | Interface | Contract |
 | --- | --- |

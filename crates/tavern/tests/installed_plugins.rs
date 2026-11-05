@@ -161,14 +161,10 @@ async fn failed_activation_and_missing_command_services_roll_back() {
 }
 
 #[tokio::test]
-async fn essential_plugins_follow_the_enabled_list() {
+async fn essential_plugins_are_always_on() {
     let store: Arc<dyn StoreBackend> = Arc::new(SqliteStore::memory().unwrap());
     let environment = Environment::new(store);
-    let enabled = plugins::DEFAULT_ENABLED
-        .iter()
-        .map(|id| id.to_string())
-        .collect();
-    let registry = plugins::registry(&environment, &enabled, &BTreeMap::new())
+    let registry = plugins::registry(&environment, &BTreeMap::new())
         .await
         .unwrap();
     let lease = registry.lock().await.freeze().unwrap();
@@ -181,15 +177,6 @@ async fn essential_plugins_follow_the_enabled_list() {
         .service::<Arc<dyn CardSource>>("card.source.chub/1")
         .unwrap();
     assert!(source.recognize("https://chub.ai/author/character"));
-    let registry = plugins::registry(&environment, &BTreeSet::new(), &BTreeMap::new())
-        .await
-        .unwrap();
-    let lease = registry.lock().await.freeze().unwrap();
-    assert!(!lease.contains_service("tools.web/1"));
-    assert_eq!(
-        lease.service_owner("driver/1").unwrap().manifest.id,
-        "single-reply"
-    );
 }
 
 struct Echo;

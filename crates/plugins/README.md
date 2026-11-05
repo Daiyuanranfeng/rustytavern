@@ -6,17 +6,15 @@ Each plugin family is one module.
 
 ## Interface
 
-`essential` returns the plugins for the enabled IDs. The core services are always on.
+`essential` returns the essential plugins. Every essential plugin is always on.
 `registry` activates them under the `core-product` owner and grants their requested capabilities.
-`DEFAULT_ENABLED` lists the plugins that are on when `config.toml` has no `plugins.enabled` list.
 `Builtin` runs one plugin from its factory name. An installed plugin can select the same factory names.
 `Environment` supplies the store. Each plugin receives its `[plugins.ID]` table as configuration.
 
 | Plugin ID | Module | Service | Behavior |
 | --- | --- | --- | --- |
 | `decoder`, `profile`, `provider`, `store` | `lib` | Core services | The plugins decode cards, compile prompts, call models, and store records. They are always on. |
-| `agent` | `drivers` | `driver/1` | The loop calls the model and runs requested tools until a reply has no tool calls. |
-| `single-reply` | `drivers` | `driver/1` | The driver sends one text request. It answers when `agent` is off. |
+| `agent` | `drivers` | `driver/1` | The loop calls the model and runs requested tools until a reply has no tool calls. It is the only conversation mode. |
 | `web` | `tools::web` | `tools.web/1` | The `web_fetch` tool reads one public HTTPS page as plain text. |
 | `skills` | `tools::skills` | `tools.skills/1` | The plugin adds the skill catalog to the prompt and registers the `skill` tool. |
 | `mcp` | `tools::mcp` | `tools.mcp/1` | The plugin connects each configured server and registers its tools. |
@@ -33,7 +31,17 @@ The host runs each tool call and emits `tool_call` and `tool_result` events.
 The host truncates each tool result to 64 KiB. A failed tool call returns its error text to the model.
 
 The `[plugins.agent]` table has `max_steps`. It limits tool steps. The default is 8 and the maximum is 64.
-The OpenRouter and custom protocols support tool calls. Other protocols receive the text request.
+Every built-in protocol supports tool calls. The adapter maps the provider terms to `ToolCall` and `ToolResult`:
+
+| Protocol | Tool definition | Call | Result |
+| --- | --- | --- | --- |
+| OpenRouter, custom | `tools[].function` | `tool_calls` | `role: "tool"` message |
+| OpenAI Responses | `tools[]` with `strict: false` | `function_call` item | `function_call_output` item |
+| Anthropic Messages | `tools[].input_schema` | `tool_use` block | `tool_result` block |
+| Gemini | `functionDeclarations[].parametersJsonSchema` | `functionCall` part | `functionResponse` part |
+
+Gemini can omit a call ID. The adapter then makes a `gemini_N` ID. The continuation returns the Gemini `thoughtSignature` of each call.
+A provider adapter without tool support fails with `unsupported_provider_tools`. The runtime does not send a request without tools.
 
 The web fetcher checks destination addresses and redirects. The tool removes HTML scripts, styles, and tags.
 
@@ -49,9 +57,6 @@ A failed server connection stops the plugin activation. The plugin closes each c
 ## Configuration
 
 ```toml
-[plugins]
-enabled = ["agent", "web", "skills", "mcp"]
-
 [plugins.agent]
 max_steps = 8
 
