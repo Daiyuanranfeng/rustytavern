@@ -14,7 +14,7 @@ use crossterm::{
 use futures_util::StreamExt;
 use rustytavern::{
     app::PluginManager,
-    config::{Application, StoredCredentials, default_data_dir},
+    config::{Application, default_home},
     runtime::RuntimeEvent,
     session::Generation,
 };
@@ -65,7 +65,7 @@ pub(super) async fn run(path: Option<PathBuf>) -> Result<()> {
             "The interactive interface requires a terminal. Use --help for script commands.",
         ));
     }
-    let path = path.map(Ok).unwrap_or_else(default_data_dir)?;
+    let path = path.map(Ok).unwrap_or_else(default_home)?;
     let mut ui = Ui::open(path)?;
     if Application::open(&ui.path)?.config.providers.is_empty() {
         ui.slash("/provider")?;
@@ -169,9 +169,10 @@ async fn generate(
 ) -> Result<Generation> {
     let app = Application::open(path)?;
     let registry = app.registry().await?;
-    let mut manager = PluginManager::open(&app.data_dir, app.store, registry)?;
+    let credentials = std::sync::Arc::new(app.credentials());
+    let mut manager = PluginManager::open(app.store, registry, &app.config.plugins);
     manager.restore().await?;
-    let runtime = rustytavern::app::runtime(&manager).await?;
+    let runtime = rustytavern::app::runtime(&manager, credentials).await?;
     let provider = runtime.provider_config(&session).await?;
     let mut handle = if retry {
         runtime.regenerate(&session, provider).await?

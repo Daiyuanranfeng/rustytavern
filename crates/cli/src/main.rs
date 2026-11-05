@@ -13,8 +13,9 @@ use std::path::PathBuf;
     about = "RustyTavern runs persistent character conversations."
 )]
 struct Cli {
+    /// The home directory holds config.toml and rustytavern.db. The default is ~/.rustytavern.
     #[arg(long, global = true)]
-    data_dir: Option<PathBuf>,
+    home: Option<PathBuf>,
     #[command(subcommand)]
     command: Option<Command>,
 }
@@ -283,6 +284,7 @@ enum PromptCommand {
     },
 }
 #[derive(Subcommand)]
+#[allow(clippy::large_enum_variant)]
 enum ConfigCommand {
     Show,
     Capabilities,
@@ -297,6 +299,9 @@ enum ConfigCommand {
         endpoint: Option<String>,
         #[arg(long)]
         api_key_env: Option<String>,
+        /// The command stores the key in config.toml.
+        #[arg(long)]
+        api_key: Option<String>,
         #[arg(long, default_value_t = 16384)]
         context_limit: usize,
         #[arg(long, default_value_t = 1024)]
@@ -311,18 +316,19 @@ enum ConfigCommand {
 }
 /// An extension changes only the application appearance.
 #[derive(Subcommand)]
+/// The `[extensions.NAME]` tables of config.toml define the extensions.
 enum ExtensionCommand {
-    Install { path: PathBuf },
     List,
-    Enable { extension: String },
-    Disable { extension: String },
-    Uninstall { extension: String },
 }
 /// A plugin changes agent behavior or adds content to the agent context.
 #[derive(Subcommand)]
 enum PluginCommand {
     Install {
         path: PathBuf,
+        #[arg(long)]
+        grant: Vec<String>,
+        #[arg(long)]
+        trust_processes: bool,
     },
     List {
         #[arg(long)]
@@ -334,12 +340,7 @@ enum PluginCommand {
         json: bool,
     },
     Enable {
-        #[arg(required=true,num_args=1..)]
-        plugins: Vec<String>,
-        #[arg(long)]
-        grant: Vec<String>,
-        #[arg(long)]
-        trust_processes: bool,
+        plugin: String,
     },
     Disable {
         plugin: String,
@@ -422,7 +423,7 @@ async fn main() {
     let result = if cli.command.is_some() {
         batch::run(cli).await
     } else {
-        terminal::run(cli.data_dir).await
+        terminal::run(cli.home).await
     };
     if let Err(error) = result {
         eprintln!(

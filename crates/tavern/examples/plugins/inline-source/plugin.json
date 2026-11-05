@@ -1,5 +1,5 @@
 {
-  "id": "example.inline-source",
+  "id": "inline-source",
   "version": "0.1.0",
   "host_protocol": "1",
   "provides": [

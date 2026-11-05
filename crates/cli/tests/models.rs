@@ -9,7 +9,7 @@ use std::{
 
 fn run(data: &Path, args: &[&str]) -> Output {
     Command::new(env!("CARGO_BIN_EXE_rustytavern"))
-        .arg("--data-dir")
+        .arg("--home")
         .arg(data)
         .args(args)
         .output()

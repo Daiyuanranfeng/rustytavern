@@ -524,10 +524,10 @@ The CLI runs a command through `plugin run NAME --args JSON`. The CLI also accep
 
 ```sh
 cargo run --locked -- --data-dir ./data plugin install crates/tavern/examples/plugins/lighthouse-notes
-cargo run --locked -- --data-dir ./data plugin enable example.lighthouse-notes --grant prompt.contribute:before_character --grant prompt.contribute:after_character
-cargo run --locked -- --data-dir ./data plugin inspect example.lighthouse-notes
-cargo run --locked -- --data-dir ./data plugin disable example.lighthouse-notes
-cargo run --locked -- --data-dir ./data plugin uninstall example.lighthouse-notes
+cargo run --locked -- --data-dir ./data plugin enable lighthouse-notes --grant prompt.contribute:before_character --grant prompt.contribute:after_character
+cargo run --locked -- --data-dir ./data plugin inspect lighthouse-notes
+cargo run --locked -- --data-dir ./data plugin disable lighthouse-notes
+cargo run --locked -- --data-dir ./data plugin uninstall lighthouse-notes
 ```
 
 The manager rejects an update while the installed plugin remains enabled. Disable the plugin before installation of its replacement.

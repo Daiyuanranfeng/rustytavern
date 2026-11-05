@@ -521,7 +521,7 @@ async fn plugin_upgrade_restores_its_native_migration_factory() {
     let store = Arc::new(SqliteStore::open(&path).unwrap());
     store.state_write(ID, "counter", &json!(7)).unwrap();
     let registry = Arc::new(tokio::sync::Mutex::new(PluginRegistry::default()));
-    let mut manager = PluginManager::open(data.path(), store.clone(), registry).unwrap();
+    let mut manager = PluginManager::open(store.clone(), registry, &Default::default());
     manager
         .register_factory("fixture.state".into(), factory(store.clone()))
         .unwrap();
@@ -532,9 +532,8 @@ async fn plugin_upgrade_restores_its_native_migration_factory() {
         )
         .unwrap();
         std::fs::write(source.path().join("plugin.json"),serde_json::to_vec(&json!({"id":ID,"version":format!("{schema}.0.0"),"host_protocol":"1","state_schema":schema,"requested_capabilities":[format!("state.read:{ID}"),format!("state.write:{ID}")],"implementation":{"kind":"builtin","name":"fixture.state","configuration":{}}})).unwrap()).unwrap();
-        manager.install(source.path()).unwrap();
         manager
-            .enable(&[ID.into()], grants().remove(ID).unwrap(), false)
+            .install(source.path(), grants().remove(ID).unwrap(), false)
             .await
             .unwrap();
         assert_eq!(store.plugin_state_snapshot(ID).unwrap().schema, schema);
@@ -542,15 +541,15 @@ async fn plugin_upgrade_restores_its_native_migration_factory() {
             manager.disable(ID).await.unwrap();
         }
     }
+    let settings = manager.settings().clone();
     drop(manager);
     let store = Arc::new(SqliteStore::open(&path).unwrap());
     let before = store.plugin_state_snapshot(ID).unwrap();
     let mut restored = PluginManager::open(
-        data.path(),
         store.clone(),
         Arc::new(tokio::sync::Mutex::new(PluginRegistry::default())),
-    )
-    .unwrap();
+        &settings,
+    );
     restored
         .register_factory("fixture.state".into(), factory(store.clone()))
         .unwrap();
@@ -558,6 +557,6 @@ async fn plugin_upgrade_restores_its_native_migration_factory() {
     assert_eq!(store.plugin_state_snapshot(ID).unwrap(), before);
     assert_eq!(before.entries["counter"]["value"], json!({"count":7}));
     restored.disable(ID).await.unwrap();
-    restored.uninstall(ID).unwrap();
+    restored.uninstall(ID).await.unwrap();
     assert_eq!(store.plugin_state_snapshot(ID).unwrap(), before);
 }

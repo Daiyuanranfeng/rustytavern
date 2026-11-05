@@ -1,7 +1,7 @@
 # Lighthouse note plugin
 
 The plugin adds two static prompt contributions.
-The plugin ID is `example.lighthouse-notes`.
+The plugin ID is `lighthouse-notes`.
 The [plugin manifest](plugin.json) selects the compiled `prompt.contributions` factory.
 
 ## Interface
@@ -18,14 +18,14 @@ The plugin provides no typed services and requires no network access.
 
 ```sh
 cargo run --locked -- --data-dir ./data plugin install crates/tavern/examples/plugins/lighthouse-notes
-cargo run --locked -- --data-dir ./data plugin enable example.lighthouse-notes --grant prompt.contribute:before_character --grant prompt.contribute:after_character
+cargo run --locked -- --data-dir ./data plugin enable lighthouse-notes --grant prompt.contribute:before_character --grant prompt.contribute:after_character
 cargo run --locked -- --data-dir ./data session configure SESSION_ID
 cargo run --locked -- --data-dir ./data prompt inspect SESSION_ID --message "Hello." --json
-cargo run --locked -- --data-dir ./data plugin disable example.lighthouse-notes
+cargo run --locked -- --data-dir ./data plugin disable lighthouse-notes
 ```
 
 Use an existing session ID from `session new`. Prompt inspection makes no model request.
-The enabled prompt contains the `plugin:example.lighthouse-notes:world` and `plugin:example.lighthouse-notes:voice` sections.
+The enabled prompt contains the `plugin:lighthouse-notes:world` and `plugin:lighthouse-notes:voice` sections.
 
 ## Implementation
 

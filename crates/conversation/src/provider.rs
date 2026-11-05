@@ -6,7 +6,9 @@ use std::collections::BTreeMap;
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "snake_case")]
 pub enum ProviderKind {
+    #[serde(rename = "openrouter", alias = "open_router")]
     OpenRouter,
+    #[serde(rename = "openai", alias = "open_ai")]
     OpenAi,
     Anthropic,
     Gemini,

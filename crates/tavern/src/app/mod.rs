@@ -1,12 +1,13 @@
 //! The module installs third-party plugins and assembles the runtime.
-//! A plugin directory contains one `plugin.json` file and the files that the plugin uses.
+//! An installed plugin is a local directory with one `plugin.json` file.
+//! The `[plugins]` table of `config.toml` records each installed plugin.
 pub use crate::config;
 use crate::{Error, Result, external, plugin, runtime, source, store};
-use rustytavern_core::{bounded_read, checked_file, digest, native_artifact_hash, safe_relative};
+use rustytavern_core::{bounded_read, checked_file, digest, native_artifact_hash};
 
 use std::{
     collections::{BTreeMap, BTreeSet},
-    path::{Path, PathBuf},
+    path::Path,
     sync::Arc,
 };
 
@@ -16,6 +17,7 @@ use serde_json::{Value, json};
 use tokio::sync::Mutex;
 use tokio_util::sync::CancellationToken;
 
+use crate::config::{InstalledPlugin, PluginSettings};
 use crate::plugins::{self, Builtin, Environment};
 use external::{ExternalSourcePlugin, ProcessDefinition};
 use plugin::{CompositionLease, PluginManifest, PluginRegistry, RuntimePlugin};
@@ -24,11 +26,8 @@ use rustytavern_card::{Card, CardDecoder};
 use source::{Artifact, CardSource};
 use store::{StoreBackend, new_id};
 
-const APP_NAMESPACE: &str = "rustytavern.application";
-const CATALOG_KEY: &str = "plugins";
 const MANIFEST: &str = "plugin.json";
 const MAX_PLUGIN_BYTES: usize = 64 * 1024 * 1024;
-const MAX_PLUGIN_FILES: usize = 512;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -61,34 +60,6 @@ pub struct PluginDefinition {
     pub commands: Vec<CommandDefinition>,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct InstalledPlugin {
-    pub definition: PluginDefinition,
-    pub hash: String,
-    pub directory: String,
-    pub files: BTreeMap<String, String>,
-    pub enabled: bool,
-    pub grants: BTreeSet<String>,
-    pub trusted_processes: bool,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-#[serde(default)]
-struct Catalog {
-    schema_version: u32,
-    plugins: BTreeMap<String, InstalledPlugin>,
-    bindings: BTreeMap<String, String>,
-}
-impl Default for Catalog {
-    fn default() -> Self {
-        Self {
-            schema_version: 1,
-            plugins: BTreeMap::new(),
-            bindings: BTreeMap::new(),
-        }
-    }
-}
-
 #[async_trait]
 pub trait CommandService: Send + Sync {
     async fn call(
@@ -103,41 +74,31 @@ pub type NativeFactory =
     Arc<dyn Fn(&PluginDefinition) -> Result<Arc<dyn RuntimePlugin>> + Send + Sync>;
 
 /// The manager installs, enables, and removes third-party plugins.
+/// The caller saves `settings` into `config.toml` after a change.
 pub struct PluginManager {
-    data_dir: PathBuf,
     store: Arc<dyn StoreBackend>,
     pub registry: Arc<Mutex<PluginRegistry>>,
-    catalog: Catalog,
-    revision: i64,
+    settings: PluginSettings,
+    active: BTreeMap<String, PluginDefinition>,
     factories: BTreeMap<String, NativeFactory>,
 }
 
 impl PluginManager {
     pub fn open(
-        data_dir: impl AsRef<Path>,
         store: Arc<dyn StoreBackend>,
         registry: Arc<Mutex<PluginRegistry>>,
-    ) -> Result<Self> {
-        let (revision, catalog) = match store.state_record(APP_NAMESPACE, CATALOG_KEY)? {
-            Some((revision, value)) => (revision, serde_json::from_value::<Catalog>(value)?),
-            None => (0, Catalog::default()),
-        };
-        if catalog.schema_version != 1 {
-            return Err(Error::new(
-                "future_schema",
-                "The plugin catalog requires another application version.",
-            ));
-        }
-        let data_dir = data_dir.as_ref().to_owned();
-        std::fs::create_dir_all(data_dir.join("plugins"))?;
-        Ok(Self {
-            data_dir,
+        settings: &PluginSettings,
+    ) -> Self {
+        Self {
             store,
             registry,
-            catalog,
-            revision,
+            settings: settings.clone(),
+            active: BTreeMap::new(),
             factories: BTreeMap::new(),
-        })
+        }
+    }
+    pub fn settings(&self) -> &PluginSettings {
+        &self.settings
     }
 
     pub fn register_factory(&mut self, name: String, factory: NativeFactory) -> Result<()> {
@@ -151,269 +112,201 @@ impl PluginManager {
         Ok(())
     }
 
-    pub fn list(&self) -> Vec<InstalledPlugin> {
-        self.catalog.plugins.values().cloned().collect()
-    }
-    pub fn inspect(&self, id: &str) -> Result<InstalledPlugin> {
-        self.catalog
-            .plugins
-            .get(id)
-            .cloned()
-            .ok_or_else(|| Error::new("not_found", "The plugin is not installed."))
+    /// The method lists each installed plugin without starting its process.
+    pub fn list(&self) -> Result<Vec<Value>> {
+        let enabled = self.settings.enabled();
+        self.settings
+            .installed()?
+            .into_iter()
+            .map(|(id, installed)| {
+                let definition = load_definition(&installed.path)?;
+                Ok(json!({"manifest":definition.manifest,"path":installed.path,"enabled":enabled.contains(&id),"grants":installed.grants,"process_trust_required":matches!(definition.implementation,Implementation::Process{..})}))
+            })
+            .collect()
     }
 
-    /// The method copies and hashes a plugin directory. It does not start the plugin.
-    pub fn install(&mut self, source: &Path) -> Result<InstalledPlugin> {
-        let (definition, files) = validate_plugin(source)?;
+    /// The method activates each enabled installed plugin and applies the bindings.
+    pub async fn restore(&mut self) -> Result<()> {
+        let enabled = self.settings.enabled();
+        let ids = self
+            .settings
+            .installed()?
+            .into_keys()
+            .filter(|id| enabled.contains(id))
+            .collect::<Vec<_>>();
+        if ids.is_empty() && !self.settings.bindings.is_empty() {
+            self.registry
+                .lock()
+                .await
+                .replace_bindings(self.settings.bindings.clone())?;
+        }
+        self.activate(&ids).await
+    }
+
+    /// The method checks and activates a plugin directory, then records and enables it.
+    pub async fn install(
+        &mut self,
+        path: &Path,
+        grants: BTreeSet<String>,
+        trust_processes: bool,
+    ) -> Result<PluginDefinition> {
+        let path = path.canonicalize()?;
+        let definition = validate_plugin(&path)?;
         let id = definition.manifest.id.clone();
-        if self.catalog.plugins.get(&id).is_some_and(|p| p.enabled) {
+        if self.active.contains_key(&id) {
             return Err(Error::new(
                 "plugin_in_use",
                 "The caller must disable this plugin before an update.",
             ));
         }
-        let hash = digest(&serde_json::to_vec(&files)?);
-        let directory = format!("{id}-{}-{}", definition.manifest.version, &hash[..16]);
-        let final_dir = self.data_dir.join("plugins").join(&directory);
-        let stage = self.data_dir.join("plugins").join(new_id("staging"));
-        let staged = (|| -> Result<()> {
-            std::fs::create_dir(&stage)?;
-            for (relative, expected) in &files {
-                let original = checked_file(source, relative)?;
-                let bytes = bounded_read(&original, MAX_PLUGIN_BYTES)?;
-                if digest(&bytes) != *expected {
-                    return Err(Error::new(
-                        "invalid_plugin_hash",
-                        "The plugin changed during installation.",
-                    ));
-                }
-                let destination = stage.join(relative);
-                if let Some(parent) = destination.parent() {
-                    std::fs::create_dir_all(parent)?;
-                }
-                std::fs::write(&destination, bytes)?;
-                #[cfg(unix)]
-                {
-                    use std::os::unix::fs::PermissionsExt;
-                    let mode = std::fs::metadata(&original)?.permissions().mode() & 0o777;
-                    std::fs::set_permissions(&destination, std::fs::Permissions::from_mode(mode))?;
-                }
-            }
-            validate_plugin(&stage)?;
-            if final_dir.exists() {
-                verify_files(&final_dir, &files)?;
-                std::fs::remove_dir_all(&stage)?;
-            } else {
-                std::fs::rename(&stage, &final_dir)?;
-            }
-            Ok(())
-        })();
-        if staged.is_err() {
-            let _ = std::fs::remove_dir_all(&stage);
-        }
-        staged?;
         let installed = InstalledPlugin {
-            definition,
-            hash,
-            directory,
-            files,
-            enabled: false,
-            grants: BTreeSet::new(),
-            trusted_processes: false,
+            path,
+            grants,
+            trust_processes,
         };
-        let mut catalog = self.catalog.clone();
-        catalog.plugins.insert(id, installed.clone());
-        self.save(catalog)?;
-        Ok(installed)
-    }
-
-    pub async fn restore(&mut self) -> Result<()> {
-        let ids = self
-            .catalog
-            .plugins
-            .values()
-            .filter(|p| p.enabled)
-            .map(|p| p.definition.manifest.id.clone())
-            .collect::<Vec<_>>();
-        self.activate(&ids, None).await
-    }
-
-    pub async fn enable(
-        &mut self,
-        ids: &[String],
-        grants: BTreeSet<String>,
-        trust_processes: bool,
-    ) -> Result<()> {
-        let mut catalog = self.catalog.clone();
-        for id in ids {
-            let installed = catalog
-                .plugins
-                .get_mut(id)
-                .ok_or_else(|| Error::new("not_found", "The plugin is not installed."))?;
-            if installed.enabled {
-                return Err(Error::new(
-                    "plugin_in_use",
-                    "The plugin is already enabled.",
-                ));
-            }
-            installed.enabled = true;
-            installed.grants = grants.clone();
-            installed.trusted_processes = trust_processes;
+        let previous = self.settings.clone();
+        self.settings
+            .entries
+            .insert(id.clone(), serde_json::to_value(&installed)?);
+        let mut enabled = self.settings.enabled();
+        enabled.insert(id.clone());
+        self.settings.enabled = Some(enabled);
+        if let Err(error) = self.activate(std::slice::from_ref(&id)).await {
+            self.settings = previous;
+            return Err(error);
         }
-        self.activate(ids, Some(catalog)).await
+        Ok(definition)
     }
 
-    async fn activate(&mut self, ids: &[String], update: Option<Catalog>) -> Result<()> {
-        let target = update.as_ref().unwrap_or(&self.catalog);
-        commands(target)?;
+    pub async fn uninstall(&mut self, id: &str) -> Result<()> {
+        if !self.settings.installed()?.contains_key(id) {
+            return Err(Error::new("not_found", "The plugin is not installed."));
+        }
+        self.disable(id).await?;
+        self.settings.entries.remove(id);
+        Ok(())
+    }
+
+    /// The method adds the ID to the enabled list. An essential plugin starts at the next launch.
+    pub async fn enable(&mut self, id: &str) -> Result<()> {
+        let mut enabled = self.settings.enabled();
+        enabled.insert(id.into());
+        self.settings.enabled = Some(enabled);
+        if self.settings.installed()?.contains_key(id) && !self.active.contains_key(id) {
+            self.activate(&[id.into()]).await?;
+        }
+        Ok(())
+    }
+
+    /// The method removes the ID from the enabled list. An essential plugin stops at the next launch.
+    pub async fn disable(&mut self, id: &str) -> Result<()> {
+        if self.active.contains_key(id) {
+            self.registry.lock().await.eject_owner(&owner(id)).await?;
+            self.active.remove(id);
+        }
+        let mut enabled = self.settings.enabled();
+        enabled.remove(id);
+        self.settings.enabled = Some(enabled);
+        self.settings.bindings.retain(|_, provider| provider != id);
+        Ok(())
+    }
+
+    pub async fn bind(&mut self, service: String, plugin: String) -> Result<()> {
+        let mut registry = self.registry.lock().await;
+        let active = registry
+            .inspect()
+            .iter()
+            .any(|p| p.manifest.id == plugin && p.manifest.provides.contains(&service));
+        if !active {
+            return Err(Error::new(
+                "missing_service",
+                "The selected plugin does not provide this service.",
+            ));
+        }
+        registry.set_binding(service.clone(), plugin.clone())?;
+        self.settings.bindings.insert(service, plugin);
+        Ok(())
+    }
+
+    async fn activate(&mut self, ids: &[String]) -> Result<()> {
+        let installed = self.settings.installed()?;
         let mut plugins: Vec<Arc<dyn RuntimePlugin>> = Vec::new();
         let mut permissions = BTreeMap::new();
+        let mut definitions = BTreeMap::new();
         for id in ids {
-            let installed = &target.plugins[id];
-            let root = self.plugin_root(installed)?;
-            verify_files(&root, &installed.files)?;
-            let definition = load_definition(&root)?;
+            let entry = installed
+                .get(id)
+                .ok_or_else(|| Error::new("not_found", "The plugin is not installed."))?;
+            let definition = load_definition(&entry.path)?;
+            if definition.manifest.id != *id {
+                return Err(Error::new(
+                    "invalid_plugin_id",
+                    "The plugin.json ID differs from its configuration table name.",
+                ));
+            }
             if matches!(definition.implementation, Implementation::Process { .. })
-                && !installed.trusted_processes
+                && !entry.trust_processes
             {
                 return Err(Error::new(
                     "capability_denied",
                     "The plugin requires explicit trust for its process executable.",
                 ));
             }
-            let effective = installed
+            let effective = entry
                 .grants
                 .intersection(&definition.manifest.requested_capabilities)
                 .cloned()
                 .collect::<BTreeSet<_>>();
             permissions.insert(id.clone(), effective);
-            plugins.push(self.build_plugin(definition, &root)?);
+            plugins.push(self.build_plugin(definition.clone(), &entry.path)?);
+            definitions.insert(id.clone(), definition);
+        }
+        if plugins.is_empty() {
+            return Ok(());
         }
         let mut registry = self.registry.lock().await;
         let previous_bindings = registry.bindings().clone();
         let batch = new_id("plugin-activation");
         registry
-            .inject_bound(plugins, &batch, &permissions, target.bindings.clone())
+            .inject_bound(
+                plugins,
+                &batch,
+                &permissions,
+                self.settings.bindings.clone(),
+            )
             .await?;
-        let validation = registry.freeze().and_then(|lease| {
-            for command in commands(target)?.values() {
-                if !lease.contains_service(&command.service) {
-                    return Err(Error::new(
-                        "missing_service",
-                        "The plugin command requires an unavailable service.",
-                    ));
-                }
-                if lease
-                    .service::<Arc<dyn CardSource>>(&command.service)
-                    .is_ok()
-                {
-                    if command.operation != "fetch" {
-                        return Err(Error::new(
-                            "unsupported_plugin_command",
-                            "The source command requires the fetch operation.",
-                        ));
-                    }
-                } else {
-                    lease.service::<Arc<dyn CommandService>>(&command.service)?;
-                }
-            }
-            Ok(())
-        });
-        let committed = validation.and_then(|()| {
-            update
-                .as_ref()
-                .map_or(Ok(self.revision), |catalog| self.persist(catalog))
-        });
-        let revision = match committed {
-            Ok(revision) => revision,
-            Err(error) => {
-                registry.eject_owner(&batch).await?;
-                registry.replace_bindings(previous_bindings)?;
-                return Err(error);
-            }
-        };
-        if let Some(catalog) = update {
-            self.catalog = catalog;
-            self.revision = revision;
+        let validation = registry
+            .freeze()
+            .and_then(|lease| validate_commands(&lease, definitions.values()));
+        if let Err(error) = validation {
+            registry.eject_owner(&batch).await?;
+            registry.replace_bindings(previous_bindings)?;
+            return Err(error);
         }
         for id in ids {
             registry.add_owner(id, &owner(id))?;
         }
         registry.eject_owner(&batch).await?;
+        self.active.extend(definitions);
         Ok(())
-    }
-
-    pub async fn disable(&mut self, id: &str) -> Result<()> {
-        if !self.inspect(id)?.enabled {
-            return Ok(());
-        }
-        let mut catalog = self.catalog.clone();
-        if let Some(installed) = catalog.plugins.get_mut(id) {
-            installed.enabled = false;
-        }
-        catalog.bindings.retain(|_, provider| provider != id);
-        let mut registry = self.registry.lock().await;
-        registry.can_eject_owner(&owner(id))?;
-        let revision = self.persist(&catalog)?;
-        registry.eject_owner(&owner(id)).await?;
-        registry.replace_bindings(catalog.bindings.clone())?;
-        self.catalog = catalog;
-        self.revision = revision;
-        Ok(())
-    }
-
-    pub fn uninstall(&mut self, id: &str) -> Result<()> {
-        if self.inspect(id)?.enabled {
-            return Err(Error::new(
-                "plugin_in_use",
-                "The caller must disable the plugin before uninstall.",
-            ));
-        }
-        let mut catalog = self.catalog.clone();
-        catalog.plugins.remove(id);
-        self.save(catalog)
-    }
-
-    pub async fn bind(&mut self, service: String, plugin: String) -> Result<()> {
-        let mut registry = self.registry.lock().await;
-        let previous = registry.bindings().clone();
-        let found =
-            registry
-                .inspect()
-                .iter()
-                .any(|p| p.manifest.id == plugin && p.manifest.provides.contains(&service))
-                || self.catalog.plugins.get(&plugin).is_some_and(|p| {
-                    p.enabled && p.definition.manifest.provides.contains(&service)
-                });
-        if !found {
-            return Err(Error::new(
-                "missing_service",
-                "The selected plugin does not declare this service.",
-            ));
-        }
-        registry.set_binding(service.clone(), plugin.clone())?;
-        let mut catalog = self.catalog.clone();
-        catalog.bindings.insert(service, plugin);
-        match self.persist(&catalog) {
-            Ok(revision) => {
-                self.catalog = catalog;
-                self.revision = revision;
-                Ok(())
-            }
-            Err(error) => {
-                registry.replace_bindings(previous)?;
-                Err(error)
-            }
-        }
-    }
-
-    /// The method lists each installed plugin without starting its process.
-    pub fn declared_plugins(&self) -> Vec<Value> {
-        self.catalog.plugins.values().map(|p| json!({"manifest":p.definition.manifest,"hash":p.hash,"state":if p.enabled {"configured"} else {"disabled"},"process_trust_required":matches!(p.definition.implementation,Implementation::Process{..})})).collect()
     }
 
     pub fn commands(&self) -> Result<BTreeMap<String, CommandDefinition>> {
-        commands(&self.catalog)
+        let mut commands = BTreeMap::new();
+        for definition in self.active.values() {
+            for command in &definition.commands {
+                if commands
+                    .insert(command.name.clone(), command.clone())
+                    .is_some()
+                {
+                    return Err(Error::new(
+                        "invalid_plugin_command",
+                        "Enabled plugins declare the same command.",
+                    ));
+                }
+            }
+        }
+        Ok(commands)
     }
 
     pub async fn fetch_card(
@@ -502,25 +395,6 @@ impl PluginManager {
         ))?
     }
 
-    fn save(&mut self, catalog: Catalog) -> Result<()> {
-        let revision = self.persist(&catalog)?;
-        self.catalog = catalog;
-        self.revision = revision;
-        Ok(())
-    }
-    fn persist(&self, catalog: &Catalog) -> Result<i64> {
-        self.store.state_write_if(
-            APP_NAMESPACE,
-            CATALOG_KEY,
-            Some(self.revision),
-            &serde_json::to_value(catalog)?,
-        )
-    }
-    fn plugin_root(&self, installed: &InstalledPlugin) -> Result<PathBuf> {
-        safe_relative(&installed.directory)?;
-        Ok(self.data_dir.join("plugins").join(&installed.directory))
-    }
-
     fn build_plugin(
         &self,
         mut definition: PluginDefinition,
@@ -537,8 +411,7 @@ impl PluginManager {
                 if let Some(factory) = self.factories.get(name) {
                     return factory(&definition);
                 }
-                let environment =
-                    Environment::new(self.store.clone()).with_data_dir(&self.data_dir);
+                let environment = Environment::new(self.store.clone());
                 Ok(Arc::new(Builtin::new(
                     definition.manifest.clone(),
                     name.clone(),
@@ -585,110 +458,57 @@ fn owner(id: &str) -> String {
     format!("plugin:{id}")
 }
 
-/// The function returns the commands of the enabled plugins.
-fn commands(catalog: &Catalog) -> Result<BTreeMap<String, CommandDefinition>> {
-    let mut commands = BTreeMap::new();
-    for installed in catalog.plugins.values().filter(|p| p.enabled) {
-        for command in &installed.definition.commands {
-            if commands
-                .insert(command.name.clone(), command.clone())
-                .is_some()
-            {
+fn validate_commands<'a>(
+    lease: &CompositionLease,
+    definitions: impl Iterator<Item = &'a PluginDefinition>,
+) -> Result<()> {
+    for command in definitions.flat_map(|d| &d.commands) {
+        if !lease.contains_service(&command.service) {
+            return Err(Error::new(
+                "missing_service",
+                "The plugin command requires an unavailable service.",
+            ));
+        }
+        if lease
+            .service::<Arc<dyn CardSource>>(&command.service)
+            .is_ok()
+        {
+            if command.operation != "fetch" {
                 return Err(Error::new(
-                    "invalid_plugin_command",
-                    "Enabled plugins declare the same command.",
+                    "unsupported_plugin_command",
+                    "The source command requires the fetch operation.",
                 ));
             }
+        } else {
+            lease.service::<Arc<dyn CommandService>>(&command.service)?;
         }
     }
-    Ok(commands)
+    Ok(())
 }
 
 /// The function activates the essential plugins of the standard agent.
+/// The function activates the default essential plugins without configuration.
 pub async fn default_registry(store: Arc<dyn StoreBackend>) -> Result<Arc<Mutex<PluginRegistry>>> {
-    plugins::registry(&Environment::new(store), &BTreeSet::new()).await
+    let enabled = plugins::DEFAULT_ENABLED
+        .iter()
+        .map(|id| id.to_string())
+        .collect();
+    plugins::registry(&Environment::new(store), &enabled, &BTreeMap::new()).await
 }
 
-pub async fn runtime(manager: &PluginManager) -> Result<Runtime> {
+pub async fn runtime(
+    manager: &PluginManager,
+    credentials: Arc<dyn crate::provider::CredentialResolver>,
+) -> Result<Runtime> {
     let lease = manager.registry.lock().await.freeze()?;
     let store = lease
         .service::<Arc<dyn StoreBackend>>("store/1")?
         .as_ref()
         .clone();
     Ok(Runtime::new(store)
-        .with_credentials(Arc::new(crate::config::StoredCredentials::new(
-            &manager.data_dir,
-        )))
+        .with_credentials(credentials)
         .with_plugins(manager.registry.clone())
         .with_product_composition(manager.composition().await?))
-}
-
-fn plugin_files(root: &Path) -> Result<BTreeMap<String, String>> {
-    let root = root.canonicalize()?;
-    let mut pending = vec![root.clone()];
-    let mut files = BTreeMap::new();
-    let mut total = 0usize;
-    while let Some(directory) = pending.pop() {
-        for entry in std::fs::read_dir(directory)? {
-            let entry = entry?;
-            let path = entry.path();
-            let kind = entry.file_type()?;
-            if kind.is_symlink() {
-                return Err(Error::new(
-                    "invalid_plugin_path",
-                    "The plugin directory cannot contain a symbolic link.",
-                ));
-            }
-            if kind.is_dir() {
-                pending.push(path);
-                if pending.len() + files.len() > MAX_PLUGIN_FILES {
-                    return Err(Error::new(
-                        "invalid_plugin_size",
-                        "The plugin directory contains too many paths.",
-                    ));
-                }
-                continue;
-            }
-            if !kind.is_file() {
-                return Err(Error::new(
-                    "invalid_plugin_path",
-                    "The plugin directory requires regular files and directories.",
-                ));
-            }
-            if files.len() >= MAX_PLUGIN_FILES {
-                return Err(Error::new(
-                    "invalid_plugin_size",
-                    "The plugin directory contains too many files.",
-                ));
-            }
-            let relative = path
-                .strip_prefix(&root)
-                .map_err(Error::context(
-                    "invalid_plugin_path",
-                    "The plugin path is invalid.",
-                ))?
-                .to_str()
-                .ok_or_else(|| {
-                    Error::new("invalid_plugin_path", "The plugin filename requires UTF-8.")
-                })?
-                .to_owned();
-            safe_relative(&relative)?;
-            let bytes = bounded_read(&path, MAX_PLUGIN_BYTES.saturating_sub(total))?;
-            total += bytes.len();
-            files.insert(relative, digest(&bytes));
-        }
-    }
-    Ok(files)
-}
-
-fn verify_files(root: &Path, expected: &BTreeMap<String, String>) -> Result<()> {
-    if plugin_files(root)? != *expected {
-        return Err(Error::new(
-            "invalid_plugin_hash",
-            "The installed plugin changed.",
-        ));
-    }
-    Ok(())
 }
 
 fn load_definition(root: &Path) -> Result<PluginDefinition> {
@@ -712,7 +532,7 @@ fn load_definition(root: &Path) -> Result<PluginDefinition> {
     Ok(definition)
 }
 
-fn validate_plugin(root: &Path) -> Result<(PluginDefinition, BTreeMap<String, String>)> {
+fn validate_plugin(root: &Path) -> Result<PluginDefinition> {
     let definition = load_definition(root)?;
     let mut names = BTreeSet::new();
     for command in &definition.commands {
@@ -727,5 +547,5 @@ fn validate_plugin(root: &Path) -> Result<(PluginDefinition, BTreeMap<String, St
             ));
         }
     }
-    Ok((definition, plugin_files(root)?))
+    Ok(definition)
 }

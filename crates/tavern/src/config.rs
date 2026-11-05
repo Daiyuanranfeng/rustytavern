@@ -1,3 +1,6 @@
+//! The home directory holds `config.toml` and `rustytavern.db`.
+//! The `config.toml` file holds every setting, including API keys.
+
 use rustytavern_store::SqliteStore;
 use std::{
     collections::{BTreeMap, BTreeSet},
@@ -6,145 +9,306 @@ use std::{
 };
 
 use serde::{Deserialize, Serialize};
+use serde_json::{Value, json};
 
 use crate::{
     Error, Result,
+    extension::Extension,
     provider::{CredentialResolver, EnvironmentCredentials, ProviderConfig},
     store::StoreBackend,
 };
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
-#[serde(default)]
+pub const CONFIG_FILE: &str = "config.toml";
+pub const DATABASE_FILE: &str = "rustytavern.db";
+
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+#[serde(default, deny_unknown_fields)]
 pub struct Configuration {
-    pub schema_version: u32,
-    pub providers: BTreeMap<String, ProviderConfig>,
-    #[serde(flatten)]
-    pub settings: BTreeMap<String, serde_json::Value>,
+    /// The provider profile for new chats.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub default_provider: Option<String>,
+    #[serde(skip_serializing_if = "BTreeMap::is_empty")]
+    pub providers: BTreeMap<String, ProviderProfile>,
+    #[serde(skip_serializing_if = "PluginSettings::is_empty")]
+    pub plugins: PluginSettings,
+    #[serde(skip_serializing_if = "BTreeMap::is_empty")]
+    pub extensions: BTreeMap<String, Extension>,
 }
-impl Default for Configuration {
-    fn default() -> Self {
-        Self {
-            schema_version: 1,
-            providers: BTreeMap::new(),
-            settings: BTreeMap::new(),
+
+/// A provider profile adds an optional API key to the provider settings.
+/// A session records only the `config:NAME` reference, never the key.
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+pub struct ProviderProfile {
+    #[serde(flatten)]
+    pub settings: ProviderConfig,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub api_key: Option<String>,
+}
+
+/// The `[plugins]` table lists the enabled plugins. Each `[plugins.NAME]` table configures one plugin.
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+#[serde(default)]
+pub struct PluginSettings {
+    /// An absent list enables the default plugins.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub enabled: Option<BTreeSet<String>>,
+    /// Each entry selects one plugin for one service.
+    #[serde(skip_serializing_if = "BTreeMap::is_empty")]
+    pub bindings: BTreeMap<String, String>,
+    #[serde(flatten)]
+    pub entries: BTreeMap<String, Value>,
+}
+
+/// An installed plugin table has a `path` to a local directory with a `plugin.json` file.
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+#[serde(default, deny_unknown_fields)]
+pub struct InstalledPlugin {
+    pub path: PathBuf,
+    #[serde(skip_serializing_if = "BTreeSet::is_empty")]
+    pub grants: BTreeSet<String>,
+    #[serde(skip_serializing_if = "std::ops::Not::not")]
+    pub trust_processes: bool,
+}
+
+impl PluginSettings {
+    pub fn is_empty(&self) -> bool {
+        self.enabled.is_none() && self.bindings.is_empty() && self.entries.is_empty()
+    }
+    pub fn enabled(&self) -> BTreeSet<String> {
+        self.enabled.clone().unwrap_or_else(|| {
+            crate::plugins::DEFAULT_ENABLED
+                .iter()
+                .map(|id| id.to_string())
+                .collect()
+        })
+    }
+    /// The method returns each table with a `path` key.
+    pub fn installed(&self) -> Result<BTreeMap<String, InstalledPlugin>> {
+        self.entries
+            .iter()
+            .filter(|(_, value)| value.get("path").is_some())
+            .map(|(id, value)| Ok((id.clone(), serde_json::from_value(value.clone())?)))
+            .collect()
+    }
+    /// The method returns the configuration of each essential plugin.
+    pub fn essential_configuration(&self, home: &Path) -> BTreeMap<String, Value> {
+        let mut result = self
+            .entries
+            .iter()
+            .filter(|(_, value)| value.get("path").is_none())
+            .map(|(id, value)| (id.clone(), value.clone()))
+            .collect::<BTreeMap<_, _>>();
+        let skills = result.entry("skills".into()).or_insert_with(|| json!({}));
+        if skills.get("paths").is_none() {
+            skills["paths"] = json!([home.join("skills")]);
+        }
+        result
+    }
+}
+
+impl Configuration {
+    pub fn load(path: &Path) -> Result<Self> {
+        if !path.exists() {
+            return Ok(Self::default());
+        }
+        let text = String::from_utf8(rustytavern_core::bounded_read(path, 1024 * 1024)?).map_err(
+            Error::context("configuration", "The configuration is not UTF-8."),
+        )?;
+        let mut config: Self = toml_edit::de::from_str(&text).map_err(|error| {
+            Error::new(
+                "configuration",
+                format!("The configuration is invalid: {error}"),
+            )
+        })?;
+        for profile in config.providers.values_mut() {
+            if profile.api_key.is_some() {
+                profile.settings.api_key_env = None;
+            }
+        }
+        Ok(config)
+    }
+    /// The method keeps the comments and key order of the existing file.
+    pub fn save(&self, path: &Path) -> Result<()> {
+        let existing = std::fs::read_to_string(path).unwrap_or_default();
+        let mut document: toml_edit::DocumentMut = existing.parse().unwrap_or_default();
+        let next = toml_edit::ser::to_document(self).map_err(|error| {
+            Error::new(
+                "configuration",
+                format!("The configuration cannot be saved: {error}"),
+            )
+        })?;
+        merge(document.as_item_mut(), next.as_item(), 0);
+        let temp = path.with_extension(format!("{}.tmp", uuid::Uuid::new_v4()));
+        std::fs::write(&temp, document.to_string())?;
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            std::fs::set_permissions(&temp, std::fs::Permissions::from_mode(0o600))?;
+        }
+        std::fs::rename(&temp, path)?;
+        Ok(())
+    }
+    /// The method returns the provider settings with a `config:NAME` key reference.
+    pub fn provider(&self, name: &str) -> Result<ProviderConfig> {
+        let profile = self.providers.get(name).ok_or_else(|| {
+            Error::new(
+                "configuration",
+                format!("The provider profile {name} does not exist."),
+            )
+        })?;
+        let mut settings = profile.settings.clone();
+        if profile.api_key.is_some() {
+            settings.api_key_env = Some(format!("config:{name}"));
+        }
+        Ok(settings)
+    }
+    /// The method replaces the provider settings and keeps an existing API key.
+    pub fn set_provider(&mut self, name: &str, settings: ProviderConfig, api_key: Option<String>) {
+        let profile = self.providers.entry(name.into()).or_default();
+        profile.settings = settings;
+        if api_key.is_some() {
+            profile.api_key = api_key;
+        }
+        if profile.api_key.is_some() {
+            profile.settings.api_key_env = None;
+        }
+    }
+    /// The method hides each API key and MCP server environment value.
+    pub fn redacted(&self) -> Result<Value> {
+        let mut value = serde_json::to_value(self)?;
+        if let Some(providers) = value["providers"].as_object_mut() {
+            for provider in providers.values_mut() {
+                if provider.get("api_key").is_some() {
+                    provider["api_key"] = json!("<hidden>");
+                }
+            }
+        }
+        if let Some(servers) = value
+            .pointer_mut("/plugins/mcp/servers")
+            .and_then(Value::as_object_mut)
+        {
+            for server in servers.values_mut() {
+                if let Some(env) = server.get_mut("env").and_then(Value::as_object_mut) {
+                    env.values_mut().for_each(|v| *v = json!("<hidden>"));
+                }
+            }
+        }
+        Ok(value)
+    }
+}
+
+/// The function copies `source` into `target` and keeps the decoration of retained items.
+fn merge(target: &mut toml_edit::Item, source: &toml_edit::Item, depth: usize) {
+    if let (Some(target), Some(source)) = (target.as_table_like_mut(), source.as_table_like()) {
+        let stale = target
+            .iter()
+            .map(|(key, _)| key.to_owned())
+            .filter(|key| source.get(key).is_none())
+            .collect::<Vec<_>>();
+        for key in stale {
+            target.remove(&key);
+        }
+        for (key, value) in source.iter() {
+            match target.get_mut(key) {
+                Some(existing) => merge(existing, value, depth + 1),
+                None => {
+                    let mut value = value.clone();
+                    expand(&mut value, depth);
+                    target.insert(key, value);
+                }
+            }
+        }
+        return;
+    }
+    match (target.as_value_mut(), source.as_value()) {
+        (Some(existing), Some(value))
+            if existing.to_string().trim() != value.to_string().trim() =>
+        {
+            let decor = existing.decor().clone();
+            *existing = value.clone();
+            *existing.decor_mut() = decor;
+        }
+        (Some(_), Some(_)) => {}
+        _ => {
+            *target = source.clone();
+            expand(target, depth);
         }
     }
 }
 
+/// The function writes a section header for each top-level table, each named entry, and each table of tables.
+/// A small map, such as `parameters` or `env`, stays inline.
+fn expand(item: &mut toml_edit::Item, depth: usize) {
+    if let Some(inline) = item.as_inline_table() {
+        let nested = inline.iter().any(|(_, value)| value.is_inline_table());
+        if depth <= 1 || nested {
+            *item = toml_edit::Item::Table(inline.clone().into_table());
+        }
+    }
+    if let Some(table) = item.as_table_mut() {
+        for (_, child) in table.iter_mut() {
+            expand(child, depth + 1);
+        }
+        let headers_only = table.iter().all(|(_, child)| child.is_table());
+        table.set_implicit(headers_only);
+    }
+}
+
 pub struct Application {
-    pub data_dir: PathBuf,
+    pub home: PathBuf,
     pub config: Configuration,
     pub store: Arc<dyn StoreBackend>,
 }
 
 impl Application {
-    pub fn open(data_dir: impl AsRef<Path>) -> Result<Self> {
-        let data_dir = data_dir.as_ref().to_owned();
-        std::fs::create_dir_all(&data_dir)?;
-        let config = Configuration::load(&data_dir.join("config.json"))?;
-        let store = Arc::new(SqliteStore::open(data_dir.join("sessions.sqlite3"))?);
+    pub fn open(home: impl AsRef<Path>) -> Result<Self> {
+        let home = home.as_ref().to_owned();
+        std::fs::create_dir_all(&home)?;
+        let config = Configuration::load(&home.join(CONFIG_FILE))?;
+        let store = Arc::new(SqliteStore::open(home.join(DATABASE_FILE))?);
         Ok(Self {
-            data_dir,
+            home,
             config,
             store,
         })
     }
-    /// The method activates the essential plugins with this data directory.
+    /// The method activates the essential plugins with this configuration.
     pub async fn registry(&self) -> Result<Arc<tokio::sync::Mutex<crate::plugin::PluginRegistry>>> {
-        let environment =
-            crate::plugins::Environment::new(self.store.clone()).with_data_dir(&self.data_dir);
-        crate::plugins::registry(&environment, &self.config.disabled_plugins()).await
+        crate::plugins::registry(
+            &crate::plugins::Environment::new(self.store.clone()),
+            &self.config.plugins.enabled(),
+            &self.config.plugins.essential_configuration(&self.home),
+        )
+        .await
+    }
+    pub fn credentials(&self) -> ConfigCredentials {
+        ConfigCredentials::new(&self.config)
     }
     pub fn save_config(&self) -> Result<()> {
-        self.config.save(&self.data_dir.join("config.json"))
+        self.config.save(&self.home.join(CONFIG_FILE))
     }
 }
 
-impl Configuration {
-    pub fn provider(&self, name: &str) -> Result<ProviderConfig> {
-        self.providers.get(name).cloned().ok_or_else(|| {
-            Error::new(
-                "configuration",
-                format!("The provider profile {name} does not exist."),
-            )
-        })
-    }
-    /// The `plugins.disabled` setting lists the essential plugin IDs that stay off.
-    pub fn disabled_plugins(&self) -> BTreeSet<String> {
-        self.settings
-            .get("plugins")
-            .and_then(|p| p.get("disabled"))
-            .and_then(|d| serde_json::from_value(d.clone()).ok())
-            .unwrap_or_default()
-    }
-    pub fn load(path: &Path) -> Result<Self> {
-        if !path.exists() {
-            return Ok(Self::default());
-        }
-        let bytes = std::fs::read(path)?;
-        if bytes.len() > 1024 * 1024 {
-            return Err(Error::new(
-                "configuration",
-                "The configuration exceeds its byte limit.",
-            ));
-        }
-        let config: Self = serde_json::from_slice(&bytes)?;
-        if config.schema_version != 1 {
-            return Err(Error::new(
-                "configuration",
-                "The configuration requires an unsupported schema version.",
-            ));
-        }
-        Ok(config)
-    }
-    pub fn save(&self, path: &Path) -> Result<()> {
-        let temp = path.with_extension(format!("{}.tmp", uuid::Uuid::new_v4()));
-        let bytes = serde_json::to_vec_pretty(self)?;
-        std::fs::write(&temp, bytes)?;
-        std::fs::rename(&temp, path)?;
-        Ok(())
+/// The resolver reads `config:NAME` references from the provider profiles and other references from the environment.
+pub struct ConfigCredentials(BTreeMap<String, String>);
+impl ConfigCredentials {
+    pub fn new(config: &Configuration) -> Self {
+        Self(
+            config
+                .providers
+                .iter()
+                .filter_map(|(name, p)| Some((name.clone(), p.api_key.clone()?)))
+                .collect(),
+        )
     }
 }
-
-/// The resolver reads `stored:NAME` references from `credentials.json` and other references from the environment.
-pub struct StoredCredentials(PathBuf);
-impl StoredCredentials {
-    pub fn new(data_dir: &Path) -> Self {
-        Self(data_dir.join("credentials.json"))
-    }
-    fn load(&self) -> Result<BTreeMap<String, String>> {
-        match std::fs::read(&self.0) {
-            Ok(bytes) => Ok(serde_json::from_slice(&bytes)?),
-            Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(BTreeMap::new()),
-            Err(error) => Err(error.into()),
-        }
-    }
-    /// The method writes the key with owner-only permissions and returns its reference.
-    pub fn save(&self, name: &str, key: &str) -> Result<String> {
-        use std::io::Write;
-        let mut keys = self.load()?;
-        keys.insert(name.into(), key.trim().into());
-        let temp = self
-            .0
-            .with_extension(format!("{}.tmp", uuid::Uuid::new_v4()));
-        let mut options = std::fs::OpenOptions::new();
-        options.write(true).create_new(true);
-        #[cfg(unix)]
-        std::os::unix::fs::OpenOptionsExt::mode(&mut options, 0o600);
-        options
-            .open(&temp)?
-            .write_all(&serde_json::to_vec(&keys)?)?;
-        std::fs::rename(&temp, &self.0)?;
-        Ok(format!("stored:{name}"))
-    }
-}
-impl CredentialResolver for StoredCredentials {
+impl CredentialResolver for ConfigCredentials {
     fn resolve(&self, reference: &str) -> Result<String> {
-        match reference.strip_prefix("stored:") {
-            Some(name) => self.load()?.remove(name).ok_or_else(|| {
+        match reference.strip_prefix("config:") {
+            Some(name) => self.0.get(name).cloned().ok_or_else(|| {
                 Error::new(
                     "configuration",
-                    "The stored API key is unavailable. Use /setup.",
+                    format!("The provider profile {name} has no API key. Use /setup."),
                 )
             }),
             None => EnvironmentCredentials.resolve(reference),
@@ -152,22 +316,16 @@ impl CredentialResolver for StoredCredentials {
     }
 }
 
-pub fn default_data_dir() -> Result<PathBuf> {
-    if let Some(path) = std::env::var_os("RUSTYTAVERN_DATA_DIR") {
+/// The home is `RUSTYTAVERN_HOME`, or `.rustytavern` in the user home directory.
+pub fn default_home() -> Result<PathBuf> {
+    if let Some(path) = std::env::var_os("RUSTYTAVERN_HOME") {
         return Ok(PathBuf::from(path));
-    }
-    if let Some(path) = std::env::var_os("XDG_DATA_HOME") {
-        return Ok(PathBuf::from(path).join("rustytavern"));
     }
     let home = std::env::var_os("HOME").ok_or_else(|| {
         Error::new(
             "configuration",
-            "The caller must provide --data-dir when HOME is unavailable.",
+            "The caller must provide --home when HOME is unavailable.",
         )
     })?;
-    #[cfg(target_os = "macos")]
-    let path = PathBuf::from(home).join("Library/Application Support/rustytavern");
-    #[cfg(not(target_os = "macos"))]
-    let path = PathBuf::from(home).join(".local/share/rustytavern");
-    Ok(path)
+    Ok(PathBuf::from(home).join(".rustytavern"))
 }

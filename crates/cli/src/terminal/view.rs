@@ -183,7 +183,7 @@ fn bubble(body: Vec<Line<'static>>, width: usize, color: Color) -> Vec<Line<'sta
 }
 
 /// The function reads the bubble colors of a theme. An invalid color keeps its default.
-pub(super) fn bubbles(theme: &rustytavern::extension::Theme) -> [Color; 2] {
+pub(super) fn bubbles(theme: &rustytavern::extension::Extension) -> [Color; 2] {
     let color = |value: &Option<String>, default| {
         value
             .as_deref()

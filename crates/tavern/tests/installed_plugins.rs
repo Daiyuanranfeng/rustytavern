@@ -2,6 +2,7 @@ use async_trait::async_trait;
 use rustytavern::{
     Error, Result,
     app::{CommandService, PluginDefinition, PluginManager, default_registry},
+    config::PluginSettings,
     plugin::{PluginContext, PluginManifest, RuntimePlugin},
     plugins::{self, Environment},
     source::CardSource,
@@ -9,9 +10,8 @@ use rustytavern::{
 };
 use serde_json::{Value, json};
 use std::{
-    collections::BTreeSet,
+    collections::{BTreeMap, BTreeSet},
     path::{Path, PathBuf},
-    slice::from_ref,
     sync::{
         Arc,
         atomic::{AtomicUsize, Ordering},
@@ -30,8 +30,12 @@ fn plugin(parent: &Path, definition: Value) -> PathBuf {
     .unwrap();
     root
 }
-async fn manager(data: &Path, store: Arc<dyn StoreBackend>) -> PluginManager {
-    PluginManager::open(data, store.clone(), default_registry(store).await.unwrap()).unwrap()
+async fn manager(store: Arc<dyn StoreBackend>, settings: &PluginSettings) -> PluginManager {
+    PluginManager::open(
+        store.clone(),
+        default_registry(store).await.unwrap(),
+        settings,
+    )
 }
 fn definition(id: &str, provides: &[&str], requires: &[&str], fail: bool) -> Value {
     json!({"id":id,"version":"0.1.0","host_protocol":"1","provides":provides,"requires":requires,"implementation":{"kind":"builtin","name":"fixture","configuration":{"fail":fail}}})
@@ -81,55 +85,49 @@ fn fixture_factory(manager: &mut PluginManager, cleaned: Arc<AtomicUsize>) {
 }
 
 #[tokio::test]
-async fn an_installed_plugin_survives_reopen_and_rejects_changed_files() {
-    let data = tempfile::tempdir().unwrap();
-    let store = Arc::new(SqliteStore::open(data.path().join("state.sqlite3")).unwrap());
-    let mut app = manager(data.path(), store.clone()).await;
-    let installed = app
-        .install(Path::new(concat!(
-            env!("CARGO_MANIFEST_DIR"),
-            "/examples/plugins/lighthouse-notes"
-        )))
-        .unwrap();
-    let id = installed.definition.manifest.id.clone();
-    assert!(!installed.enabled);
+async fn an_installed_plugin_records_its_settings_and_restores() {
+    let store: Arc<dyn StoreBackend> = Arc::new(SqliteStore::memory().unwrap());
+    let mut app = manager(store.clone(), &PluginSettings::default()).await;
+    let path = Path::new(concat!(
+        env!("CARGO_MANIFEST_DIR"),
+        "/examples/plugins/lighthouse-notes"
+    ));
     assert_eq!(
-        app.enable(from_ref(&id), BTreeSet::new(), false)
+        app.install(path, BTreeSet::new(), false)
             .await
             .unwrap_err()
             .code,
         "capability_denied"
     );
+    assert!(app.settings().entries.is_empty());
     let grants = BTreeSet::from([
         "prompt.contribute:before_character".into(),
         "prompt.contribute:after_character".into(),
     ]);
-    app.enable(from_ref(&id), grants, false).await.unwrap();
+    let definition = app.install(path, grants, false).await.unwrap();
+    let id = definition.manifest.id;
     assert_eq!(app.registry.lock().await.inspect().len(), 11);
-    drop(app);
-    let mut app = manager(data.path(), store.clone()).await;
-    app.restore().await.unwrap();
-    assert!(app.inspect(&id).unwrap().enabled);
-    std::fs::write(
-        data.path()
-            .join("plugins")
-            .join(&installed.directory)
-            .join("README.md"),
-        "Changed.",
-    )
-    .unwrap();
-    let mut reopened = manager(data.path(), store).await;
-    assert_eq!(
-        reopened.restore().await.unwrap_err().code,
-        "invalid_plugin_hash"
-    );
+    let settings = app.settings().clone();
+    assert!(settings.enabled().contains(&id));
+    assert!(settings.installed().unwrap().contains_key(&id));
+    let mut reopened = manager(store.clone(), &settings).await;
+    reopened.restore().await.unwrap();
+    assert_eq!(reopened.registry.lock().await.inspect().len(), 11);
+    reopened.disable(&id).await.unwrap();
+    assert_eq!(reopened.registry.lock().await.inspect().len(), 10);
+    assert!(!reopened.settings().enabled().contains(&id));
+    reopened.uninstall(&id).await.unwrap();
+    assert!(reopened.settings().entries.is_empty());
 }
 
 #[tokio::test]
 async fn failed_activation_and_missing_command_services_roll_back() {
     let source = tempfile::tempdir().unwrap();
-    let data = tempfile::tempdir().unwrap();
-    let mut app = manager(data.path(), Arc::new(SqliteStore::memory().unwrap())).await;
+    let mut app = manager(
+        Arc::new(SqliteStore::memory().unwrap()),
+        &PluginSettings::default(),
+    )
+    .await;
     let cleaned = Arc::new(AtomicUsize::new(0));
     fixture_factory(&mut app, cleaned.clone());
     let original = app.registry.lock().await.freeze().unwrap().snapshot();
@@ -143,15 +141,16 @@ async fn failed_activation_and_missing_command_services_roll_back() {
             value["commands"] =
                 json!([{"name":"remember","service":"absent/1","operation":"remember"}]);
         }
-        app.install(&plugin(source.path(), value)).unwrap();
-        let result = app.enable(&[id.into()], BTreeSet::new(), false).await;
+        let result = app
+            .install(&plugin(source.path(), value), BTreeSet::new(), false)
+            .await;
         if expected.is_empty() {
             result.unwrap();
-            app.disable(id).await.unwrap();
+            app.uninstall(id).await.unwrap();
         } else {
             assert_eq!(result.unwrap_err().code, expected);
         }
-        assert!(!app.inspect(id).unwrap().enabled);
+        assert!(app.settings().entries.is_empty());
         assert!(app.commands().unwrap().is_empty());
         assert_eq!(
             app.registry.lock().await.freeze().unwrap().snapshot(),
@@ -162,80 +161,34 @@ async fn failed_activation_and_missing_command_services_roll_back() {
 }
 
 #[tokio::test]
-async fn catalog_revision_conflicts_remove_staged_plugins() {
-    let source = tempfile::tempdir().unwrap();
-    let data = tempfile::tempdir().unwrap();
-    let store = Arc::new(SqliteStore::open(data.path().join("state.sqlite3")).unwrap());
-    let mut first = manager(data.path(), store.clone()).await;
-    first
-        .install(&plugin(
-            source.path(),
-            definition("example.catalog", &["value/1"], &[], false),
-        ))
-        .unwrap();
-    let mut stale = manager(data.path(), store.clone()).await;
-    let cleaned = Arc::new(AtomicUsize::new(0));
-    fixture_factory(&mut stale, cleaned.clone());
-    first
-        .install(&plugin(
-            source.path(),
-            definition("example.unrelated", &["other/1"], &[], false),
-        ))
-        .unwrap();
-    let error = stale
-        .enable(&["example.catalog".into()], BTreeSet::new(), false)
-        .await
-        .unwrap_err();
-    assert_eq!(error.code, "configuration_conflict");
-    assert_eq!(cleaned.load(Ordering::SeqCst), 1);
-    assert_eq!(stale.registry.lock().await.inspect().len(), 10);
-    let current = manager(data.path(), store).await;
-    assert!(!current.inspect("example.catalog").unwrap().enabled);
-}
-
-#[cfg(unix)]
-#[tokio::test]
-async fn plugin_symbolic_links_cannot_escape_the_source_directory() {
-    let source = tempfile::tempdir().unwrap();
-    let data = tempfile::tempdir().unwrap();
-    let mut app = manager(data.path(), Arc::new(SqliteStore::memory().unwrap())).await;
-    let root = plugin(
-        source.path(),
-        definition("example.symlink", &["value/1"], &[], false),
-    );
-    let outside = source.path().join("outside.txt");
-    std::fs::write(&outside, "Outside.").unwrap();
-    std::os::unix::fs::symlink(&outside, root.join("escape.txt")).unwrap();
-    assert_eq!(app.install(&root).unwrap_err().code, "invalid_plugin_path");
-    assert_eq!(std::fs::read_to_string(outside).unwrap(), "Outside.");
-}
-
-#[tokio::test]
-async fn essential_plugins_form_the_standard_agent() {
+async fn essential_plugins_follow_the_enabled_list() {
     let store: Arc<dyn StoreBackend> = Arc::new(SqliteStore::memory().unwrap());
     let environment = Environment::new(store);
-    let registry = plugins::registry(&environment, &BTreeSet::new())
+    let enabled = plugins::DEFAULT_ENABLED
+        .iter()
+        .map(|id| id.to_string())
+        .collect();
+    let registry = plugins::registry(&environment, &enabled, &BTreeMap::new())
         .await
         .unwrap();
     let lease = registry.lock().await.freeze().unwrap();
     assert_eq!(
         lease.service_owner("driver/1").unwrap().manifest.id,
-        "org.rustytavern.driver.agent"
+        "agent"
     );
     assert!(lease.contains_service("tools.web/1") && lease.contains_service("tools.skills/1"));
     let source = lease
         .service::<Arc<dyn CardSource>>("card.source.chub/1")
         .unwrap();
     assert!(source.recognize("https://chub.ai/author/character"));
-    let disabled = BTreeSet::from(["org.rustytavern.tools.web".into()]);
-    let registry = plugins::registry(&environment, &disabled).await.unwrap();
-    assert!(
-        !registry
-            .lock()
-            .await
-            .freeze()
-            .unwrap()
-            .contains_service("tools.web/1")
+    let registry = plugins::registry(&environment, &BTreeSet::new(), &BTreeMap::new())
+        .await
+        .unwrap();
+    let lease = registry.lock().await.freeze().unwrap();
+    assert!(!lease.contains_service("tools.web/1"));
+    assert_eq!(
+        lease.service_owner("driver/1").unwrap().manifest.id,
+        "single-reply"
     );
 }
 
@@ -273,8 +226,11 @@ impl RuntimePlugin for EchoPlugin {
 #[tokio::test]
 async fn plugin_commands_call_typed_native_services() {
     let source = tempfile::tempdir().unwrap();
-    let data = tempfile::tempdir().unwrap();
-    let mut app = manager(data.path(), Arc::new(SqliteStore::memory().unwrap())).await;
+    let mut app = manager(
+        Arc::new(SqliteStore::memory().unwrap()),
+        &PluginSettings::default(),
+    )
+    .await;
     let mut value = definition("example.echo", &["command.echo/1"], &[], false);
     value["commands"] = json!([{"name":"say","service":"command.echo/1","operation":"echo"}]);
     app.register_factory(
@@ -286,8 +242,7 @@ async fn plugin_commands_call_typed_native_services() {
         }),
     )
     .unwrap();
-    app.install(&plugin(source.path(), value)).unwrap();
-    app.enable(&["example.echo".into()], BTreeSet::new(), false)
+    app.install(&plugin(source.path(), value), BTreeSet::new(), false)
         .await
         .unwrap();
     assert_eq!(

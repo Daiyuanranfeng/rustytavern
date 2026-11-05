@@ -3,7 +3,7 @@
 The plugin runs a separate Rust card-source process.
 The process returns the authored Lumen card for an accepted example URL.
 The process makes no network request or model request.
-The plugin ID is `example.inline-source`.
+The plugin ID is `inline-source`.
 
 ## Interface
 
@@ -20,11 +20,11 @@ rustytavern_example_dir=$(mktemp -d)
 cp -R crates/tavern/examples/plugins/inline-source/. "$rustytavern_example_dir/"
 cp target/debug/examples/source_plugin "$rustytavern_example_dir/source-plugin"
 cargo run --locked -- --data-dir ./data plugin install "$rustytavern_example_dir"
-cargo run --locked -- --data-dir ./data plugin enable example.inline-source --trust-processes
+cargo run --locked -- --data-dir ./data plugin enable inline-source --trust-processes
 cargo run --locked -- --data-dir ./data plugin run example-import --url https://example.com/lumen
 cargo run --locked -- --data-dir ./data card fetch https://example.com/lumen --source example
-cargo run --locked -- --data-dir ./data plugin disable example.inline-source
-cargo run --locked -- --data-dir ./data plugin uninstall example.inline-source
+cargo run --locked -- --data-dir ./data plugin disable inline-source
+cargo run --locked -- --data-dir ./data plugin uninstall inline-source
 rm -rf "$rustytavern_example_dir"
 ```
 

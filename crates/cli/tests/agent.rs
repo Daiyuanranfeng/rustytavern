@@ -9,7 +9,7 @@ use std::{
 
 fn run(directory: &Path, args: &[&str]) -> String {
     let output = Command::new(env!("CARGO_BIN_EXE_rustytavern"))
-        .arg("--data-dir")
+        .arg("--home")
         .arg(directory)
         .args(args)
         .output()
@@ -71,8 +71,8 @@ fn serve(answers: Vec<String>) -> (String, thread::JoinHandle<Vec<Value>>) {
 }
 
 /// The function prepares a data directory with one session.
-/// The `disabled` plugins stay off.
-fn session(directory: &Path, endpoint: &str, disabled: &[&str]) -> String {
+/// The `plugins` text adds plugin tables to `config.toml`.
+fn session(directory: &Path, endpoint: &str, plugins: &str) -> String {
     cli(
         directory,
         &[
@@ -111,10 +111,9 @@ fn session(directory: &Path, endpoint: &str, disabled: &[&str]) -> String {
             "Alex reads maps.",
         ],
     );
-    let path = directory.join("config.json");
-    let mut config: Value = serde_json::from_slice(&std::fs::read(&path).unwrap()).unwrap();
-    config["plugins"] = json!({"disabled": disabled});
-    std::fs::write(&path, config.to_string()).unwrap();
+    let path = directory.join("config.toml");
+    let config = std::fs::read_to_string(&path).unwrap();
+    std::fs::write(&path, format!("{config}\n{plugins}")).unwrap();
     let session = cli(
         directory,
         &[
@@ -156,7 +155,7 @@ fn the_agent_reads_a_skill_and_returns_the_result_to_the_model() {
         sse(call, Value::Null) + &sse(json!({}), json!("tool_calls")),
         sse(json!({"content":"Bonjour."}), json!("stop")),
     ]);
-    let id = session(directory.path(), &endpoint, &[]);
+    let id = session(directory.path(), &endpoint, "");
     let inspected = cli(
         directory.path(),
         &[
@@ -211,12 +210,11 @@ fn the_agent_reads_a_skill_and_returns_the_result_to_the_model() {
 fn the_agent_without_tool_plugins_sends_a_plain_request() {
     let directory = tempfile::tempdir().unwrap();
     let (endpoint, server) = serve(vec![sse(json!({"content":"Hello."}), json!("stop"))]);
-    let disabled = [
-        "org.rustytavern.tools.web",
-        "org.rustytavern.tools.skills",
-        "org.rustytavern.tools.mcp",
-    ];
-    let id = session(directory.path(), &endpoint, &disabled);
+    let id = session(
+        directory.path(),
+        &endpoint,
+        "[plugins]\nenabled = [\"agent\"]\n",
+    );
     let events = chat(directory.path(), &id);
     let bodies = server.join().unwrap();
     assert!(bodies[0].get("tools").is_none());
@@ -230,17 +228,14 @@ fn the_agent_calls_an_mcp_tool_with_a_reduced_schema() {
     }
     let directory = tempfile::tempdir().unwrap();
     let server = concat!(env!("CARGO_MANIFEST_DIR"), "/tests/fixtures/mcp_echo.py");
-    std::fs::write(
-        directory.path().join("mcp.json"),
-        json!({"mcpServers":{"echo":{"command":"python3","args":[server]}}}).to_string(),
-    )
-    .unwrap();
     let call = json!({"tool_calls":[{"index":0,"id":"call_1","type":"function","function":{"name":"echo__say","arguments":"{\"text\":\"hi\"}"}}]});
     let (endpoint, provider) = serve(vec![
         sse(call, Value::Null) + &sse(json!({}), json!("tool_calls")),
         sse(json!({"content":"Done."}), json!("stop")),
     ]);
-    let id = session(directory.path(), &endpoint, &[]);
+    let plugins =
+        format!("[plugins.mcp.servers.echo]\ncommand = \"python3\"\nargs = [\"{server}\"]\n");
+    let id = session(directory.path(), &endpoint, &plugins);
     let events = chat(directory.path(), &id);
     let bodies = provider.join().unwrap();
 

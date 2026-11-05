@@ -1,6 +1,6 @@
-//! The `tools.mcp` plugin connects the servers in `mcp.json` through the official `rmcp` SDK.
+//! The `mcp` plugin connects its configured servers through the official `rmcp` SDK.
 
-use std::{collections::BTreeMap, path::Path, process::Stdio, sync::Arc, time::Duration};
+use std::{collections::BTreeMap, process::Stdio, sync::Arc, time::Duration};
 
 use async_trait::async_trait;
 use rmcp::{
@@ -20,25 +20,21 @@ use crate::{
     plugin::PluginContext,
     provider::ToolDefinition,
 };
-use rustytavern_core::bounded_read;
 
-/// The `tools.mcp` plugin registers the tools of each server in `mcp.json`.
-pub(crate) async fn activate(context: &mut PluginContext, data_dir: Option<&Path>) -> Result<()> {
+/// The `servers` configuration maps each server name to its connection.
+pub(crate) async fn activate(context: &mut PluginContext, configuration: &Value) -> Result<()> {
     context.authorize("mcp.connect")?;
-    let tools = match data_dir {
-        Some(data_dir) => connect(context, &data_dir.join("mcp.json")).await?,
-        None => Vec::new(),
+    let servers: BTreeMap<String, McpServer> = match &configuration["servers"] {
+        Value::Null => BTreeMap::new(),
+        servers => serde_json::from_value(servers.clone())?,
     };
+    let tools = connect(context, servers).await?;
     context.register("tools.mcp/1", Arc::new(tools))
 }
 
-/// The file uses the common `mcp.json` format.
+/// Each server has `command`, `args`, and `env`, or one `url`.
 #[derive(Deserialize)]
-#[serde(rename_all = "camelCase")]
-struct McpFile {
-    mcp_servers: BTreeMap<String, McpServer>,
-}
-#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
 struct McpServer {
     command: Option<String>,
     #[serde(default)]
@@ -50,13 +46,12 @@ struct McpServer {
     disabled: bool,
 }
 
-async fn connect(context: &mut PluginContext, path: &Path) -> Result<ToolSet> {
+async fn connect(
+    context: &mut PluginContext,
+    servers: BTreeMap<String, McpServer>,
+) -> Result<ToolSet> {
     let mut tools: ToolSet = Vec::new();
-    if !path.is_file() {
-        return Ok(tools);
-    }
-    let file: McpFile = serde_json::from_slice(&bounded_read(path, 1024 * 1024)?)?;
-    for (server, config) in file.mcp_servers.into_iter().filter(|(_, c)| !c.disabled) {
+    for (server, config) in servers.into_iter().filter(|(_, c)| !c.disabled) {
         let failed = || Error::new("mcp_connect", format!("The MCP server {server} failed."));
         let start = async {
             match (config.command, config.url) {

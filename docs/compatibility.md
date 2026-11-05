@@ -169,7 +169,7 @@ An explicit model ID does not require catalog discovery.
 | `gemini` | `gemini.generate_content.text-v1` | The adapter uses native `streamGenerateContent` SSE. | `GEMINI_API_KEY` |
 | `custom` | `custom.chat_completions.text-v1` | The adapter uses a declared Chat Completions subset. | The caller can omit a credential. |
 
-The serialized protocol name for the OpenAI adapter is `open_ai`. The CLI spelling remains `openai`.
+The serialized protocol names are `openrouter` and `openai`. The reader also accepts the earlier `open_router` and `open_ai` names.
 The request stores a credential reference. The adapter resolves its value only during dispatch.
 The endpoint must use HTTP or HTTPS without URL credentials, authentication query parameters, or fragments. The adapter disables HTTP redirects.
 

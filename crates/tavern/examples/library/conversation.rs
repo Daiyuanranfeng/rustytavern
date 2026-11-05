@@ -12,7 +12,7 @@ use std::path::PathBuf;
 #[derive(Parser)]
 struct Arguments {
     #[arg(long)]
-    data_dir: PathBuf,
+    home: PathBuf,
     #[arg(long)]
     session: String,
     #[arg(long)]
@@ -32,11 +32,12 @@ async fn main() {
 }
 
 async fn converse(arguments: Arguments) -> Result<()> {
-    let app = Application::open(&arguments.data_dir)?;
+    let app = Application::open(&arguments.home)?;
     let registry = app.registry().await?;
-    let mut manager = PluginManager::open(&app.data_dir, app.store, registry)?;
+    let credentials = std::sync::Arc::new(app.credentials());
+    let mut manager = PluginManager::open(app.store, registry, &app.config.plugins);
     manager.restore().await?;
-    let runtime = runtime(&manager).await?;
+    let runtime = runtime(&manager, credentials).await?;
     let session = runtime.store.session(&arguments.session)?;
     let provider = session.configuration()?.provider_config;
     if arguments.adopt {

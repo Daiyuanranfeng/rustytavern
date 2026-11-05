@@ -20,12 +20,16 @@ const MAX_SKILLS: usize = 128;
 const MAX_SKILL_BYTES: usize = 256 * 1024;
 
 /// The `tools.skills` plugin registers `skill` and adds the skill catalog to the prompt.
-pub(crate) fn activate(context: &mut PluginContext, data_dir: Option<&Path>) -> Result<()> {
+/// The `paths` configuration lists the directories that hold skill directories.
+pub(crate) fn activate(context: &mut PluginContext, configuration: &Value) -> Result<()> {
     context.authorize("skills.read")?;
-    let skills = match data_dir {
-        Some(data_dir) => Skills::load(&data_dir.join("skills"))?,
-        None => Skills(BTreeMap::new()),
-    };
+    let mut skills = Skills(BTreeMap::new());
+    for path in configuration["paths"].as_array().into_iter().flatten() {
+        let path = path
+            .as_str()
+            .ok_or_else(|| Error::new("configuration", "Each skill path must be text."))?;
+        skills.load(Path::new(path))?;
+    }
     let mut tools: ToolSet = Vec::new();
     if !skills.0.is_empty() {
         context.contribute(Contribution {
@@ -46,10 +50,11 @@ pub(crate) fn activate(context: &mut PluginContext, data_dir: Option<&Path>) -> 
 /// Each skill uses the Agent Skills layout: `skills/<name>/SKILL.md`.
 struct Skills(BTreeMap<String, (String, std::path::PathBuf)>);
 impl Skills {
-    fn load(root: &Path) -> Result<Self> {
-        let mut skills = BTreeMap::new();
+    /// The method adds the skills under one root. An earlier root keeps a duplicate name.
+    fn load(&mut self, root: &Path) -> Result<()> {
+        let skills = &mut self.0;
         if !root.is_dir() {
-            return Ok(Self(skills));
+            return Ok(());
         }
         for entry in std::fs::read_dir(root)? {
             let directory = entry?.path();
@@ -77,10 +82,10 @@ impl Skills {
             let description = field("description").unwrap_or_default();
             let name = field("name").unwrap_or_else(|| name.to_owned());
             if valid_id(&name) && skills.len() < MAX_SKILLS {
-                skills.insert(name, (description, directory));
+                skills.entry(name).or_insert((description, directory));
             }
         }
-        Ok(Self(skills))
+        Ok(())
     }
 }
 impl Skills {

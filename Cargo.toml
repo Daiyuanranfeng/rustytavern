@@ -33,6 +33,7 @@ thiserror = "2"
 tokio = { version = "1", features = ["rt-multi-thread", "macros", "signal", "sync", "time", "process", "io-util", "net"] }
 tokio-util = { version = "0.7", features = ["rt"] }
 url = "2"
+toml_edit = { version = "0.25", features = ["serde"] }
 rmcp = { version = "3.8", default-features = false, features = ["client", "transport-child-process", "transport-streamable-http-client-reqwest"] }
 uuid = { version = "1", features = ["v4", "serde"] }
 tempfile = "3"

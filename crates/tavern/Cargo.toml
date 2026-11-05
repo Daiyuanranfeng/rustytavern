@@ -19,6 +19,7 @@ rustytavern-plugins.workspace = true
 semver.workspace = true
 serde.workspace = true
 serde_json.workspace = true
+toml_edit.workspace = true
 tokio.workspace = true
 tokio-util.workspace = true
 uuid.workspace = true

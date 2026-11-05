@@ -249,12 +249,15 @@ impl Ui {
                 ];
                 let registry = rustytavern::plugin::PluginRegistry::default();
                 let manager = PluginManager::open(
-                    &app.data_dir,
                     app.store.clone(),
                     std::sync::Arc::new(tokio::sync::Mutex::new(registry)),
-                )?;
-                for installed in manager.list() {
-                    let id = installed.definition.manifest.id;
+                    &app.config.plugins,
+                );
+                for installed in manager.list()? {
+                    let id = installed["manifest"]["id"]
+                        .as_str()
+                        .unwrap_or_default()
+                        .to_owned();
                     items.push((
                         format!("Enable {id}"),
                         Choice::Select(Selection::Enable, id.clone()),
@@ -406,7 +409,12 @@ impl Ui {
                     },
                     After::Refresh,
                 ),
-                Selection::Enable => self.form(FormKind::Enable(id)),
+                Selection::Enable => self.command(
+                    Command::Plugin {
+                        command: PluginCommand::Enable { plugin: id },
+                    },
+                    After::Notice,
+                ),
                 Selection::Disable => self.command(
                     Command::Plugin {
                         command: PluginCommand::Disable { plugin: id },

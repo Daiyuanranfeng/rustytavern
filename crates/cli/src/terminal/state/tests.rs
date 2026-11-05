@@ -179,7 +179,7 @@ async fn provider_forms_preserve_saved_settings_and_timeout() {
         merge_system_messages: true,
         ..Default::default()
     };
-    app.config.providers.insert("saved".into(), profile);
+    app.config.set_provider("saved", profile, None);
     app.save_config().unwrap();
     let mut ui = Ui::open(directory.path().into()).unwrap();
     ui.preferences.provider = Some("saved".into());
@@ -196,6 +196,7 @@ async fn provider_forms_preserve_saved_settings_and_timeout() {
         .unwrap()
         .config
         .providers["saved"]
+        .settings
         .clone();
     assert_eq!(saved.timeout_seconds, 37);
     assert_eq!(saved.parameters["temperature"], 0.4);
@@ -278,7 +279,7 @@ fn model_discovery_uses_forms_and_does_not_grant_execution_capabilities() {
     let directory = tempfile::tempdir().unwrap();
     let mut app = Application::open(directory.path()).unwrap();
     for name in ["local", "broken"] {
-        app.config.providers.insert(name.into(), Default::default());
+        app.config.set_provider(name, Default::default(), None);
     }
     app.save_config().unwrap();
     let mut ui = Ui::open(directory.path().into()).unwrap();
@@ -352,7 +353,7 @@ fn setup_checks_the_key_against_the_selected_provider() {
 }
 
 #[tokio::test]
-async fn setup_stores_a_pasted_key_outside_the_configuration() {
+async fn setup_stores_a_pasted_key_in_the_configuration_file() {
     use rustytavern::provider::CredentialResolver;
     let directory = tempfile::tempdir().unwrap();
     let mut ui = Ui::open(directory.path().into()).unwrap();
@@ -370,17 +371,19 @@ async fn setup_stores_a_pasted_key_outside_the_configuration() {
     assert!(
         matches!(ui.pending, Some(Job::Catalogs(ref providers)) if providers == &["openrouter"])
     );
-    let config = std::fs::read_to_string(directory.path().join("config.json")).unwrap();
-    assert!(config.contains("stored:openrouter") && !config.contains("sk-or-v1-secret"));
-    let credentials = rustytavern::config::StoredCredentials::new(directory.path());
+    let config = std::fs::read_to_string(directory.path().join("config.toml")).unwrap();
+    assert!(config.contains("api_key = \"sk-or-v1-secret\""));
+    let app = Application::open(directory.path()).unwrap();
+    let provider = app.config.provider("openrouter").unwrap();
+    assert_eq!(provider.api_key_env.as_deref(), Some("config:openrouter"));
     assert_eq!(
-        credentials.resolve("stored:openrouter").unwrap(),
+        app.credentials().resolve("config:openrouter").unwrap(),
         "sk-or-v1-secret"
     );
     #[cfg(unix)]
     {
         use std::os::unix::fs::PermissionsExt;
-        let metadata = std::fs::metadata(directory.path().join("credentials.json")).unwrap();
+        let metadata = std::fs::metadata(directory.path().join("config.toml")).unwrap();
         assert_eq!(metadata.permissions().mode() & 0o777, 0o600);
     }
 }
@@ -562,12 +565,13 @@ fn model_lists_have_provider_tabs_and_put_new_models_first() {
 fn the_header_shows_the_model_and_provider() {
     let directory = tempfile::tempdir().unwrap();
     let mut app = Application::open(directory.path()).unwrap();
-    app.config.providers.insert(
-        "openrouter".into(),
+    app.config.set_provider(
+        "openrouter",
         rustytavern::provider::ProviderConfig {
             model: "z-ai/glm-5".into(),
             ..Default::default()
         },
+        None,
     );
     app.save_config().unwrap();
     let mut ui = Ui::open(directory.path().into()).unwrap();

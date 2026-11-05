@@ -9,8 +9,7 @@ mod sources;
 mod tools;
 
 use std::{
-    collections::BTreeSet,
-    path::{Path, PathBuf},
+    collections::{BTreeMap, BTreeSet},
     sync::Arc,
 };
 
@@ -32,23 +31,17 @@ use rustytavern_store::StoreBackend;
 /// The owner ID of the essential plugins.
 pub const ESSENTIAL_OWNER: &str = "core-product";
 
+/// The standard agent enables these plugins when the configuration lists none.
+pub const DEFAULT_ENABLED: &[&str] = &["agent", "web", "skills", "mcp", "chub", "risurealm"];
+
 /// The environment supplies host resources to the plugins.
 #[derive(Clone)]
 pub struct Environment {
     pub store: Arc<dyn StoreBackend>,
-    /// The skills and MCP plugins read files from this directory.
-    pub data_dir: Option<PathBuf>,
 }
 impl Environment {
     pub fn new(store: Arc<dyn StoreBackend>) -> Self {
-        Self {
-            store,
-            data_dir: None,
-        }
-    }
-    pub fn with_data_dir(mut self, data_dir: impl AsRef<Path>) -> Self {
-        self.data_dir = Some(data_dir.as_ref().to_owned());
-        self
+        Self { store }
     }
 }
 
@@ -82,7 +75,6 @@ impl RuntimePlugin for Builtin {
     }
     async fn activate(&self, context: &mut PluginContext) -> Result<()> {
         let configuration = &self.configuration;
-        let data_dir = self.environment.data_dir.as_deref();
         match self.factory.as_str() {
             "decoder.cc-v2-v3" => {
                 let decoder: Arc<dyn CardDecoder> = Arc::new(CcDecoder);
@@ -100,9 +92,9 @@ impl RuntimePlugin for Builtin {
             "driver.single-reply" => drivers::single_reply(context),
             "driver.agent" => drivers::agent(context, configuration),
             "tools.web" => tools::web::activate(context),
-            "tools.skills" => tools::skills::activate(context, data_dir),
+            "tools.skills" => tools::skills::activate(context, configuration),
             #[cfg(feature = "mcp")]
-            "tools.mcp" => tools::mcp::activate(context, data_dir).await,
+            "tools.mcp" => tools::mcp::activate(context, configuration).await,
             "prompt.contributions" => prompts::contributions(context, configuration),
             "prompt.edits" => prompts::edits(context, configuration, &self.manifest.provides),
             "source.chub" => sources::activate(context, true),
@@ -115,30 +107,59 @@ impl RuntimePlugin for Builtin {
     }
 }
 
-/// The function returns the essential plugins of the standard agent.
-/// Each plugin requests only the capabilities that its factory uses.
-pub fn essential(environment: &Environment) -> Result<Vec<Builtin>> {
+/// Each row has a plugin ID, a factory, a service, requested capabilities, and prompt slots.
+type Row = (
+    &'static str,
+    &'static str,
+    &'static str,
+    Vec<&'static str>,
+    Vec<&'static str>,
+);
+
+fn rows() -> Vec<Row> {
     let driver: Vec<&str> = driver::DRIVER_CAPABILITIES.to_vec();
-    let mut rows: Vec<(&str, &str, Vec<&str>, Vec<&str>)> = vec![
-        ("decoder.cc-v2-v3", "card.decoder/1", vec![], vec![]),
-        ("profile.core-v1", "profile/1", vec![], vec![]),
-        ("provider.http", "provider/1", vec![], vec![]),
-        ("store.sqlite", "store/1", vec![], vec![]),
-        ("driver.agent", "driver/1", driver, vec![]),
-        ("tools.web", "tools.web/1", vec!["network:https:*"], vec![]),
+    let mut rows: Vec<Row> = vec![
         (
+            "decoder",
+            "decoder.cc-v2-v3",
+            "card.decoder/1",
+            vec![],
+            vec![],
+        ),
+        ("profile", "profile.core-v1", "profile/1", vec![], vec![]),
+        ("provider", "provider.http", "provider/1", vec![], vec![]),
+        ("store", "store.sqlite", "store/1", vec![], vec![]),
+        ("agent", "driver.agent", "driver/1", driver.clone(), vec![]),
+        (
+            "single-reply",
+            "driver.single-reply",
+            "driver/1",
+            driver,
+            vec![],
+        ),
+        (
+            "web",
+            "tools.web",
+            "tools.web/1",
+            vec!["network:https:*"],
+            vec![],
+        ),
+        (
+            "skills",
             "tools.skills",
             "tools.skills/1",
             vec!["skills.read", "prompt.contribute:before_history"],
             vec!["before_history"],
         ),
         (
+            "chub",
             "source.chub",
             "card.source.chub/1",
             vec!["network:https:api.chub.ai"],
             vec![],
         ),
         (
+            "risurealm",
             "source.risurealm",
             "card.source.risurealm/1",
             vec!["network:https:realm.risuai.net"],
@@ -146,15 +167,47 @@ pub fn essential(environment: &Environment) -> Result<Vec<Builtin>> {
         ),
     ];
     if cfg!(feature = "mcp") {
-        rows.push(("tools.mcp", "tools.mcp/1", vec!["mcp.connect"], vec![]));
+        rows.push((
+            "mcp",
+            "tools.mcp",
+            "tools.mcp/1",
+            vec!["mcp.connect"],
+            vec![],
+        ));
     }
-    rows.into_iter()
-        .map(|(factory, service, capabilities, slots)| {
+    rows
+}
+
+/// The function returns the essential plugins for the enabled IDs.
+/// The core services are always on. Without `agent`, the `single-reply` driver serves `driver/1`.
+pub fn essential(
+    environment: &Environment,
+    enabled: &BTreeSet<String>,
+    configuration: &BTreeMap<String, Value>,
+) -> Result<Vec<Builtin>> {
+    if enabled.contains("agent") && enabled.contains("single-reply") {
+        return Err(Error::new(
+            "configuration",
+            "Enable one driver: agent or single-reply.",
+        ));
+    }
+    let core = ["decoder", "profile", "provider", "store"];
+    rows()
+        .into_iter()
+        .filter(|(id, ..)| {
+            core.contains(id)
+                || enabled.contains(*id)
+                || (*id == "single-reply" && !enabled.contains("agent"))
+        })
+        .map(|(id, factory, service, capabilities, slots)| {
+            let configuration = configuration.get(id).cloned().unwrap_or_else(|| json!({}));
             let manifest = PluginManifest {
-                id: format!("org.rustytavern.{factory}"),
+                id: id.into(),
                 provides: vec![service.into()],
                 artifact_hash: native_artifact_hash()?,
-                configuration_hash: digest(factory.as_bytes()),
+                configuration_hash: digest(
+                    format!("{factory}:{}", serde_json::to_string(&configuration)?).as_bytes(),
+                ),
                 requested_capabilities: capabilities.into_iter().map(str::to_owned).collect(),
                 allowed_slots: slots.into_iter().map(str::to_owned).collect(),
                 ..Default::default()
@@ -162,22 +215,22 @@ pub fn essential(environment: &Environment) -> Result<Vec<Builtin>> {
             Ok(Builtin::new(
                 manifest,
                 factory,
-                json!({}),
+                configuration,
                 environment.clone(),
             ))
         })
         .collect()
 }
 
-/// The function activates the essential plugins, except the disabled IDs.
+/// The function activates the essential plugins.
 /// The host grants each requested capability of an essential plugin.
 pub async fn registry(
     environment: &Environment,
-    disabled: &BTreeSet<String>,
+    enabled: &BTreeSet<String>,
+    configuration: &BTreeMap<String, Value>,
 ) -> Result<Arc<Mutex<PluginRegistry>>> {
-    let plugins: Vec<Arc<dyn RuntimePlugin>> = essential(environment)?
+    let plugins: Vec<Arc<dyn RuntimePlugin>> = essential(environment, enabled, configuration)?
         .into_iter()
-        .filter(|plugin| !disabled.contains(&plugin.manifest.id))
         .map(|plugin| Arc::new(plugin) as Arc<dyn RuntimePlugin>)
         .collect();
     let grants = plugins

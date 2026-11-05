@@ -9,7 +9,7 @@ use std::{
 
 fn cli(directory: &Path, args: &[&str]) -> Value {
     let output = Command::new(env!("CARGO_BIN_EXE_rustytavern"))
-        .arg("--data-dir")
+        .arg("--home")
         .arg(directory)
         .args(args)
         .output()
@@ -115,14 +115,6 @@ fn cli_import_prompt_chat_resume_regenerate_branch_and_export_work() {
                 env!("CARGO_MANIFEST_DIR"),
                 "/../tavern/examples/plugins/lighthouse-edits"
             ),
-        ],
-    );
-    cli(
-        directory.path(),
-        &[
-            "plugin",
-            "enable",
-            "example.lighthouse-edits",
             "--grant",
             "session.read:current",
             "--grant",
@@ -169,7 +161,7 @@ fn cli_import_prompt_chat_resume_regenerate_branch_and_export_work() {
         1
     );
     let output = Command::new(env!("CARGO_BIN_EXE_rustytavern"))
-        .arg("--data-dir")
+        .arg("--home")
         .arg(directory.path())
         .args([
             "chat",
@@ -197,7 +189,7 @@ fn cli_import_prompt_chat_resume_regenerate_branch_and_export_work() {
     let resumed = cli(directory.path(), &["session", "show", id, "--json"]);
     assert_eq!(resumed["history"].as_array().unwrap().len(), 3);
     let output = Command::new(env!("CARGO_BIN_EXE_rustytavern"))
-        .arg("--data-dir")
+        .arg("--home")
         .arg(directory.path())
         .args(["session", "regenerate", id])
         .output()

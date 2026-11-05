@@ -1,7 +1,7 @@
 # Lighthouse edit plugin
 
 The plugin adds a pure prompt transform.
-The plugin ID is `example.lighthouse-edits`.
+The plugin ID is `lighthouse-edits`.
 The [plugin manifest](plugin.json) selects the compiled `prompt.edits` factory.
 The plugin appends a blue-lamp setting to the prompt description.
 The plugin does not change the stored character card.
@@ -16,10 +16,10 @@ The host calls the transform after it builds the draft. The host then selects co
 
 ```sh
 cargo run --locked -- --data-dir ./data plugin install crates/tavern/examples/plugins/lighthouse-edits
-cargo run --locked -- --data-dir ./data plugin enable example.lighthouse-edits --grant session.read:current --grant prompt.transform:description
+cargo run --locked -- --data-dir ./data plugin enable lighthouse-edits --grant session.read:current --grant prompt.transform:description
 cargo run --locked -- --data-dir ./data session configure SESSION_ID
 cargo run --locked -- --data-dir ./data prompt inspect SESSION_ID --message "Hello." --json
-cargo run --locked -- --data-dir ./data plugin disable example.lighthouse-edits
+cargo run --locked -- --data-dir ./data plugin disable lighthouse-edits
 ```
 
 The enabled plan contains the blue-lamp text. The commands make no model request.

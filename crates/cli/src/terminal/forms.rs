@@ -32,7 +32,7 @@ impl Ui {
             FormKind::Provider(name) => {
                 let selected = Application::open(&self.path)
                     .ok()
-                    .and_then(|app| app.config.providers.get(name).cloned());
+                    .and_then(|app| app.config.providers.get(name).map(|p| p.settings.clone()));
                 let config = selected.clone().unwrap_or_default();
                 let kind = match config.kind {
                     rustytavern::provider::ProviderKind::OpenRouter => "openrouter",
@@ -119,11 +119,10 @@ impl Ui {
                     field("Plugin ID", ""),
                 ],
             ),
-            FormKind::Install => ("Install a plugin", vec![field("Plugin directory", "")]),
-            FormKind::Enable(id) => (
-                "Enable a plugin",
+            FormKind::Install => (
+                "Install a plugin",
                 vec![
-                    field("Plugin ID", id),
+                    field("Plugin directory", ""),
                     field("Explicit grants: one per line", ""),
                     field("Trust external processes: yes or no", "no"),
                 ],
@@ -197,11 +196,8 @@ impl Ui {
                     .config
                     .providers
                     .remove(kind)
+                    .map(|p| p.settings)
                     .unwrap_or_default();
-                let reference = match key {
-                    Some(key) => Some(StoredCredentials::new(&self.path).save(kind, key)?),
-                    None => reference,
-                };
                 (
                     Command::Config {
                         command: ConfigCommand::Provider {
@@ -218,6 +214,7 @@ impl Ui {
                             },
                             endpoint: (!endpoint.is_empty()).then(|| endpoint.into()),
                             api_key_env: reference,
+                            api_key: key.map(str::to_owned),
                             context_limit: old.context_limit,
                             output_limit: old.output_limit,
                             parameters: serde_json::to_string(&old.parameters)?,
@@ -248,6 +245,7 @@ impl Ui {
                             model: values[2].clone(),
                             endpoint: (!values[3].is_empty()).then(|| values[3].clone()),
                             api_key_env: (!values[4].is_empty()).then(|| values[4].clone()),
+                            api_key: None,
                             context_limit: number(&values[5])?,
                             output_limit: number(&values[6])?,
                             parameters: values[7].clone(),
@@ -325,14 +323,6 @@ impl Ui {
                 Command::Plugin {
                     command: PluginCommand::Install {
                         path: values[0].clone().into(),
-                    },
-                },
-                After::Notice,
-            ),
-            FormKind::Enable(_) => (
-                Command::Plugin {
-                    command: PluginCommand::Enable {
-                        plugins: vec![values[0].clone()],
                         grant: values[1]
                             .lines()
                             .filter(|line| !line.is_empty())
