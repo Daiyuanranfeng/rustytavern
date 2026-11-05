@@ -8,10 +8,7 @@ mod prompts;
 mod sources;
 mod tools;
 
-use std::{
-    collections::{BTreeMap, BTreeSet},
-    sync::Arc,
-};
+use std::{collections::BTreeMap, sync::Arc};
 
 use async_trait::async_trait;
 use serde_json::{Value, json};
@@ -30,9 +27,6 @@ use rustytavern_store::StoreBackend;
 
 /// The owner ID of the essential plugins.
 pub const ESSENTIAL_OWNER: &str = "core-product";
-
-/// The standard agent enables these plugins when the configuration lists none.
-pub const DEFAULT_ENABLED: &[&str] = &["agent", "web", "skills", "mcp", "chub", "risurealm"];
 
 /// The environment supplies host resources to the plugins.
 #[derive(Clone)]
@@ -89,7 +83,6 @@ impl RuntimePlugin for Builtin {
                 context.register("provider/1", Arc::new(provider))
             }
             "store.sqlite" => context.register("store/1", Arc::new(self.environment.store.clone())),
-            "driver.single-reply" => drivers::single_reply(context),
             "driver.agent" => drivers::agent(context, configuration),
             "tools.web" => tools::web::activate(context),
             "tools.skills" => tools::skills::activate(context, configuration),
@@ -129,14 +122,7 @@ fn rows() -> Vec<Row> {
         ("profile", "profile.core-v1", "profile/1", vec![], vec![]),
         ("provider", "provider.http", "provider/1", vec![], vec![]),
         ("store", "store.sqlite", "store/1", vec![], vec![]),
-        ("agent", "driver.agent", "driver/1", driver.clone(), vec![]),
-        (
-            "single-reply",
-            "driver.single-reply",
-            "driver/1",
-            driver,
-            vec![],
-        ),
+        ("agent", "driver.agent", "driver/1", driver, vec![]),
         (
             "web",
             "tools.web",
@@ -178,27 +164,13 @@ fn rows() -> Vec<Row> {
     rows
 }
 
-/// The function returns the essential plugins for the enabled IDs.
-/// The core services are always on. Without `agent`, the `single-reply` driver serves `driver/1`.
+/// The function returns the essential plugins. Every essential plugin is always on.
 pub fn essential(
     environment: &Environment,
-    enabled: &BTreeSet<String>,
     configuration: &BTreeMap<String, Value>,
 ) -> Result<Vec<Builtin>> {
-    if enabled.contains("agent") && enabled.contains("single-reply") {
-        return Err(Error::new(
-            "configuration",
-            "Enable one driver: agent or single-reply.",
-        ));
-    }
-    let core = ["decoder", "profile", "provider", "store"];
     rows()
         .into_iter()
-        .filter(|(id, ..)| {
-            core.contains(id)
-                || enabled.contains(*id)
-                || (*id == "single-reply" && !enabled.contains("agent"))
-        })
         .map(|(id, factory, service, capabilities, slots)| {
             let configuration = configuration.get(id).cloned().unwrap_or_else(|| json!({}));
             let manifest = PluginManifest {
@@ -226,10 +198,9 @@ pub fn essential(
 /// The host grants each requested capability of an essential plugin.
 pub async fn registry(
     environment: &Environment,
-    enabled: &BTreeSet<String>,
     configuration: &BTreeMap<String, Value>,
 ) -> Result<Arc<Mutex<PluginRegistry>>> {
-    let plugins: Vec<Arc<dyn RuntimePlugin>> = essential(environment, enabled, configuration)?
+    let plugins: Vec<Arc<dyn RuntimePlugin>> = essential(environment, configuration)?
         .into_iter()
         .map(|plugin| Arc::new(plugin) as Arc<dyn RuntimePlugin>)
         .collect();

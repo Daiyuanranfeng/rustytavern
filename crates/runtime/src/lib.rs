@@ -21,7 +21,7 @@ use tokio::{sync::mpsc, task::JoinHandle};
 use tokio_util::sync::CancellationToken;
 
 use card::{Card, CardDecoder, CcDecoder};
-use driver::{ConversationDriver, DRIVER_CAPABILITIES, DriverContext, SingleReplyDriver};
+use driver::{ConversationDriver, DRIVER_CAPABILITIES, DriverContext};
 use phases::{HookBinding, PhaseTrace, SavedEnrichment};
 use prompt::{ConservativeCounter, CoreProfile, PromptInput, PromptPlan, PromptProfile};
 use provider::{
@@ -161,7 +161,7 @@ impl Runtime {
             provider: Arc::new(HttpProvider),
             profile: Arc::new(CoreProfile),
             decoder: Arc::new(CcDecoder),
-            driver: Arc::new(SingleReplyDriver),
+            driver: Arc::new(agent::AgentDriver::new(agent::DEFAULT_MAX_STEPS)),
             credentials: Arc::new(NoCredentials),
             registry: None,
             composition: None,

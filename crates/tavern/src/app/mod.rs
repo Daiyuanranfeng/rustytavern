@@ -187,19 +187,25 @@ impl PluginManager {
         Ok(())
     }
 
-    /// The method adds the ID to the enabled list. An essential plugin starts at the next launch.
+    /// The method adds an installed plugin to the enabled list. The essential plugins are always on.
     pub async fn enable(&mut self, id: &str) -> Result<()> {
+        if !self.settings.installed()?.contains_key(id) {
+            return Err(Error::new("not_found", "The plugin is not installed."));
+        }
         let mut enabled = self.settings.enabled();
         enabled.insert(id.into());
         self.settings.enabled = Some(enabled);
-        if self.settings.installed()?.contains_key(id) && !self.active.contains_key(id) {
+        if !self.active.contains_key(id) {
             self.activate(&[id.into()]).await?;
         }
         Ok(())
     }
 
-    /// The method removes the ID from the enabled list. An essential plugin stops at the next launch.
+    /// The method removes an installed plugin from the enabled list. The essential plugins are always on.
     pub async fn disable(&mut self, id: &str) -> Result<()> {
+        if !self.settings.installed()?.contains_key(id) {
+            return Err(Error::new("not_found", "The plugin is not installed."));
+        }
         if self.active.contains_key(id) {
             self.registry.lock().await.eject_owner(&owner(id)).await?;
             self.active.remove(id);
@@ -489,11 +495,7 @@ fn validate_commands<'a>(
 /// The function activates the essential plugins of the standard agent.
 /// The function activates the default essential plugins without configuration.
 pub async fn default_registry(store: Arc<dyn StoreBackend>) -> Result<Arc<Mutex<PluginRegistry>>> {
-    let enabled = plugins::DEFAULT_ENABLED
-        .iter()
-        .map(|id| id.to_string())
-        .collect();
-    plugins::registry(&Environment::new(store), &enabled, &BTreeMap::new()).await
+    plugins::registry(&Environment::new(store), &BTreeMap::new()).await
 }
 
 pub async fn runtime(

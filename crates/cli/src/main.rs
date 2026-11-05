@@ -182,7 +182,7 @@ enum PersonaCommand {
 }
 #[derive(Subcommand)]
 enum SessionCommand {
-    /// The command sets one plugins key for this session, for example plugins.enabled '["agent"]'.
+    /// The command sets one plugins key for this session, for example plugins.agent.max_steps 4.
     Set {
         session: String,
         key: String,
