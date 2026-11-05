@@ -24,6 +24,9 @@ pub(super) const COMMANDS: &[(&str, &str)] = &[
     ("/quit", "Close the terminal"),
 ];
 
+/// The character preview has these tabs.
+pub(super) const PREVIEW_TABS: &[&str] = &["Overview", "Greetings", "Lorebook", "Prompts"];
+
 /// The namespace and key of the terminal selections in the database.
 const PREFERENCES: (&str, &str) = ("rustytavern.terminal", "preferences");
 
@@ -59,6 +62,8 @@ pub(super) enum After {
     Refresh,
     View(&'static str),
     Request(Option<PathBuf>),
+    /// The download shows a preview. The address and the source fetch the card again on Enter.
+    Preview(Box<[String; 2]>),
 }
 #[derive(Clone)]
 pub(super) enum FormKind {
@@ -79,6 +84,10 @@ pub(super) enum Choice {
     Select(Selection, String),
     Form(FormKind),
     Command(Command, After),
+    /// The choice lists a folder.
+    Browse(PathBuf),
+    /// The choice shows a character file.
+    Open(PathBuf),
 }
 pub(super) enum Selection {
     DiscoveredModel(String),
@@ -127,6 +136,14 @@ pub(super) enum Overlay {
         text: String,
         scroll: u16,
     },
+    /// The preview shows a character before the import.
+    Preview {
+        card: Box<rustytavern::card::Card>,
+        image: Option<Box<ratatui_image::protocol::StatefulProtocol>>,
+        import: Box<Command>,
+        tab: usize,
+        scroll: u16,
+    },
 }
 /// A step is a thinking trace or a tool call that comes before the reply. `tool` is absent for thinking.
 pub(super) struct Step {
@@ -170,6 +187,10 @@ pub(super) struct Ui {
     pub selection: Option<(Position, Position)>,
     pub copy: bool,
     pub copied: Option<String>,
+    /// The picker selects the image protocol of the terminal.
+    pub picker: ratatui_image::picker::Picker,
+    /// The file browser opens this folder.
+    pub folder: PathBuf,
 }
 
 pub(super) fn slash_matches(
@@ -338,6 +359,15 @@ impl Ui {
             selection: None,
             copy: false,
             copied: None,
+            picker: ratatui_image::picker::Picker::from_fontsize((10, 20)),
+            folder: std::env::var_os("HOME").map_or_else(
+                || std::env::current_dir().unwrap_or_default(),
+                |home| {
+                    let home = PathBuf::from(home);
+                    let downloads = home.join("Downloads");
+                    if downloads.is_dir() { downloads } else { home }
+                },
+            ),
         };
         if let Err(error) = ui.refresh() {
             ui.notice = error.to_string();
@@ -475,7 +505,9 @@ impl Ui {
                     KeyCode::Enter => {
                         if let Some(&index) = visible(&items, &filter, &tabs, tab).get(selected) {
                             let (_, choice) = items.remove(index);
-                            self.choose(choice)?;
+                            if let Err(error) = self.choose(choice) {
+                                self.notice = error.to_string();
+                            }
                             return Ok(());
                         }
                     }
@@ -505,6 +537,40 @@ impl Ui {
                 self.overlay = Some(Overlay::Document {
                     title,
                     text,
+                    scroll,
+                });
+            }
+            Some(Overlay::Preview {
+                card,
+                image,
+                import,
+                mut tab,
+                mut scroll,
+            }) => {
+                match key.code {
+                    KeyCode::Enter => {
+                        self.command(*import, After::Card);
+                        return Ok(());
+                    }
+                    KeyCode::Left => tab = (tab + PREVIEW_TABS.len() - 1) % PREVIEW_TABS.len(),
+                    KeyCode::Right | KeyCode::Tab => tab = (tab + 1) % PREVIEW_TABS.len(),
+                    KeyCode::Down => scroll = scroll.saturating_add(1),
+                    KeyCode::Up => scroll = scroll.saturating_sub(1),
+                    KeyCode::PageDown => scroll = scroll.saturating_add(8),
+                    KeyCode::PageUp => scroll = scroll.saturating_sub(8),
+                    _ => {}
+                }
+                if !matches!(
+                    key.code,
+                    KeyCode::Up | KeyCode::Down | KeyCode::PageUp | KeyCode::PageDown
+                ) {
+                    scroll = 0;
+                }
+                self.overlay = Some(Overlay::Preview {
+                    card,
+                    image,
+                    import,
+                    tab,
                     scroll,
                 });
             }
@@ -673,10 +739,14 @@ impl Ui {
                         selected.saturating_sub(1)
                     };
                 }
-                Some(Overlay::Document { scroll, .. }) if down => {
+                Some(Overlay::Document { scroll, .. } | Overlay::Preview { scroll, .. })
+                    if down =>
+                {
                     *scroll = scroll.saturating_add(3)
                 }
-                Some(Overlay::Document { scroll, .. }) => *scroll = scroll.saturating_sub(3),
+                Some(Overlay::Document { scroll, .. } | Overlay::Preview { scroll, .. }) => {
+                    *scroll = scroll.saturating_sub(3)
+                }
                 Some(Overlay::Form { .. }) => {}
                 None if down => self.scroll = self.scroll.saturating_sub(3),
                 None => self.scroll = self.scroll.saturating_add(3),
@@ -697,6 +767,10 @@ impl Ui {
                 (Some(Hit::Tab(index)), Some(Overlay::Menu { selected, tab, .. })) => {
                     *tab = index;
                     *selected = 0;
+                }
+                (Some(Hit::Tab(index)), Some(Overlay::Preview { tab, scroll, .. })) => {
+                    *tab = index;
+                    *scroll = 0;
                 }
                 (Some(Hit::Item(index)), Some(Overlay::Menu { selected, .. })) => {
                     *selected = index;
@@ -834,6 +908,20 @@ impl Ui {
                     return Ok(());
                 }
                 After::Card => self.preferences.character = value["id"].as_str().map(str::to_owned),
+                After::Preview(address) => {
+                    let [url, source] = *address;
+                    let card = serde_json::from_value(value)?;
+                    let import = Command::Card {
+                        command: CardCommand::Fetch {
+                            url,
+                            source,
+                            json: true,
+                            preview: false,
+                        },
+                    };
+                    self.preview(card, import);
+                    return Ok(());
+                }
                 After::Persona => {
                     self.preferences.persona = value["id"].as_str().map(str::to_owned)
                 }

@@ -77,14 +77,26 @@ pub(super) async fn run(path: Option<PathBuf>) -> Result<()> {
     }));
     let _guard = TerminalGuard;
     let mut terminal = ratatui::try_init()?;
+    if let Ok(picker) = ratatui_image::picker::Picker::from_query_stdio() {
+        ui.picker = picker;
+    }
     execute!(stdout(), EnableBracketedPaste, EnableMouseCapture)?;
     let (sender, mut updates) = mpsc::channel(64);
     let mut events = EventStream::new();
     let mut tick = tokio::time::interval(std::time::Duration::from_millis(80));
     let mut job: Option<tokio::task::JoinHandle<()>> = None;
     let mut cancellation = CancellationToken::new();
+    let mut picture = false;
     let result: Result<()> = async {
         while !ui.exit || ui.busy {
+            // Graphics protocols draw outside the cell buffer. A full redraw removes a closed picture.
+            let shown = matches!(
+                ui.overlay,
+                Some(state::Overlay::Preview { image: Some(_), tab: 0, .. })
+            );
+            if std::mem::replace(&mut picture, shown) && !shown {
+                terminal.clear()?;
+            }
             terminal.draw(|frame| view::draw(frame, &mut ui))?;
             if let Some(text) = ui.copied.take() {
                 copy(&text);

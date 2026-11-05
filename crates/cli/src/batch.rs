@@ -349,14 +349,23 @@ async fn execute(
                 output.write(&json!({"output":path}))?;
             }
             CardCommand::List { .. } => output.write(&app.store.list("card")?)?,
-            CardCommand::Fetch { url, source, .. } => {
+            CardCommand::Fetch {
+                url,
+                source,
+                preview,
+                ..
+            } => {
                 let cancellation = cancellation.clone();
                 let result = cancel_operation(
-                    manager.fetch_card(&url, &source, cancellation.clone()),
+                    manager.fetch_card(&url, &source, !preview, cancellation.clone()),
                     cancellation,
                 )
                 .await?;
-                output.write(&inspect_card(&result))?;
+                if preview {
+                    output.write(&result)?;
+                } else {
+                    output.write(&inspect_card(&result))?;
+                }
             }
             CardCommand::Export {
                 character,

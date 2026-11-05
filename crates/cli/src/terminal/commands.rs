@@ -164,7 +164,11 @@ impl Ui {
                 }
                 if kind == "card" {
                     items.push((
-                        "Add a character from a file or web address...".into(),
+                        "Add a character from a file...".into(),
+                        Choice::Browse(self.folder.clone()),
+                    ));
+                    items.push((
+                        "Add a character from a web address...".into(),
                         Choice::Form(FormKind::Import),
                     ));
                 }
@@ -342,6 +346,13 @@ impl Ui {
             Choice::Slash(name) => self.slash(name)?,
             Choice::Form(kind) => self.form(kind),
             Choice::Command(command, after) => self.command(command, after),
+            Choice::Browse(folder) => self.browse(folder)?,
+            Choice::Open(path) => {
+                if let Err(error) = self.open_card(path) {
+                    self.browse(self.folder.clone())?;
+                    self.notice = error.to_string();
+                }
+            }
             Choice::Select(kind, id) => match kind {
                 Selection::Greeting(reduced) => {
                     self.new_requested = false;

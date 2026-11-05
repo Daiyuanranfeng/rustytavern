@@ -43,3 +43,5 @@ crossterm = { version = "0.28", features = ["event-stream"] }
 tui-textarea = "0.7"
 pulldown-cmark = { version = "0.13", default-features = false }
 unicode-width = "0.2"
+ratatui-image = { version = "8", default-features = false, features = ["crossterm"] }
+image = { version = "0.25", default-features = false, features = ["png", "jpeg", "webp", "gif"] }
