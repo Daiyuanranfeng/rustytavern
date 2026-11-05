@@ -127,8 +127,8 @@ fn rows() -> Vec<Row> {
             "web",
             "tools.web",
             "tools.web/1",
-            vec!["network:https:*"],
-            vec![],
+            vec!["network:https:*", "prompt.contribute:before_history"],
+            vec!["before_history"],
         ),
         (
             "skills",

@@ -355,9 +355,9 @@ enum ConfigCommand {
         /// The command stores the key in config.toml.
         #[arg(long)]
         api_key: Option<String>,
-        #[arg(long, default_value_t = 16384)]
+        #[arg(long, default_value_t = 131072)]
         context_limit: usize,
-        #[arg(long, default_value_t = 1024)]
+        #[arg(long, default_value_t = 8192)]
         output_limit: usize,
         #[arg(long, default_value = "{}")]
         parameters: String,

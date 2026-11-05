@@ -15,7 +15,7 @@ Each plugin family is one module.
 | --- | --- | --- | --- |
 | `decoder`, `profile`, `provider`, `store` | `lib` | Core services | The plugins decode cards, compile prompts, call models, and store records. They are always on. |
 | `agent` | `drivers` | `driver/1` | The loop calls the model and runs requested tools until a reply has no tool calls. It is the only conversation mode. |
-| `web` | `tools::web` | `tools.web/1` | The `web_fetch` tool reads one public HTTPS page as plain text. |
+| `web` | `tools::web` | `tools.web/1` | The `web_fetch` tool reads one public HTTPS page as plain text. The plugin adds the tool-use guide to the prompt. |
 | `skills` | `tools::skills` | `tools.skills/1` | The plugin adds the skill catalog to the prompt and registers the `read_skill` tool. |
 | `mcp` | `tools::mcp` | `tools.mcp/1` | The plugin connects each configured server and registers its tools. |
 | `chub`, `risurealm` | `sources` | `card.source.NAME/1` | The sources fetch character cards from their granted host. |

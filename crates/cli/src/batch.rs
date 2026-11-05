@@ -464,8 +464,14 @@ async fn execute(
                         config.model.clone()
                     }
                 });
-                target.options.context_limit = context_limit.unwrap_or(config.context_limit);
-                target.options.output_limit = output_limit.unwrap_or(config.output_limit);
+                let prompt = app.config.prompt.clone().unwrap_or_default();
+                target.options = PromptOptions {
+                    context_limit: context_limit
+                        .unwrap_or(prompt.context_limit.min(config.context_limit)),
+                    output_limit: output_limit
+                        .unwrap_or(prompt.output_limit.min(config.output_limit)),
+                    ..prompt
+                };
                 target.version = expected_version.unwrap_or(target.version);
                 output.write(&runtime.configure_session(&target, config).await?)?;
             }
@@ -517,10 +523,13 @@ async fn execute(
                     head: None,
                     version: 0,
                     accept_reduced,
-                    options: PromptOptions {
-                        context_limit: config.context_limit,
-                        output_limit: config.output_limit,
-                        ..Default::default()
+                    options: {
+                        let prompt = app.config.prompt.clone().unwrap_or_default();
+                        PromptOptions {
+                            context_limit: prompt.context_limit.min(config.context_limit),
+                            output_limit: prompt.output_limit.min(config.output_limit),
+                            ..prompt
+                        }
                     },
                     composition: json!({}),
                     title: None,

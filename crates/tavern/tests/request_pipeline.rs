@@ -451,3 +451,49 @@ fn optional_trimming_removes_turns_then_complete_examples_then_lore() {
         "mandatory_context_overflow"
     );
 }
+
+#[test]
+fn the_history_limit_keeps_only_the_latest_messages() {
+    use rustytavern::{
+        prompt::ConservativeCounter,
+        session::{Message, Role},
+    };
+    let card = Card::import(include_bytes!("fixtures/synthetic/card-v3.json")).unwrap();
+    let persona = Persona::new("Alex".into(), "Visitor.".into()).unwrap();
+    let history = (0..5)
+        .map(|i| Message {
+            id: format!("node-{i}"),
+            parent_id: None,
+            role: if i % 2 == 0 {
+                Role::User
+            } else {
+                Role::Assistant
+            },
+            text: format!("Text {i}."),
+            generation_id: None,
+        })
+        .collect::<Vec<_>>();
+    let options = PromptOptions {
+        history_limit: 2,
+        ..Default::default()
+    };
+    let plan = CoreProfile
+        .compile(&PromptInput {
+            card: &card,
+            persona: &persona,
+            history: &history,
+            message: "Next.",
+            options: &options,
+            accept_reduced: false,
+            counter: &ConservativeCounter,
+        })
+        .unwrap();
+    assert_eq!(plan.history_ids, ["node-3", "node-4"]);
+    assert!(
+        plan.omissions
+            .iter()
+            .filter(|o| o.reason == "history_limit")
+            .map(|o| o.id.as_str())
+            .eq(["node-0", "node-1", "node-2"])
+    );
+}

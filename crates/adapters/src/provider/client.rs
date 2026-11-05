@@ -16,7 +16,9 @@ use std::{collections::VecDeque, time::Duration};
 const MAX_STREAM_BYTES: usize = 16 * 1024 * 1024;
 
 /// The function maps the protocol-neutral request to a `genai` request and options.
-fn chat_request(body: &ChatBody) -> (g::ChatRequest, g::ChatOptions) {
+/// Each vendor protocol gets its native web search tool. A custom endpoint gets none.
+/// OpenRouter receives its `openrouter:web_search` server tool through the extra body.
+fn chat_request(body: &ChatBody, protocol: ProviderKind) -> (g::ChatRequest, g::ChatOptions) {
     let messages = body
         .messages
         .iter()
@@ -47,17 +49,29 @@ fn chat_request(body: &ChatBody) -> (g::ChatRequest, g::ChatOptions) {
         })
         .collect();
     let mut request = g::ChatRequest::new(messages);
-    if !body.tools.is_empty() {
-        request.tools = Some(
-            body.tools
-                .iter()
-                .map(|tool| {
-                    g::Tool::new(tool.name.as_str())
-                        .with_description(tool.description.as_str())
-                        .with_schema(tool.parameters.clone())
-                })
-                .collect(),
-        );
+    let mut tools: Vec<g::Tool> = body
+        .tools
+        .iter()
+        .map(|tool| {
+            g::Tool::new(tool.name.as_str())
+                .with_description(tool.description.as_str())
+                .with_schema(tool.parameters.clone())
+        })
+        .collect();
+    let mut extra = serde_json::Map::new();
+    if protocol == ProviderKind::OpenRouter {
+        let mut wire: Vec<Value> = body
+            .tools
+            .iter()
+            .map(|tool| json!({"type":"function","function":{"name":tool.name,"description":tool.description,"parameters":tool.parameters}}))
+            .collect();
+        wire.push(json!({"type":"openrouter:web_search"}));
+        extra.insert("tools".into(), json!(wire));
+    } else if protocol != ProviderKind::Custom {
+        tools.push(g::Tool::new_web_search());
+    }
+    if !tools.is_empty() {
+        request.tools = Some(tools);
     }
     let mut options = g::ChatOptions::default()
         .with_capture_usage(true)
@@ -68,7 +82,10 @@ fn chat_request(body: &ChatBody) -> (g::ChatRequest, g::ChatOptions) {
     options.temperature = body.temperature;
     options.top_p = body.top_p;
     if let Some(routing) = &body.provider {
-        options = options.with_extra_body(json!({"provider": routing}));
+        extra.insert("provider".into(), json!(routing));
+    }
+    if !extra.is_empty() {
+        options = options.with_extra_body(Value::Object(extra));
     }
     (request, options)
 }
@@ -299,7 +316,7 @@ pub(super) async fn open(
     cancellation: CancellationToken,
 ) -> Result<ProviderStream> {
     let body = request.chat()?;
-    let (chat, options) = chat_request(&body);
+    let (chat, options) = chat_request(&body, request.protocol);
     let target = target(&request, &body.model, credentials)?;
     let http = reqwest::Client::builder()
         .redirect(reqwest::redirect::Policy::none())
@@ -380,7 +397,10 @@ fn native_error_code(error: &Value) -> Option<&'static str> {
 
 fn check_finish(reason: &str) -> Result<()> {
     let (code, message) = match reason {
-        "stop" | "end_turn" | "stop_sequence" | "STOP" | "completed" => return Ok(()),
+        // Anthropic pauses a long server-tool turn. The reply keeps the text so far.
+        "stop" | "end_turn" | "stop_sequence" | "STOP" | "completed" | "pause_turn" => {
+            return Ok(());
+        }
         "model_context_window_exceeded" => (
             "context_exceeded",
             "The provider exhausted its context window.",
@@ -398,4 +418,30 @@ fn check_finish(reason: &str) -> Result<()> {
         ),
     };
     Err(Error::new(code, message))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn each_vendor_gets_its_native_web_search_tool() {
+        let body = ChatBody {
+            model: "m".into(),
+            provider: Some(OpenRouterRouting::default()),
+            ..Default::default()
+        };
+        let (_, options) = chat_request(&body, ProviderKind::OpenRouter);
+        let extra = options.extra_body.unwrap();
+        assert_eq!(extra["tools"], json!([{"type":"openrouter:web_search"}]));
+        assert!(extra.get("provider").is_some());
+        let (request, _) = chat_request(&body, ProviderKind::Anthropic);
+        assert_eq!(request.tools.unwrap()[0].name, g::ToolName::WebSearch);
+        let body = ChatBody {
+            provider: None,
+            ..body
+        };
+        let (request, options) = chat_request(&body, ProviderKind::Custom);
+        assert!(request.tools.is_none() && options.extra_body.is_none());
+    }
 }

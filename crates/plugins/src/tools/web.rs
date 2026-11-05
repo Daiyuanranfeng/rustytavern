@@ -11,11 +11,17 @@ use crate::{
     Error, Result,
     agent::{AgentTool, ToolSet},
     plugin::PluginContext,
+    prompt::{Contribution, Retention},
     provider::ToolDefinition,
     source::PublicFetcher,
 };
+use rustytavern_core::Role;
+
+/// The provider runs the web search. This guide tells the model when to use the web tools.
+const GUIDE: &str = "Tool use. You can use tools before you reply. Search the web when the user asks you to search, look up, or check something, or when the reply needs current facts. Run a separate search for each language that the user names, and write each query in that language. Call web_fetch to read a full page. Base the reply on the results and name the sources. Keep the character's voice when you report the results.";
 
 /// The `tools.web` plugin registers `web_fetch` for its granted HTTPS hosts.
+/// The plugin also adds the tool-use guide to the prompt.
 pub(crate) fn activate(context: &mut PluginContext) -> Result<()> {
     let hosts = context
         .grants()
@@ -31,6 +37,16 @@ pub(crate) fn activate(context: &mut PluginContext) -> Result<()> {
     let mut fetcher = PublicFetcher::new(hosts);
     fetcher.max_bytes = 2 * 1024 * 1024;
     let tools: ToolSet = vec![Arc::new(WebFetch(fetcher))];
+    context.contribute(Contribution {
+        plugin_id: String::new(),
+        section_id: "tool_use".into(),
+        slot: "before_history".into(),
+        priority: 1,
+        role: Role::System,
+        text: GUIDE.into(),
+        provenance: Value::Null,
+        retention: Retention::Optional,
+    })?;
     context.register("tools.web/1", Arc::new(tools))
 }
 

@@ -132,15 +132,22 @@ default_provider = "openrouter"      # the provider for new chats
 kind = "openrouter"
 model = "openai/gpt-4.1-mini"
 api_key = "sk-or-..."
-context_limit = 16384
-output_limit = 1024
+context_limit = 131072                # the model limit
+output_limit = 8192
 parameters = { temperature = 0.8 }
+
+[prompt]                              # optional: the prompt options for new chats
+context_limit = 131072
+output_limit = 8192
+lore_budget = 32768
+example_budget = 8192
+history_limit = 0                     # 0 keeps every message that fits the context limit
 
 [plugins]
 enabled = ["lighthouse-notes"]       # installed plugins only
 
 [plugins.agent]
-max_steps = 8
+max_steps = 32
 
 [plugins.skills]
 paths = ["/Users/me/.rustytavern/skills"]
@@ -162,7 +169,8 @@ assistant_bubble = "magenta"
 | Key | Meaning |
 | --- | --- |
 | `default_provider` | The provider profile for new chats. |
-| `providers.NAME` | One provider profile. `api_key` stores the key in this file. |
+| `providers.NAME` | One provider profile. `api_key` stores the key in this file. The limits are the model limits. |
+| `prompt` | The prompt options for new chats. A chat uses the lower limit of `prompt` and its provider. `/adopt` applies the table to the open chat. |
 | `plugins.enabled` | The enabled installed plugin IDs. The essential plugins are always on. |
 | `plugins.NAME` | The configuration of one plugin. A table with `path` is an installed plugin. |
 | `extensions.NAME` | One enabled extension. |
@@ -275,6 +283,8 @@ A plugin changes agent behavior or adds content to the agent context.
 An extension changes only the application appearance.
 
 The standard agent includes the essential plugins: the agent loop, `web_fetch`, skills, MCP tools, and the card sources.
+The provider runs its native web search: `openrouter:web_search` on OpenRouter, `web_search` on OpenAI and Anthropic, and Google Search on Gemini. A custom endpoint has no web search.
+A web search can add a cost at the provider.
 The essential plugins are always on. The agent loop is the only conversation mode.
 The `plugins.enabled` list in `config.toml` selects the installed plugins.
 The [plugin crate](../crates/plugins/README.md) lists each plugin ID, grant, and file location.

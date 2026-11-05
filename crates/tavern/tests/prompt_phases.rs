@@ -580,6 +580,7 @@ async fn transforms_run_before_context_selection_and_preserve_card_revisions() {
         .unwrap();
     let config = ProviderConfig {
         context_limit: 2048,
+        output_limit: 1024,
         ..Default::default()
     };
     fixture
@@ -725,6 +726,7 @@ async fn optional_retention_has_a_diagnostic_and_required_retention_stops_overfl
         let result = fixture
             .run(ProviderConfig {
                 context_limit: 2048,
+                output_limit: 1024,
                 ..Default::default()
             })
             .await;

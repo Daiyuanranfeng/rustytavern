@@ -136,7 +136,7 @@ The `plugins.enabled` list in `config.toml` selects the installed plugins. Each 
 | `provider` | `provider/1` | `Arc<dyn ProviderAdapter>` | None. Always on. |
 | `store` | `store/1` | `Arc<dyn StoreBackend>` | None. Always on. |
 | `agent` | `driver/1` | `Arc<dyn ConversationDriver>` | The three driver capabilities |
-| `web` | `tools.web/1` | `agent::ToolSet` | `network:https:*` |
+| `web` | `tools.web/1` | `agent::ToolSet` | `network:https:*`, `prompt.contribute:before_history` |
 | `skills` | `tools.skills/1` | `agent::ToolSet` | `skills.read`, `prompt.contribute:before_history` |
 | `mcp` | `tools.mcp/1` | `agent::ToolSet` | `mcp.connect` |
 | `chub` | `card.source.chub/1` | `Arc<dyn CardSource>` | `network:https:api.chub.ai` |

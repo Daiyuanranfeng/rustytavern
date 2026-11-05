@@ -49,7 +49,7 @@ pub(crate) fn tools(composition: &CompositionLease) -> Result<ToolSet> {
 }
 
 /// The default limit of tool steps for one reply.
-pub const DEFAULT_MAX_STEPS: usize = 8;
+pub const DEFAULT_MAX_STEPS: usize = 32;
 
 /// The agent driver is the only built-in conversation driver.
 /// The loop calls the model and runs the requested tools through the host.

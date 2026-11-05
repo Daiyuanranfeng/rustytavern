@@ -14,6 +14,7 @@ use serde_json::{Value, json};
 use crate::{
     Error, Result,
     extension::Extension,
+    prompt::PromptOptions,
     provider::{CredentialResolver, ProviderConfig},
     store::StoreBackend,
 };
@@ -31,6 +32,9 @@ pub struct Configuration {
     pub default_provider: Option<String>,
     #[serde(skip_serializing_if = "BTreeMap::is_empty")]
     pub providers: BTreeMap<String, ProviderProfile>,
+    /// The prompt options for new chats. The `/adopt` command applies them to the open chat.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub prompt: Option<PromptOptions>,
     #[serde(skip_serializing_if = "PluginSettings::is_empty")]
     pub plugins: PluginSettings,
     #[serde(skip_serializing_if = "BTreeMap::is_empty")]

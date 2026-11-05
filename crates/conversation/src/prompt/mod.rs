@@ -10,14 +10,20 @@ use serde_json::Value;
 use rustytavern_card::{Card, WorldBook};
 use rustytavern_core::{Error, Message, Persona, Result, Role, digest};
 
+/// The `[prompt]` table of `config.toml` sets these options for new chats.
+/// The limits count estimated UTF-8 bytes.
 #[derive(Debug, Clone, Serialize, Deserialize)]
-#[serde(default)]
+#[serde(default, deny_unknown_fields)]
 pub struct PromptOptions {
     pub context_limit: usize,
     pub output_limit: usize,
     pub protocol_margin: usize,
     pub lore_budget: usize,
     pub example_budget: usize,
+    /// The maximum number of history messages in the prompt. The value 0 sets no count limit.
+    /// A saved session without this field keeps its configuration hash.
+    #[serde(skip_serializing_if = "is_zero")]
+    pub history_limit: usize,
     pub main_instruction: String,
     pub post_history_instruction: String,
     pub note: String,
@@ -26,17 +32,22 @@ pub struct PromptOptions {
 impl Default for PromptOptions {
     fn default() -> Self {
         Self {
-            context_limit: 16384,
-            output_limit: 1024,
+            context_limit: 131072,
+            output_limit: 8192,
             protocol_margin: 128,
-            lore_budget: 2048,
-            example_budget: 1024,
+            lore_budget: 32768,
+            example_budget: 8192,
+            history_limit: 0,
             main_instruction: "You act as {{char}}. You keep the character's identity and voice."
                 .into(),
             post_history_instruction: String::new(),
             note: String::new(),
         }
     }
+}
+
+fn is_zero(value: &usize) -> bool {
+    *value == 0
 }
 
 pub trait TokenCounter: Send + Sync {
@@ -685,7 +696,18 @@ fn build_core(input: &PromptInput<'_>, books: &[WorldBook]) -> Result<PromptPlan
         .map(|i| sections.remove(i));
     sections.extend(examples);
     let mut history_ids = Vec::new();
-    for node in *history {
+    let mut omissions = Vec::new();
+    let skip = match options.history_limit {
+        0 => 0,
+        limit => history.len().saturating_sub(limit),
+    };
+    for node in &history[..skip] {
+        omissions.push(Omission {
+            id: node.id.clone(),
+            reason: "history_limit".into(),
+        });
+    }
+    for node in &history[skip..] {
         history_ids.push(node.id.clone());
         sections.push(make(
             &format!("history:{}", node.id),
@@ -706,7 +728,7 @@ fn build_core(input: &PromptInput<'_>, books: &[WorldBook]) -> Result<PromptPlan
         sections,
         lore_ids,
         history_ids,
-        omissions: Vec::new(),
+        omissions,
         warnings,
         count_mode: counter.mode().to_owned(),
         input_units,

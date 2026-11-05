@@ -36,7 +36,7 @@ use tokio_util::sync::CancellationToken;
 enum Update {
     Command(Result<Vec<Value>>, After),
     Event(RuntimeEvent),
-    Finished(Result<Generation>),
+    Finished(Box<Result<Generation>>),
 }
 
 /// The flag records whether a dialog uses the alternate screen.
@@ -198,7 +198,7 @@ pub(super) async fn run(path: Option<PathBuf>) -> Result<()> {
                     match update {
                         Some(Update::Event(event)) => ui.event(event),
                         Some(Update::Command(result, after)) => { ui.complete(result, after); ui.busy = false; }
-                        Some(Update::Finished(result)) => { ui.finish(result); ui.busy = false; }
+                        Some(Update::Finished(result)) => { ui.finish(*result); ui.busy = false; }
                         None => return Err(Error::new("terminal_task", "The terminal operation ended without a result.")),
                     }
                     if !ui.busy && let Some(task) = job.take() { let _ = task.await; }
@@ -241,7 +241,7 @@ pub(super) async fn run(path: Option<PathBuf>) -> Result<()> {
                             }).collect();
                             let _ = sender.send(Update::Command(Ok(values), state::After::Models(providers))).await;
                         }
-                        state::Job::Generate { session, message, retry, mode } => { let result = generate(path, session, message, retry, mode, token, &sender).await; let _ = sender.send(Update::Finished(result)).await; }
+                        state::Job::Generate { session, message, retry, mode } => { let result = generate(path, session, message, retry, mode, token, &sender).await; let _ = sender.send(Update::Finished(Box::new(result))).await; }
                     }
                 }));
             }
