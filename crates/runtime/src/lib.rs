@@ -25,7 +25,7 @@ use driver::{ConversationDriver, DRIVER_CAPABILITIES, DriverContext, SingleReply
 use phases::{HookBinding, PhaseTrace, SavedEnrichment};
 use prompt::{ConservativeCounter, CoreProfile, PromptInput, PromptPlan, PromptProfile};
 use provider::{
-    AgentProviderStream, AgentRequest, CredentialResolver, EnvironmentCredentials, HttpProvider,
+    AgentProviderStream, AgentRequest, CredentialResolver, HttpProvider, NoCredentials,
     PreparedRequest, ProviderAdapter, ProviderConfig,
 };
 use session::{Generation, GenerationStatus, Role, Session, SessionConfiguration};
@@ -162,7 +162,7 @@ impl Runtime {
             profile: Arc::new(CoreProfile),
             decoder: Arc::new(CcDecoder),
             driver: Arc::new(SingleReplyDriver),
-            credentials: Arc::new(EnvironmentCredentials),
+            credentials: Arc::new(NoCredentials),
             registry: None,
             composition: None,
             hooks: Vec::new(),

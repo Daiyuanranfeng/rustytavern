@@ -96,13 +96,11 @@ impl Ui {
                 let providers = &app.config.providers;
                 let mut items: Vec<_> = super::forms::VENDORS
                     .iter()
-                    .map(|(id, variable, _, label, _)| {
+                    .map(|(id, _, label, _)| {
                         let status = if providers.contains_key(*id) {
-                            "✓ connected · select to replace the key".into()
-                        } else if std::env::var(variable).is_ok_and(|v| !v.trim().is_empty()) {
-                            format!("not connected · key found in {variable}")
+                            "✓ connected · select to replace the key"
                         } else {
-                            "not connected".into()
+                            "not connected"
                         };
                         (
                             format!("{label} · {status}"),

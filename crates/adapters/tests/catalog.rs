@@ -359,3 +359,31 @@ async fn streamed_byte_limits_and_pagination_cycles_fail() {
         .unwrap_err();
     assert_eq!(error.code, "invalid_model_catalog");
 }
+
+#[tokio::test]
+async fn key_check_rejects_an_invalid_key() {
+    let status = |line: &str| {
+        format!("HTTP/1.1 {line}\r\nContent-Length: 2\r\nConnection: close\r\n\r\n{{}}")
+    };
+    let (url, requests) = server(vec![status("200 OK"), status("401 Unauthorized")]).await;
+    let client = CatalogClient::default();
+    let openrouter = config(ProviderKind::OpenRouter);
+    client
+        .verify_key(&openrouter, &url, &Credentials)
+        .await
+        .unwrap();
+    assert!(requests.lock().unwrap()[0].contains("authorization: Bearer test-secret"));
+    let error = client
+        .verify_key(&openrouter, &url, &Credentials)
+        .await
+        .unwrap_err();
+    assert_eq!(error.code, "provider_auth");
+    let keyless = ProviderConfig {
+        api_key_env: None,
+        ..openrouter
+    };
+    client
+        .verify_key(&keyless, &url, &Credentials)
+        .await
+        .unwrap();
+}

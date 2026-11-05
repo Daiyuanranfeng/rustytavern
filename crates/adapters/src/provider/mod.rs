@@ -46,18 +46,14 @@ pub trait CredentialResolver: Send + Sync {
     fn resolve(&self, reference: &str) -> Result<String>;
 }
 
-pub struct EnvironmentCredentials;
-impl CredentialResolver for EnvironmentCredentials {
+/// The resolver has no keys. The application supplies the keys from `config.toml`.
+pub struct NoCredentials;
+impl CredentialResolver for NoCredentials {
     fn resolve(&self, reference: &str) -> Result<String> {
-        std::env::var(reference)
-            .ok()
-            .filter(|s| !s.trim().is_empty())
-            .ok_or_else(|| {
-                Error::new(
-                    "configuration",
-                    format!("The credential environment variable {reference} is unavailable."),
-                )
-            })
+        Err(Error::new(
+            "configuration",
+            format!("The credential {reference} is unavailable."),
+        ))
     }
 }
 

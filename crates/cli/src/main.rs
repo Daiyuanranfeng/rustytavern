@@ -316,8 +316,6 @@ enum ConfigCommand {
         model: String,
         #[arg(long)]
         endpoint: Option<String>,
-        #[arg(long)]
-        api_key_env: Option<String>,
         /// The command stores the key in config.toml.
         #[arg(long)]
         api_key: Option<String>,

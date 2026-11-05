@@ -239,6 +239,7 @@ async fn vendor_streams_and_failures_run_through_real_http() {
         let config = ProviderConfig {
             kind: serde_json::from_value(case["kind"].clone()).unwrap(),
             endpoint: Some(endpoint),
+            api_key_env: Some("config:test".into()),
             ..Default::default()
         };
         let request = HttpProvider
