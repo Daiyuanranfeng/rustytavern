@@ -120,6 +120,28 @@ impl Ui {
                 "Run a plugin command",
                 vec![field("Command name", ""), field("Arguments as JSON", "{}")],
             ),
+            FormKind::Edit(id) => {
+                let current = self.stored(|app, session| {
+                    let message = app
+                        .store
+                        .messages(session)?
+                        .into_iter()
+                        .find(|m| m.id == *id);
+                    Ok(message.map(|m| m.text))
+                });
+                let mut field = field("Text · the edit adds a new version", &current);
+                field
+                    .editor
+                    .set_wrap_mode(ratatui_textarea::WrapMode::WordOrGlyph);
+                ("Edit the message", vec![field])
+            }
+            FormKind::Rename => {
+                let current = self.stored(|app, session| Ok(app.store.session(session)?.title));
+                (
+                    "Rename this chat",
+                    vec![field("Name · empty removes it", &current)],
+                )
+            }
         };
         if let FormKind::Setup(vendor) = &kind {
             self.notice = VENDORS.iter().find(|v| v.0 == vendor).map_or_else(
@@ -133,6 +155,17 @@ impl Ui {
             fields,
             selected: 0,
         });
+    }
+    /// The method reads a text of the open chat. A missing chat or text gives an empty text.
+    fn stored(&self, read: impl FnOnce(&Application, &str) -> Result<Option<String>>) -> String {
+        let Some(session) = &self.preferences.session else {
+            return String::new();
+        };
+        Application::open(&self.path)
+            .and_then(|app| read(&app, session))
+            .ok()
+            .flatten()
+            .unwrap_or_default()
     }
     pub(super) fn submit(&mut self, kind: &FormKind, values: &[String]) -> Result<()> {
         let yes = |value: &str| match value.trim() {
@@ -289,6 +322,28 @@ impl Ui {
                     },
                 },
                 After::Request((!values[1].is_empty()).then(|| values[1].clone().into())),
+            ),
+            FormKind::Edit(id) => (
+                Command::Session {
+                    command: SessionCommand::Edit {
+                        session: self.active()?,
+                        at: id.clone(),
+                        input: MessageInput {
+                            message: Some(values[0].clone()),
+                            message_file: None,
+                        },
+                    },
+                },
+                After::Say("The edit is saved. The original stays as an alternative."),
+            ),
+            FormKind::Rename => (
+                Command::Session {
+                    command: SessionCommand::Rename {
+                        session: self.active()?,
+                        title: values[0].clone(),
+                    },
+                },
+                After::Say("The chat has the new name."),
             ),
             FormKind::Bind => (
                 Command::Plugin {

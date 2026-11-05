@@ -21,6 +21,12 @@ pub struct Session {
     pub options: crate::prompt::PromptOptions,
     #[serde(default)]
     pub composition: Value,
+    /// The user-visible chat name. An absent title shows the session ID.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub title: Option<String>,
+    /// The prompt omits these message IDs. The chat still shows them.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub hidden: Vec<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -213,6 +219,24 @@ pub enum GenerationStatus {
     Interrupted,
 }
 
+/// The mode selects the output of a generation.
+/// A reply adds an assistant message. A continuation replaces the last reply with a longer copy.
+/// An impersonation writes the next user message and stores no message.
+#[derive(Debug, Clone, Copy, Default, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum GenerationMode {
+    #[default]
+    Reply,
+    Continue,
+    Impersonate,
+}
+
+impl GenerationMode {
+    pub fn is_reply(&self) -> bool {
+        *self == Self::Reply
+    }
+}
+
 impl GenerationStatus {
     pub fn terminal(&self) -> bool {
         !matches!(self, Self::Prepared | Self::Streaming)
@@ -223,7 +247,10 @@ impl GenerationStatus {
 pub struct Generation {
     pub id: String,
     pub session_id: String,
+    /// A reply starts at this user node. A continuation or an impersonation starts at the head that it reads.
     pub user_node: String,
+    #[serde(default, skip_serializing_if = "GenerationMode::is_reply")]
+    pub mode: GenerationMode,
     pub status: GenerationStatus,
     pub draft: String,
     #[serde(default)]
@@ -399,6 +426,11 @@ impl SessionExport {
             .head
             .as_deref()
             .is_some_and(|id| !messages.contains_key(id))
+            || self
+                .session
+                .hidden
+                .iter()
+                .any(|id| !messages.contains_key(id.as_str()))
         {
             return Err(invalid());
         }
@@ -409,12 +441,17 @@ impl SessionExport {
                 || generation.session_id != self.session.id
                 || !messages
                     .get(generation.user_node.as_str())
-                    .is_some_and(|m| m.role == Role::User)
+                    .is_some_and(|m| match generation.mode {
+                        GenerationMode::Reply => m.role == Role::User,
+                        GenerationMode::Continue => m.role == Role::Assistant,
+                        GenerationMode::Impersonate => true,
+                    })
                 || (!self.includes_prompt_traces && generation.request.is_some())
             {
                 return Err(invalid());
             }
             if generation.status == GenerationStatus::Completed
+                && generation.mode != GenerationMode::Impersonate
                 && (!self.messages.iter().any(|m| {
                     m.generation_id.as_deref() == Some(&generation.id) && m.role == Role::Assistant
                 }) || (self.includes_prompt_traces && generation.request.is_none()))
@@ -454,12 +491,14 @@ impl SessionExport {
                 return Err(invalid());
             }
             if let Some(accepted) = &generation.accepted_message
-                && (!matches!(
-                    generation.status,
-                    GenerationStatus::Failed
-                        | GenerationStatus::Cancelled
-                        | GenerationStatus::Interrupted
-                ) || generation.draft.is_empty()
+                && (!generation.mode.is_reply()
+                    || !matches!(
+                        generation.status,
+                        GenerationStatus::Failed
+                            | GenerationStatus::Cancelled
+                            | GenerationStatus::Interrupted
+                    )
+                    || generation.draft.is_empty()
                     || !messages.get(accepted.as_str()).is_some_and(|m| {
                         m.role == Role::Assistant
                             && m.generation_id.as_ref() == Some(&generation.id)

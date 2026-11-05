@@ -274,6 +274,42 @@ enum SessionCommand {
         #[command(flatten)]
         input: MessageInput,
     },
+    /// The command extends the last reply. The original reply stays as an alternative.
+    Continue {
+        session: String,
+        #[arg(long)]
+        events: bool,
+    },
+    /// The command writes the next user message for the user. The chat stores no message.
+    Impersonate {
+        session: String,
+        #[arg(long)]
+        events: bool,
+    },
+    /// The command copies the branch that ends at a message into a new chat.
+    Fork {
+        session: String,
+        #[arg(long)]
+        at: String,
+    },
+    /// The command sets the chat name. An empty name removes it.
+    Rename {
+        session: String,
+        title: String,
+    },
+    /// The command deletes the chat and its history.
+    Delete {
+        session: String,
+    },
+    /// The command omits a message from the prompt. The chat still shows it.
+    Hide {
+        session: String,
+        #[arg(long)]
+        at: String,
+        /// The flag includes the message in the prompt again.
+        #[arg(long)]
+        show: bool,
+    },
     Rebind {
         session: String,
         #[arg(long)]

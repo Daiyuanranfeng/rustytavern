@@ -73,6 +73,8 @@ impl RuntimePlugin for Counter {
                         accept_reduced: false,
                         options: PromptOptions::default(),
                         composition: json!({"plugins":[{"manifest":self.manifest}]}),
+                        title: None,
+                        hidden: Vec::new(),
                     },
                     None,
                 )?;

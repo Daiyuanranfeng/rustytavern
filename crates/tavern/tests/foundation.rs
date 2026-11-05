@@ -31,6 +31,8 @@ fn session(store: &dyn StoreBackend) -> Session {
                 accept_reduced: false,
                 options: PromptOptions::default(),
                 composition: json!({}),
+                title: None,
+                hidden: Vec::new(),
             },
             Some("Hello, {{user}}."),
         )
@@ -43,6 +45,7 @@ fn submit<'a>(session: &'a Session, key: Option<&'a str>, now: i64) -> Submit<'a
         text: "Hello.",
         idempotency_key: key,
         retry_user: None,
+        mode: Default::default(),
         snapshot: json!({"persona":"Alex"}),
         now,
         lease_ms: 100,

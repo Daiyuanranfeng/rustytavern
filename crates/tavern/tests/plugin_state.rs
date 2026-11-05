@@ -106,6 +106,8 @@ fn session(store: &dyn StoreBackend) -> Session {
                 accept_reduced: false,
                 options: PromptOptions::default(),
                 composition: json!({"plugins":[{"manifest":{"id":ID}}]}),
+                title: None,
+                hidden: Vec::new(),
             },
             None,
         )
