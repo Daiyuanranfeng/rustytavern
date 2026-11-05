@@ -139,6 +139,8 @@ pub(super) struct Message {
 }
 pub(super) struct Ui {
     pub path: PathBuf,
+    /// The enabled extensions set the user and character bubble colors.
+    pub bubbles: [ratatui::style::Color; 2],
     pub preferences: Preferences,
     pub composer: TextArea<'static>,
     pub overlay: Option<Overlay>,
@@ -309,7 +311,9 @@ impl Ui {
                 "Use /provider, /character, /persona, then /new.".into(),
             )
         };
+        let theme = rustytavern::extension::Extensions::open(&path)?.theme()?;
         let mut ui = Self {
+            bubbles: super::view::bubbles(&theme),
             path,
             preferences,
             composer: editor(""),

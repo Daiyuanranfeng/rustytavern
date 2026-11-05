@@ -56,6 +56,10 @@ enum Command {
         #[command(subcommand)]
         command: PluginCommand,
     },
+    Extension {
+        #[command(subcommand)]
+        command: ExtensionCommand,
+    },
     Preset {
         #[command(subcommand)]
         command: PresetCommand,
@@ -348,6 +352,15 @@ enum PackageCommand {
         #[command(flatten)]
         input: CommandInput,
     },
+}
+/// An extension changes only the application appearance.
+#[derive(Subcommand)]
+enum ExtensionCommand {
+    Install { path: PathBuf },
+    List,
+    Enable { extension: String },
+    Disable { extension: String },
+    Uninstall { extension: String },
 }
 #[derive(Subcommand)]
 enum PluginCommand {

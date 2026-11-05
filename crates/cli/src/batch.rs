@@ -8,6 +8,7 @@ use rustytavern::{
     app::PackageManager,
     card::{Card, MAX_INPUT_BYTES},
     config::{Application, default_data_dir},
+    extension::Extensions,
     prompt::PromptOptions,
     provider::{ProviderConfig, ProviderKind},
     runtime::GenerationHandle,
@@ -243,6 +244,25 @@ async fn execute(
                 output.write(&result)?;
             }
         },
+        Command::Extension { command } => {
+            let extensions = Extensions::open(&app.data_dir)?;
+            match command {
+                ExtensionCommand::Install { path } => output.write(&extensions.install(&path)?)?,
+                ExtensionCommand::List => output.write(&extensions.list()?)?,
+                ExtensionCommand::Enable { extension } => {
+                    extensions.set_enabled(&extension, true)?;
+                    output.write(&json!({"enabled":extension}))?;
+                }
+                ExtensionCommand::Disable { extension } => {
+                    extensions.set_enabled(&extension, false)?;
+                    output.write(&json!({"disabled":extension}))?;
+                }
+                ExtensionCommand::Uninstall { extension } => {
+                    extensions.uninstall(&extension)?;
+                    output.write(&json!({"uninstalled":extension}))?;
+                }
+            }
+        }
         Command::Plugin { command } => match command {
             PluginCommand::Inspect { plugin, .. } => {
                 let mut records = registry

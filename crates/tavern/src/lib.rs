@@ -1,6 +1,7 @@
 //! RustyTavern supplies the assembled character runtime and product services.
 pub mod app;
 pub mod config;
+pub mod extension;
 pub use rustytavern_adapters::{provider, source};
 pub use rustytavern_card as card;
 pub use rustytavern_conversation as session;

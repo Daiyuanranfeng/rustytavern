@@ -182,9 +182,23 @@ fn bubble(body: Vec<Line<'static>>, width: usize, color: Color) -> Vec<Line<'sta
     lines
 }
 
+/// The function reads the bubble colors of a theme. An invalid color keeps its default.
+pub(super) fn bubbles(theme: &rustytavern::extension::Theme) -> [Color; 2] {
+    let color = |value: &Option<String>, default| {
+        value
+            .as_deref()
+            .and_then(|v| v.parse().ok())
+            .unwrap_or(default)
+    };
+    [
+        color(&theme.user_bubble, Color::Green),
+        color(&theme.assistant_bubble, Color::Cyan),
+    ]
+}
+
 fn message(
     lines: &mut Vec<Line<'static>>,
-    width: usize,
+    (width, colors): (usize, [Color; 2]),
     user: bool,
     label: &str,
     body: Vec<Line<'static>>,
@@ -192,7 +206,7 @@ fn message(
     if !lines.is_empty() {
         lines.push(Line::default());
     }
-    let color = if user { Color::Green } else { Color::Cyan };
+    let color = colors[usize::from(!user)];
     let alignment = if user {
         Alignment::Right
     } else {
@@ -275,7 +289,7 @@ fn conversation(ui: &Ui, width: u16) -> (Vec<Line<'static>>, Vec<(usize, usize)>
         }
         message(
             &mut lines,
-            width,
+            (width, ui.bubbles),
             item.user,
             &item.label,
             markdown(&item.text),
@@ -284,7 +298,7 @@ fn conversation(ui: &Ui, width: u16) -> (Vec<Line<'static>>, Vec<(usize, usize)>
     if !ui.outgoing.is_empty() {
         message(
             &mut lines,
-            width,
+            (width, ui.bubbles),
             true,
             &ui.names[1],
             markdown(&ui.outgoing),
@@ -303,7 +317,7 @@ fn conversation(ui: &Ui, width: u16) -> (Vec<Line<'static>>, Vec<(usize, usize)>
         {
             line.spans.push(Span::styled("▍", dim));
         }
-        message(&mut lines, width, false, &ui.names[0], body);
+        message(&mut lines, (width, ui.bubbles), false, &ui.names[0], body);
     }
     if let Some(failure) = &ui.failure {
         let style = Style::default().fg(Color::Red);
