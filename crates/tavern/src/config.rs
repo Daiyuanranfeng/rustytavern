@@ -7,7 +7,11 @@ use std::{
 
 use serde::{Deserialize, Serialize};
 
-use crate::{Error, Result, provider::ProviderConfig, store::StoreBackend};
+use crate::{
+    Error, Result,
+    provider::{CredentialResolver, EnvironmentCredentials, ProviderConfig},
+    store::StoreBackend,
+};
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(default)]
@@ -77,6 +81,52 @@ impl Configuration {
         std::fs::write(&temp, bytes)?;
         std::fs::rename(&temp, path)?;
         Ok(())
+    }
+}
+
+/// The resolver reads `stored:NAME` references from `credentials.json` and other references from the environment.
+pub struct StoredCredentials(PathBuf);
+impl StoredCredentials {
+    pub fn new(data_dir: &Path) -> Self {
+        Self(data_dir.join("credentials.json"))
+    }
+    fn load(&self) -> Result<BTreeMap<String, String>> {
+        match std::fs::read(&self.0) {
+            Ok(bytes) => Ok(serde_json::from_slice(&bytes)?),
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(BTreeMap::new()),
+            Err(error) => Err(error.into()),
+        }
+    }
+    /// The method writes the key with owner-only permissions and returns its reference.
+    pub fn save(&self, name: &str, key: &str) -> Result<String> {
+        use std::io::Write;
+        let mut keys = self.load()?;
+        keys.insert(name.into(), key.trim().into());
+        let temp = self
+            .0
+            .with_extension(format!("{}.tmp", uuid::Uuid::new_v4()));
+        let mut options = std::fs::OpenOptions::new();
+        options.write(true).create_new(true);
+        #[cfg(unix)]
+        std::os::unix::fs::OpenOptionsExt::mode(&mut options, 0o600);
+        options
+            .open(&temp)?
+            .write_all(&serde_json::to_vec(&keys)?)?;
+        std::fs::rename(&temp, &self.0)?;
+        Ok(format!("stored:{name}"))
+    }
+}
+impl CredentialResolver for StoredCredentials {
+    fn resolve(&self, reference: &str) -> Result<String> {
+        match reference.strip_prefix("stored:") {
+            Some(name) => self.load()?.remove(name).ok_or_else(|| {
+                Error::new(
+                    "configuration",
+                    "The stored API key is unavailable. Use /setup.",
+                )
+            }),
+            None => EnvironmentCredentials.resolve(reference),
+        }
     }
 }
 
