@@ -227,11 +227,9 @@ The prepared request records these logical-to-wire transformations.
 
 The stream must contain a terminal success signal before the runtime commits an assistant node. The runtime keeps partial output when a provider reports a limit or a failure.
 The runtime saves usage before it emits a usage event. The runtime retains that usage after cancellation or stream failure.
-The adapter never treats premature connection closure as success. The Chat Completions adapters reject content values other than text or null.
-The Responses adapter rejects tool output items. The Messages adapter rejects tool content blocks and tool input deltas.
-The Messages adapter retains initial text from a text block. The Gemini adapter requires a parts array when a candidate contains content.
-The adapters exclude recognized reasoning content from the character reply. The [Responses stream reference](https://developers.openai.com/api/reference/resources/responses/streaming-events) defines output item events.
-The [Messages stream reference](https://platform.claude.com/docs/en/build-with-claude/streaming) defines content block events.
+The adapter never treats premature connection closure as success.
+The [`genai`](https://crates.io/crates/genai) library parses each wire protocol. The library ignores malformed content values and malformed tool items.
+The library excludes recognized reasoning content from the character reply. The adapter reports usage in one shape for every protocol.
 
 ### Error classification
 
@@ -241,8 +239,8 @@ The Gemini signature requires `INVALID_ARGUMENT` and an input-token overflow mes
 HTTP 401 and 403 retain `provider_auth` without an error-body read. HTTP 402 retains `provider_credit`.
 HTTP 429 retains `provider_rate_limit`. HTTP 413 retains `context_exceeded`.
 
-The stream classifier recognizes context, authentication, and rate-limit error markers. The Responses classifier also reads the nested `response.error` object.
-The Messages classifier maps `model_context_window_exceeded` to `context_exceeded`. The runtime retains earlier text and usage after these failures.
+The stream classifier recognizes context, authentication, and rate-limit error markers. The library does not keep the error code of a Responses `response.failed` event.
+The adapter reports that event as `invalid_provider_stream`. The runtime retains earlier text and usage after these failures.
 The adapter excludes raw error-body text from the public error. The public error retains the HTTP status or the normalized stream category.
 
 Cancellation closes an unfinished error-body read. The configured `timeout_seconds` value also bounds the host driver phase.
@@ -304,8 +302,17 @@ The live fetch returns 698 models for its recorded run. Integrated CLI and termi
 
 ## Provider tool transport
 
-The [agent module](../crates/adapters/src/provider/agent.rs) supplies typed tool-call transport for OpenRouter and custom Chat Completions. `ProviderAdapter::prepare_agent` prepares definitions and continuation turns.
-`ProviderAdapter::open_agent_stream` returns normalized text, tool calls, usage, and terminal events. The [typed records](../crates/conversation/src/provider.rs) define `ToolDefinition`, `ToolCall`, `ToolResult`, `AgentTurn`, and `AgentRequest`.
-Seventeen provider tests pass. Native OpenAI, Anthropic, and Gemini protocols reject this agent contract.
-The existing text path still rejects tool output. The runtime does not execute tools or run a multi-request agent loop.
-MCP and skills remain pending.
+The [provider module](../crates/adapters/src/provider/mod.rs) has three parts:
+- [`request.rs`](../crates/adapters/src/provider/request.rs) builds one protocol-neutral `ChatBody` from the prompt plan. `PreparedRequest::body` stores that body.
+- [`tools.rs`](../crates/adapters/src/provider/tools.rs) checks tool definitions, continuation turns, and returned calls.
+- [`client.rs`](../crates/adapters/src/provider/client.rs) sends the body through the `genai` library and maps its events and errors.
+
+`ProviderAdapter::prepare_agent` adds definitions and continuation turns. `ProviderAdapter::open_agent_stream` returns text, tool calls, usage, and terminal events.
+The [typed records](../crates/conversation/src/provider.rs) define `ToolDefinition`, `ToolCall`, `ToolResult`, `AgentTurn`, and `AgentRequest`.
+The library maps tools and continuation turns to each protocol. A call without arguments receives an empty object.
+
+The ignored `live_providers` test sends text and tool conversations to OpenRouter models:
+
+```sh
+OPENROUTER_API_KEY=... cargo test -p rustytavern --test live_providers -- --ignored --nocapture
+```

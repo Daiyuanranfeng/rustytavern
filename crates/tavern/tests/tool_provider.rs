@@ -95,11 +95,11 @@ fn chunk(delta: Value, reason: Value) -> String {
 fn frames() -> Vec<String> {
     vec![
         chunk(
-            json!({"tool_calls":[{"index":0,"id":"call_1","type":"function","function":{"name":"look","arguments":"{\"key\":"}},{"index":1,"id":"call_2","type":"function","function":{"name":"lookup","arguments":"{"}}]}),
+            json!({"tool_calls":[{"index":0,"id":"call_1","type":"function","function":{"name":"lookup","arguments":"{\"key\":"}},{"index":1,"id":"call_2","type":"function","function":{"name":"lookup","arguments":"{"}}]}),
             Value::Null,
         ),
         chunk(
-            json!({"tool_calls":[{"index":0,"function":{"name":"up","arguments":"\"a\"}"}},{"index":1,"function":{"arguments":"\"key\":\"b\"}"}}]}),
+            json!({"tool_calls":[{"index":0,"function":{"arguments":"\"a\"}"}},{"index":1,"function":{"arguments":"\"key\":\"b\"}"}}]}),
             Value::Null,
         ),
         chunk(json!({}), json!("tool_calls")),
@@ -153,42 +153,70 @@ async fn http_stream_emits_complete_calls_and_preserves_continuation_ids() {
     assert_eq!(request.body["messages"][1]["tool_call_id"], "call_1");
     assert_eq!(request.body["messages"][2]["tool_call_id"], "call_2");
 }
-#[test]
-fn normalizer_holds_calls_until_done_and_rejects_bad_calls() {
-    let mut normalizer = AgentStreamNormalizer::new(ProviderKind::Custom, true);
-    for frame in &frames()[..4] {
-        assert!(
-            !normalizer
-                .frame(frame)
-                .unwrap()
-                .iter()
-                .any(|e| matches!(e, AgentProviderEvent::ToolCalls { .. }))
-        );
-    }
-    assert!(matches!(
-        normalizer.frame("[DONE]").unwrap()[0],
-        AgentProviderEvent::ToolCalls { .. }
-    ));
+/// The function streams the frames through a mock server and returns the events and the wire body.
+async fn stream(
+    kind: ProviderKind,
+    agent: &AgentRequest,
+    frames: &[String],
+) -> (Vec<rustytavern::Result<AgentProviderEvent>>, Value) {
+    // Anthropic names each event in the SSE event field.
+    let body = frames
+        .iter()
+        .map(|f| {
+            match serde_json::from_str::<Value>(f)
+                .ok()
+                .and_then(|v| v["type"].as_str().map(str::to_owned))
+            {
+                Some(kind) => format!("event: {kind}\ndata: {f}\n\n"),
+                None => format!("data: {f}\n\n"),
+            }
+        })
+        .collect();
+    let (endpoint, received, server) = mock(body, "200 OK");
+    let mut config = config(endpoint);
+    config.kind = kind;
+    config.api_key_env = Some("KEY".into());
+    let request = prepare_agent(&config, agent).unwrap();
+    let events = match HttpProvider
+        .open_agent_stream(request, &TestCredentials, CancellationToken::new())
+        .await
+    {
+        Ok(stream) => stream.collect().await,
+        Err(error) => vec![Err(error)],
+    };
+    let wire = received.recv().unwrap();
+    server.join().unwrap();
+    (events, wire)
+}
+fn failure(events: &[rustytavern::Result<AgentProviderEvent>]) -> Option<&str> {
+    events.iter().find_map(|event| match event {
+        Err(error) | Ok(AgentProviderEvent::Failure { error }) => Some(error.code.as_str()),
+        _ => None,
+    })
+}
+#[tokio::test]
+async fn http_rejects_bad_calls_and_streams_without_a_finish() {
     for delta in [
-        json!({"tool_calls":[{"index":32}]}),
         json!({"tool_calls":[{"index":0,"id":"a","function":{"name":"lookup","arguments":"{"}}]}),
         json!({"tool_calls":[{"index":0,"id":"a","function":{"name":"lookup","arguments":"[]"}}]}),
-        json!({"tool_calls":[{"index":0,"id":"a","function":{"name":"lookup","arguments":"{}"}},{"index":1,"id":"a","function":{"name":"lookup","arguments":"{}"}}]}),
+        json!({"tool_calls":[{"index":0,"id":"a","function":{"name":"lookup","arguments":"{\"key\":\"x\"}"}},{"index":1,"id":"a","function":{"name":"lookup","arguments":"{\"key\":\"y\"}"}}]}),
         json!({"tool_calls":[{"index":0,"id":"a","function":{"name":"lookup","arguments":"x".repeat(65537)}}]}),
     ] {
-        let mut n = AgentStreamNormalizer::new(ProviderKind::Custom, true);
-        let result = n
-            .frame(&chunk(delta, Value::Null))
-            .and_then(|_| n.frame(&chunk(json!({}), json!("tool_calls"))))
-            .and_then(|_| n.frame("[DONE]"));
-        assert!(result.is_err());
+        let frames = [
+            chunk(delta, Value::Null),
+            chunk(json!({}), json!("tool_calls")),
+            "[DONE]".into(),
+        ];
+        let (events, _) = stream(ProviderKind::Custom, &agent(), &frames).await;
+        assert_eq!(failure(&events), Some("invalid_provider_tool"));
     }
-    let mut n = AgentStreamNormalizer::new(ProviderKind::Custom, true);
-    n.frame(&frames()[0]).unwrap();
-    assert!(n.frame("[DONE]").is_err());
-    let mut n = AgentStreamNormalizer::new(ProviderKind::Custom, true);
-    n.frame(&chunk(json!({}), json!("stop"))).unwrap();
-    assert!(n.frame(&frames()[0]).is_err());
+    let (events, _) = stream(
+        ProviderKind::Custom,
+        &agent(),
+        &[frames()[0].clone(), "[DONE]".into()],
+    )
+    .await;
+    assert_eq!(failure(&events), Some("incomplete_stream"));
 }
 fn turn(result_id: &str) -> AgentTurn {
     AgentTurn {
@@ -206,7 +234,7 @@ fn turn(result_id: &str) -> AgentTurn {
     }
 }
 #[test]
-fn native_protocols_encode_tools_and_continuations() {
+fn agent_requests_keep_one_chat_shape_and_check_results() {
     let mut request = agent();
     request.continuation.push(turn("a"));
     for (kind, contract) in [
@@ -218,39 +246,13 @@ fn native_protocols_encode_tools_and_continuations() {
         config.kind = kind;
         let request = prepare_agent(&config, &request).unwrap();
         assert_eq!(request.contract_id, contract);
-        let body = &request.body;
-        match kind {
-            ProviderKind::OpenAi => {
-                assert_eq!(body["tools"][0]["name"], "lookup");
-                assert_eq!(body["tools"][0]["strict"], false);
-                let input = body["input"].as_array().unwrap();
-                assert_eq!(input[input.len() - 2]["type"], "function_call");
-                assert_eq!(input[input.len() - 1]["call_id"], "a");
-                assert_eq!(input[input.len() - 1]["output"], "found");
-            }
-            ProviderKind::Anthropic => {
-                assert!(body["tools"][0]["input_schema"].is_object());
-                let messages = body["messages"].as_array().unwrap();
-                let call = &messages[messages.len() - 2]["content"][0];
-                assert_eq!(call["type"], "tool_use");
-                assert_eq!(call["input"], json!({"key":"x"}));
-                let result = &messages[messages.len() - 1]["content"][0];
-                assert_eq!(result["tool_use_id"], "a");
-            }
-            _ => {
-                assert_eq!(
-                    body["tools"][0]["functionDeclarations"][0]["name"],
-                    "lookup"
-                );
-                let contents = body["contents"].as_array().unwrap();
-                let call = &contents[contents.len() - 2]["parts"][0];
-                assert_eq!(call["functionCall"]["args"], json!({"key":"x"}));
-                assert_eq!(call["thoughtSignature"], "sig");
-                let result = &contents[contents.len() - 1]["parts"][0]["functionResponse"];
-                assert_eq!(result["name"], "lookup");
-                assert_eq!(result["response"]["result"], "found");
-            }
-        }
+        assert_eq!(request.body["tools"][0]["name"], "lookup");
+        let messages = request.body["messages"].as_array().unwrap();
+        assert_eq!(
+            messages[messages.len() - 2]["tool_calls"][0]["signature"],
+            "sig"
+        );
+        assert_eq!(messages[messages.len() - 1]["tool_call_id"], "a");
     }
     let mut agent = agent();
     agent.continuation.push(turn("b"));
@@ -260,18 +262,21 @@ fn native_protocols_encode_tools_and_continuations() {
 fn native_frames(kind: ProviderKind) -> Vec<Value> {
     match kind {
         ProviderKind::OpenAi => vec![
-            json!({"type":"response.output_item.added","output_index":0,"item":{"type":"function_call","call_id":"call_1","name":"lookup","arguments":""}}),
-            json!({"type":"response.function_call_arguments.delta","output_index":0,"delta":"{\"key\":"}),
-            json!({"type":"response.function_call_arguments.delta","output_index":0,"delta":"\"a\"}"}),
-            json!({"type":"response.completed","response":{"status":"completed","usage":{"total_tokens":3}}}),
+            json!({"type":"response.output_item.added","output_index":0,"item":{"type":"function_call","id":"fc_1","call_id":"call_1","name":"lookup","arguments":""}}),
+            json!({"type":"response.function_call_arguments.delta","output_index":0,"item_id":"fc_1","delta":"{\"key\":"}),
+            json!({"type":"response.function_call_arguments.delta","output_index":0,"item_id":"fc_1","delta":"\"a\"}"}),
+            json!({"type":"response.output_item.done","output_index":0,"item":{"type":"function_call","id":"fc_1","call_id":"call_1","name":"lookup","arguments":"{\"key\":\"a\"}"}}),
+            json!({"type":"response.completed","response":{"id":"resp_1","model":"fixture","status":"completed","usage":{"input_tokens":1,"output_tokens":2,"total_tokens":3}}}),
         ],
         ProviderKind::Anthropic => vec![
             json!({"type":"message_start","message":{"usage":{"input_tokens":3}}}),
-            json!({"type":"content_block_start","index":0,"content_block":{"type":"text","text":"Look."}}),
+            json!({"type":"content_block_start","index":0,"content_block":{"type":"text","text":""}}),
+            json!({"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"Look."}}),
+            json!({"type":"content_block_stop","index":0}),
             json!({"type":"content_block_start","index":1,"content_block":{"type":"tool_use","id":"call_1","name":"lookup","input":{}}}),
             json!({"type":"content_block_delta","index":1,"delta":{"type":"input_json_delta","partial_json":"{\"key\":\"a\"}"}}),
             json!({"type":"content_block_stop","index":1}),
-            json!({"type":"message_delta","delta":{"stop_reason":"tool_use"}}),
+            json!({"type":"message_delta","delta":{"stop_reason":"tool_use"},"usage":{"output_tokens":2}}),
             json!({"type":"message_stop"}),
         ],
         _ => vec![
@@ -281,29 +286,20 @@ fn native_frames(kind: ProviderKind) -> Vec<Value> {
     }
 }
 #[tokio::test]
-async fn http_native_streams_emit_tool_calls() {
+async fn http_native_streams_emit_tool_calls_and_send_native_continuations() {
+    let mut request = agent();
+    request.continuation.push(turn("a"));
     for kind in [
         ProviderKind::OpenAi,
         ProviderKind::Anthropic,
         ProviderKind::Gemini,
     ] {
-        let body = native_frames(kind)
+        let frames = native_frames(kind)
             .iter()
-            .map(|f| format!("data: {f}\n\n"))
-            .collect();
-        let (endpoint, received, server) = mock(body, "200 OK");
-        let mut config = config(endpoint);
-        config.kind = kind;
-        config.api_key_env = Some("KEY".into());
-        let request = prepare_agent(&config, &agent()).unwrap();
-        let mut stream = HttpProvider
-            .open_agent_stream(request, &TestCredentials, CancellationToken::new())
-            .await
-            .unwrap();
-        let mut events = vec![];
-        while let Some(event) = stream.next().await {
-            events.push(event.unwrap());
-        }
+            .map(Value::to_string)
+            .collect::<Vec<_>>();
+        let (events, wire) = stream(kind, &request, &frames).await;
+        let events = events.into_iter().map(Result::unwrap).collect::<Vec<_>>();
         let [
             ..,
             AgentProviderEvent::ToolCalls { calls },
@@ -315,56 +311,42 @@ async fn http_native_streams_emit_tool_calls() {
         assert_eq!(calls.len(), 1);
         assert_eq!(calls[0].name, "lookup");
         assert_eq!(calls[0].arguments, json!({"key":"a"}));
-        if kind == ProviderKind::Gemini {
-            assert!(calls[0].id.starts_with("gemini_"));
-            assert_eq!(calls[0].signature.as_deref(), Some("sig"));
-        } else {
-            assert_eq!(calls[0].id, "call_1");
+        assert!(!calls[0].id.is_empty());
+        let wire = wire.to_string();
+        for term in match kind {
+            ProviderKind::OpenAi => ["function_call", "function_call_output", "call_id"],
+            ProviderKind::Anthropic => ["tool_use", "tool_result", "input_schema"],
+            _ => ["functionCall", "functionResponse", "functionDeclarations"],
+        } {
+            assert!(
+                wire.contains(term),
+                "The {kind:?} request lacks {term}: {wire}"
+            );
         }
-        received.recv().unwrap();
-        server.join().unwrap();
     }
 }
-#[test]
-fn native_streams_reject_bad_calls() {
-    let mut n = AgentStreamNormalizer::new(ProviderKind::Anthropic, true);
-    let stop = json!({"type":"message_delta","delta":{"stop_reason":"tool_use"}});
-    assert!(n.frame(&stop.to_string()).is_err());
-    let mut n = AgentStreamNormalizer::new(ProviderKind::Anthropic, true);
-    let frames = native_frames(ProviderKind::Anthropic);
-    n.frame(&frames[2].to_string()).unwrap();
-    let end = json!({"type":"message_delta","delta":{"stop_reason":"end_turn"}});
-    assert!(n.frame(&end.to_string()).is_err());
-    let mut n = AgentStreamNormalizer::new(ProviderKind::OpenAi, true);
-    let delta = native_frames(ProviderKind::OpenAi)[1].to_string();
-    assert!(n.frame(&delta).is_err());
-    let mut n = AgentStreamNormalizer::new(ProviderKind::OpenAi, true);
-    let added = native_frames(ProviderKind::OpenAi)[0].to_string();
-    n.frame(&added).unwrap();
-    assert!(n.frame(&added).is_err());
+#[tokio::test]
+async fn http_tool_finish_without_calls_fails() {
+    let frames = [
+        json!({"type":"message_start","message":{"usage":{"input_tokens":3}}}),
+        json!({"type":"message_delta","delta":{"stop_reason":"tool_use"}}),
+        json!({"type":"message_stop"}),
+    ]
+    .map(|f| f.to_string());
+    let (events, _) = stream(ProviderKind::Anthropic, &agent(), &frames).await;
+    assert_eq!(failure(&events), Some("unsupported_provider_output"));
 }
 #[tokio::test]
 async fn http_missing_terminal_error_and_cancellation_fail() {
-    for (body, code) in [
-        (format!("data: {}\n\n", frames()[0]), "incomplete_stream"),
+    for (frames, code) in [
+        (vec![frames()[0].clone()], "incomplete_stream"),
         (
-            "data: {\"error\":{\"code\":\"rate_limit_exceeded\"}}\n\n".into(),
+            vec!["{\"error\":{\"code\":\"rate_limit_exceeded\"}}".into()],
             "provider_rate_limit",
         ),
     ] {
-        let (endpoint, received, server) = mock(body, "200 OK");
-        let request = prepare_agent(&config(endpoint), &agent()).unwrap();
-        let mut stream = HttpProvider
-            .open_agent_stream(request, &TestCredentials, CancellationToken::new())
-            .await
-            .unwrap();
-        let event = stream.next().await.unwrap();
-        match event {
-            Err(error) | Ok(AgentProviderEvent::Failure { error }) => assert_eq!(error.code, code),
-            _ => panic!("The stream must fail."),
-        }
-        received.recv().unwrap();
-        server.join().unwrap();
+        let (events, _) = stream(ProviderKind::Custom, &agent(), &frames).await;
+        assert_eq!(failure(&events), Some(code));
     }
     let cancellation = CancellationToken::new();
     cancellation.cancel();
@@ -385,27 +367,21 @@ async fn http_rejects_unknown_tools_and_invalid_argument_values() {
         ("lookup", "{\"key\":2}"),
         ("lookup", "{}"),
     ] {
-        let body = [
-            chunk(json!({"tool_calls":[{"index":0,"id":"a","type":"function","function":{"name":name,"arguments":arguments}}]}), Value::Null),
-            chunk(json!({}), json!("tool_calls")), "[DONE]".into(),
-        ].iter().map(|f| format!("data: {f}\n\n")).collect();
-        let (endpoint, received, server) = mock(body, "200 OK");
-        let request = prepare_agent(&config(endpoint), &agent()).unwrap();
-        let mut stream = HttpProvider
-            .open_agent_stream(request, &TestCredentials, CancellationToken::new())
-            .await
-            .unwrap();
-        assert_eq!(
-            stream.next().await.unwrap().unwrap_err().code,
-            "invalid_provider_tool"
-        );
-        received.recv().unwrap();
-        server.join().unwrap();
+        let frames = [
+            chunk(
+                json!({"tool_calls":[{"index":0,"id":"a","type":"function","function":{"name":name,"arguments":arguments}}]}),
+                Value::Null,
+            ),
+            chunk(json!({}), json!("tool_calls")),
+            "[DONE]".into(),
+        ];
+        let (events, _) = stream(ProviderKind::Custom, &agent(), &frames).await;
+        assert_eq!(failure(&events), Some("invalid_provider_tool"));
     }
 }
 
 #[test]
-fn schemas_mixed_output_and_duplicate_ids_fail() {
+fn invalid_schemas_fail() {
     for schema in [
         json!({"type":"object","properties":{"x":{"type":"bad"}}}),
         json!({"type":"object","required":["missing"]}),
@@ -416,40 +392,48 @@ fn schemas_mixed_output_and_duplicate_ids_fail() {
         let config = config("http://127.0.0.1:1".into());
         assert!(prepare_agent(&config, &agent).is_err());
     }
-    for delta in [
-        json!({"audio":{}}),
-        json!({"function_call":{}}),
-        json!({"refusal":"No"}),
-    ] {
-        let mut n = AgentStreamNormalizer::new(ProviderKind::Custom, true);
-        assert!(n.frame(&chunk(delta, Value::Null)).is_err());
-    }
-    let mut n = AgentStreamNormalizer::new(ProviderKind::Custom, true);
-    n.frame(&frames()[0]).unwrap();
-    assert!(
-        n.frame(&chunk(
-            json!({"tool_calls":[{"index":0,"id":"other"}]}),
-            Value::Null
-        ))
-        .is_err()
-    );
 }
 
-#[test]
-fn normalizer_ignores_provider_metadata_in_text_deltas() {
-    let mut n = AgentStreamNormalizer::new(ProviderKind::Custom, true);
-    let delta = json!({"role":"assistant","content":"Hi","refusal":null,"reasoning":"Plan.","reasoning_details":[]});
+#[tokio::test]
+async fn http_text_ignores_provider_metadata_and_the_openrouter_usage_chunk() {
+    let end = json!({"content":"","role":"assistant","reasoning":null});
+    let usage = json!({"choices":[{"index":0,"delta":end,"finish_reason":"stop"}],"usage":{"total_tokens":9}});
+    let frames = [
+        chunk(
+            json!({"role":"assistant","content":"Hi","refusal":null,"reasoning":"Plan.","reasoning_details":[]}),
+            Value::Null,
+        ),
+        chunk(end.clone(), json!("stop")),
+        usage.to_string(),
+        "[DONE]".into(),
+    ];
+    let (events, _) = stream(ProviderKind::OpenRouter, &agent(), &frames).await;
+    let events = events.into_iter().map(Result::unwrap).collect::<Vec<_>>();
     assert!(
-        n.frame(&chunk(delta, Value::Null))
-            .unwrap()
-            .iter()
-            .any(|e| matches!(e, AgentProviderEvent::Text { text } if text == "Hi"))
+        matches!(
+            &events[..],
+            [
+                AgentProviderEvent::Text { text },
+                AgentProviderEvent::Usage { usage },
+                AgentProviderEvent::Complete
+            ] if text == "Hi" && usage["total_tokens"] == 9
+        ),
+        "{events:?}"
     );
-    n.frame(&chunk(json!({}), json!("stop"))).unwrap();
-    assert!(matches!(
-        n.frame("[DONE]").unwrap()[..],
-        [AgentProviderEvent::Complete]
-    ));
+    let frames = [
+        chunk(
+            json!({"tool_calls":[{"index":0,"id":"a","function":{"name":"lookup","arguments":"{\"key\":\"x\"}"}}]}),
+            Value::Null,
+        ),
+        chunk(end.clone(), json!("tool_calls")),
+        usage.to_string().replace("\"stop\"", "\"tool_calls\""),
+        "[DONE]".into(),
+    ];
+    let (events, _) = stream(ProviderKind::OpenRouter, &agent(), &frames).await;
+    assert!(
+        matches!(events.last(), Some(Ok(AgentProviderEvent::Complete))),
+        "{events:?}"
+    );
 }
 
 #[tokio::test]

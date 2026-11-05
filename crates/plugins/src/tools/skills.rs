@@ -19,7 +19,7 @@ use rustytavern_core::{Role, bounded_read, checked_file, valid_id};
 const MAX_SKILLS: usize = 128;
 const MAX_SKILL_BYTES: usize = 256 * 1024;
 
-/// The `tools.skills` plugin registers `skill` and adds the skill catalog to the prompt.
+/// The `tools.skills` plugin registers `read_skill` and adds the skill catalog to the prompt.
 /// The `paths` configuration lists the directories that hold skill directories.
 pub(crate) fn activate(context: &mut PluginContext, configuration: &Value) -> Result<()> {
     context.authorize("skills.read")?;
@@ -97,7 +97,7 @@ impl Skills {
             .collect::<Vec<_>>()
             .join("\n");
         format!(
-            "Skill catalog. A skill is a reusable procedure. Call the skill tool to read a skill before you do a task that it covers.\n{list}"
+            "Skill catalog. A skill is a reusable procedure. Call the read_skill tool to read a skill before you do a task that it covers.\n{list}"
         )
     }
 }
@@ -105,7 +105,7 @@ impl Skills {
 impl AgentTool for Skills {
     fn definition(&self) -> ToolDefinition {
         definition(
-            "skill",
+            "read_skill",
             "Read one skill from the skill catalog.",
             json!({"type":"object","properties":{"name":{"type":"string","enum":self.0.keys().collect::<Vec<_>>()},"path":{"type":"string","description":"A file inside the skill directory. Omit it to read SKILL.md."}},"required":["name"],"additionalProperties":false}),
         )

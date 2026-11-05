@@ -259,7 +259,11 @@ fn cli_import_prompt_chat_resume_regenerate_branch_and_export_work() {
     );
     let requests = task.join().unwrap();
     assert_eq!(requests.len(), 2);
-    assert_eq!(inspected["prepared"]["body"], requests[0]);
+    // The prepared body is protocol-neutral. The library sends the same messages in the wire format.
+    assert_eq!(
+        inspected["prepared"]["body"]["messages"],
+        requests[0]["messages"]
+    );
     assert_eq!(
         requests[0]["messages"].as_array().unwrap().last().unwrap()["content"],
         "Hello."
