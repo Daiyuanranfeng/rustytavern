@@ -4,7 +4,7 @@ The crate coordinates durable character generations.
 
 ## Interface
 
-`Runtime`, `GenerationHandle`, `CompiledRequest`, runtime events, and `driver::ConversationDriver`.
+`Runtime`, `GenerationHandle`, `CompiledRequest`, runtime events, `driver::ConversationDriver`, and `agent::AgentDriver`.
 
 ## Design
 
@@ -12,7 +12,7 @@ The runtime freezes inputs and plugin composition. The runtime saves the request
 
 ## Dependencies
 
-The crate depends on plugin contracts, model providers, prompt compilation, and storage contracts. The product extension layer depends on this crate.
+The crate depends on plugin contracts, model providers, prompt compilation, and storage contracts. The plugin crate and the product library depend on this crate.
 The [workspace guide](../../docs/architecture.md#workspace-boundaries) records the complete graph.
 
 ## Verification

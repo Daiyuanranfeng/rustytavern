@@ -553,8 +553,8 @@
           "properties": {
             "kind": {
               "enum": [
-                "open_router",
-                "open_ai",
+                "openrouter",
+                "openai",
                 "anthropic",
                 "gemini",
                 "custom"

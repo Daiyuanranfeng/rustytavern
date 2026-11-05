@@ -17,11 +17,11 @@ The existing command surface remains available for scripts.
 | `/new` | The user starts a chat and selects the first greeting. |
 | `/chats` | The user resumes a saved chat. |
 | `/retry` | The user regenerates the last reply. |
-| `/settings` | The user opens lorebooks, branches, export, request inspection, configuration adoption, advanced provider settings, extensions, plugins, and the configuration view. |
+| `/settings` | The user opens lorebooks, branches, export, request inspection, configuration adoption, advanced provider settings, plugins, and the configuration view. |
 | `/help` | The user reads the command and key reference. |
 | `/quit` | The user closes the terminal. |
 
-The names `/setup`, `/sessions`, and `/models` remain aliases. The `/settings` items also accept direct names: `/worldbook`, `/branch`, `/export`, `/prompt`, `/adopt`, `/profile`, `/extensions`, `/plugins`, and `/config`.
+The names `/setup`, `/sessions`, and `/models` remain aliases. The `/settings` items also accept direct names: `/worldbook`, `/branch`, `/export`, `/prompt`, `/adopt`, `/profile`, `/plugins`, and `/config`.
 
 The composer sends ordinary text to the active conversation. A command popup opens when the composer starts with `/`.
 Up and Down select a command in the popup. Tab completes the selected command. Enter or a click runs it.
@@ -45,7 +45,7 @@ The terminal builds steps from the `reasoning_delta`, `tool_call`, and `tool_res
 
 A drag over the transcript selects text. The release copies the text through OSC 52 and, on macOS, `pbcopy`.
 
-A chat pins its provider settings and extensions. A changed setup stops the next reply. The terminal then offers `/adopt` and keeps the unsent message in the composer.
+A chat pins its provider settings and plugins. A changed setup stops the next reply. The terminal then offers `/adopt` and keeps the unsent message in the composer.
 
 ### First setup
 
@@ -69,24 +69,86 @@ The model list shows recommended roleplay models first, with context length and 
 The `/character` menu adds a character from one input. The input accepts a PNG, JSON, or CHARX file path.
 A dropped file path can contain quotes, shell escapes, or a leading `~/`. The terminal removes them.
 The input also accepts a `chub.ai` or `realm.risuai.net` address. The terminal selects the source from the address.
-The first download from a site asks once for its network grant. The terminal then installs and enables the bundled source.
+The essential Chub and RisuRealm source plugins download the card.
 
 ### Ownership
 
-The CLI owns rendering, input, forms, and selection preferences in `terminal.json`. The library owns durable records and product operations.
+The CLI owns rendering, input, and forms. The database keeps the selected chat, character, and persona. The library owns durable records and product operations.
 Slash commands call typed operations without shell conversion. The database remains the history authority.
 The display uses a bounded transcript window and marks truncated text. Exports retain full history.
 The request form can write the complete request to a file. The terminal permits one active operation and retains runtime leases.
 The terminal grants a source capability only after an explicit confirmation.
-The setup form saves a pasted key in `credentials.json` with owner-only permissions. The profile stores the reference `stored:VENDOR`.
+The setup form saves a pasted key as `api_key` in `config.toml`. A session records only the reference `config:NAME`.
 
 ## CLI reference
 
 The binary name is `rustytavern`. The binary opens an interactive conversation when the caller supplies no subcommand.
 The terminal requires an interactive input and output device. The remaining sections define the script interface.
-The global `--data-dir PATH` option selects the data directory. The default order is `RUSTYTAVERN_DATA_DIR`, `XDG_DATA_HOME/rustytavern`, and the platform data directory under HOME.
-The application stores `config.json` and `sessions.sqlite3` in that directory. The configuration retains unknown product settings as explicit extension settings.
-Provider profile updates preserve those settings.
+The global `--home PATH` option selects the home directory. The default is `RUSTYTAVERN_HOME`, then `~/.rustytavern`.
+The home directory holds two files: `config.toml` for every setting and `rustytavern.db` for cards, personas, sessions, and plugin state.
+The application writes `config.toml` with owner-only permissions. A save keeps your comments and key order. An unknown setting is an error.
+
+### Configuration file
+
+```toml
+default_provider = "openrouter"      # the provider for new chats
+
+[providers.openrouter]
+kind = "openrouter"
+model = "openai/gpt-4.1-mini"
+api_key = "sk-or-..."                # or api_key_env = "OPENROUTER_API_KEY"
+context_limit = 16384
+output_limit = 1024
+parameters = { temperature = 0.8 }
+
+[plugins]
+enabled = ["agent", "web", "skills", "mcp", "chub", "risurealm", "lighthouse-notes"]
+
+[plugins.agent]
+max_steps = 8
+
+[plugins.skills]
+paths = ["/Users/me/.rustytavern/skills"]
+
+[plugins.mcp.servers.github]
+command = "npx"
+args = ["-y", "@modelcontextprotocol/server-github"]
+env = { GITHUB_TOKEN = "ghp_..." }
+
+[plugins.lighthouse-notes]           # an installed plugin
+path = "/path/to/lighthouse-notes"
+grants = ["prompt.contribute:before_character", "prompt.contribute:after_character"]
+
+[extensions.rose]
+user_bubble = "#ff5f87"
+assistant_bubble = "magenta"
+```
+
+| Key | Meaning |
+| --- | --- |
+| `default_provider` | The provider profile for new chats. |
+| `providers.NAME` | One provider profile. `api_key` stores the key in this file. |
+| `plugins.enabled` | The enabled plugin IDs. Without this list, the default plugins are on. |
+| `plugins.NAME` | The configuration of one plugin. A table with `path` is an installed plugin. |
+| `extensions.NAME` | One enabled extension. |
+
+The `config show` command prints the configuration and hides API keys and MCP environment values.
+
+### Session settings
+
+A session can change the `plugins` settings of `config.toml` for itself. The database stores these settings.
+The key is a dotted `plugins` path. The value uses TOML syntax. An object value merges by key. Any other value replaces the old value.
+
+```sh
+rustytavern session set SESSION_ID plugins.enabled '["agent", "web"]'
+rustytavern session set SESSION_ID plugins.agent.max_steps 4
+rustytavern session settings SESSION_ID
+rustytavern session unset SESSION_ID plugins.enabled
+```
+
+The `session set` and `session unset` commands also adopt the new plugin composition for that session. The session keeps its provider settings.
+The `session settings` command prints the session settings and the enabled plugins. Other sessions keep `config.toml`.
+A session export does not include the session settings.
 
 The CLI prints metadata as JSON. The `--json` flag makes this intent explicit on inspection commands.
 The CLI prints structured errors to stderr. The chat command prints reply text unless the caller selects `--events`.
@@ -101,8 +163,7 @@ The command validates the asset before it creates the output file.
 
 ### Provider profiles
 
-The `config provider` command writes one named profile. The `config show` command prints the effective configuration with enabled extension defaults.
-Explicit configuration values override those defaults. The save operation writes explicit provider settings only.
+The `config provider` command writes one named profile. The `--api-key KEY` option stores the key in `config.toml`.
 The profile stores a provider kind, model ID, endpoint, credential environment-variable name, context limit, and output limit. A custom provider requires an explicit full endpoint URL.
 A custom provider can omit credentials for a local model. The native provider kinds are `openrouter`, `openai`, `anthropic`, `gemini`, and `custom`.
 The adapters use Chat Completions, Responses, Messages, or native Gemini SSE as appropriate. The `config capabilities` command prints the supported adapter subset for each kind.
@@ -156,22 +217,36 @@ Replay runs pure compilation and compares the result with the saved request. Rep
 
 ### Plugins and extensions
 
-The `plugin inspect [PLUGIN_ID]` command lists standard plugins and declared package plugins. The command does not start external processes.
+A plugin changes agent behavior or adds content to the agent context.
+An extension changes only the application appearance.
+
+The standard agent includes the essential plugins: the agent loop, `web_fetch`, skills, MCP tools, and the card sources.
+The `plugins.enabled` list in `config.toml` selects the plugins. Without `agent`, the `single-reply` driver answers.
+The [plugin crate](../crates/plugins/README.md) lists each plugin ID, grant, and file location.
+
+| Setting | Purpose |
+| --- | --- |
+| `plugins.skills.paths` | Each directory holds `NAME/SKILL.md` skills. The default is `HOME/skills`. |
+| `plugins.mcp.servers.NAME` | One MCP server with `command`, `args`, and `env`, or one `url`. |
+
+The `chat --events` command prints a `tool_call` and a `tool_result` event for each tool call. The terminal shows each tool call as a step.
+
+The `plugin install PATH` command checks a plugin directory with a `plugin.json` file, activates it, and records it in `config.toml`.
+Each `--grant CAPABILITY` option approves one requested host capability. The `--trust-processes` option permits a plugin executable.
+The `plugin enable ID` and `plugin disable ID` commands edit the `plugins.enabled` list.
+The `plugin list` command lists essential and installed plugins. The `plugin inspect ID` command shows one plugin. Neither command starts external processes.
+The `plugin uninstall ID` command removes the plugin table and keeps the plugin state.
 The `plugin bind SERVICE PLUGIN_ID` command saves an explicit service binding. The `preset inspect tavern --resolved` command resolves the enabled composition.
 The resolved inspection can start enabled trusted processes.
 
-The `extension install PATH` command copies and hashes a local package. The `extension install --builtin chub` and `--builtin risurealm` forms install bundled sources.
-Installation does not enable the package. The `extension enable ID` command checks dependencies and activates plugins.
-Each `--grant CAPABILITY` option approves one requested host capability. The `--trust-processes` option permits package executables.
-The `extension list` and `extension inspect ID` commands read package metadata. The `extension disable ID` command removes the package features.
-The `extension uninstall ID` command removes a disabled catalog entry. Uninstallation keeps plugin state and cached package files.
-
-The `extension asset ID PATH --output DESTINATION` command writes a declared asset. The `extension run NAME --args JSON` command calls an enabled extension command.
+The `plugin run NAME --args JSON` command calls an enabled plugin command.
 The command also accepts `--args-file PATH` or `--url URL`. The root alias form accepts `NAME --url URL` or `NAME --args JSON`.
-The `card fetch URL --source NAME` command imports through an enabled source plugin. Source imports retain provenance in the stored card record.
-Ctrl+C cancels a source or extension operation.
+The `card fetch URL --source NAME` command imports through a source plugin. Source imports retain provenance in the stored card record.
+Ctrl+C cancels a source or plugin operation.
+The [installed plugin guide](developer.md#installed-plugins) includes the manifest and implementation instructions. The [example index](../crates/tavern/examples/README.md) links executable examples.
 
-The [extension guide](developer.md#product-extensions) includes complete manifest and implementation instructions. The [example index](../crates/tavern/examples/README.md) links executable examples.
+Each `[extensions.NAME]` table in `config.toml` is one enabled extension. The `extension list` command prints them. The terminal reads them at start.
+The [extension guide](developer.md#extensions) defines the theme fields.
 The command help lists current commands and flags.
 
 ### Session and persona exports
@@ -186,12 +261,12 @@ The host does not substitute current plugins when a saved composition differs.
 ### CLI interface
 
 The `session new` command saves revision `1` with the initial session. The command saves the provider settings and resolved composition atomically.
-Later `chat`, `session retry`, `session regenerate`, and `prompt inspect` commands use those saved provider settings. A change to `config.json` does not change an existing session.
+Later `chat`, `session retry`, `session regenerate`, and `prompt inspect` commands use those saved provider settings. A change to `config.toml` does not change an existing session.
 
 ```sh
-cargo run --locked -- --data-dir ./data session configure SESSION_ID
-cargo run --locked -- --data-dir ./data session configure SESSION_ID --provider openrouter --model openai/gpt-4.1-nano
-cargo run --locked -- --data-dir ./data session configure SESSION_ID --context-limit 16384 --output-limit 512 --expected-version VERSION
+cargo run --locked -- --home ./home session configure SESSION_ID
+cargo run --locked -- --home ./home session configure SESSION_ID --provider openrouter --model openai/gpt-4.1-nano
+cargo run --locked -- --home ./home session configure SESSION_ID --context-limit 16384 --output-limit 512 --expected-version VERSION
 ```
 
 The `session configure` command adopts the current enabled composition. The command reloads the selected provider profile.
@@ -235,7 +310,7 @@ The [session module](../crates/conversation/src/session.rs) defines `SessionConf
 | `profile` | The record identifies the selected base prompt profile. |
 | `composition` | The record retains the exact service and product lock. |
 
-The composition records plugin manifests, artifacts, configuration hashes, grants, bindings, and contributions. The product composition also records extension versions, package hashes, and asset hashes.
+The composition records plugin manifests, artifacts, configuration hashes, grants, bindings, and contributions. The product composition also records the product preset.
 The `service_identity` value identifies the registry snapshot. The full `identity` also includes the product metadata and native implementations.
 The native metadata records the executable hash, provider, profile, decoder, and driver implementation IDs. The default provider implementation ID uses its Rust type name.
 The `ProviderAdapter::id` method can supply another stable implementation ID. The `validate_config` method must remain pure.
@@ -325,7 +400,7 @@ The library owns native serialization and validation. The CLI reads arguments an
 | Record | Version | Authority |
 | --- | --- | --- |
 | SQLite database | `5` | The database stores the marker in `PRAGMA user_version`. |
-| Application configuration | `1` | `config.json` stores `schema_version`. |
+| Application configuration | None | `config.toml` has no version field. An unknown setting is an error. |
 | Runtime input snapshot | `2` | Each generation stores an immutable snapshot. |
 | Enrichment progress | `1` | Each generation stores its saved hook results. |
 | Native session export | `4` | The export contains revision archives and conversation records. |
@@ -335,8 +410,8 @@ The library owns native serialization and validation. The CLI reads arguments an
 ### Session export
 
 ```sh
-cargo run --locked -- --data-dir ./data session export SESSION_ID --output session.json
-cargo run --locked -- --data-dir ./data session export SESSION_ID --output session-traces.json --include-traces
+cargo run --locked -- --home ./home session export SESSION_ID --output session.json
+cargo run --locked -- --home ./home session export SESSION_ID --output session-traces.json --include-traces
 ```
 
 The default export sets `includes_prompt_traces` to `false`. The exporter sets each generation's `request` to `null` in that mode.
@@ -382,7 +457,7 @@ Version 1 lacks complete revision archives and remains unsupported. The product 
 ### Persona export
 
 ```sh
-cargo run --locked -- --data-dir ./data persona export PERSONA_ID --output persona.json
+cargo run --locked -- --home ./home persona export PERSONA_ID --output persona.json
 ```
 
 The [persona schema](schemas/persona-v1.schema.json) defines the envelope. The `PersonaExport` type contains `schema_version: 1` and `persona`.
@@ -391,8 +466,8 @@ The persona record contains its ID, name, and description. The decoder verifies 
 ### Explicit partial-reply acceptance
 
 ```sh
-cargo run --locked -- --data-dir ./data session show SESSION_ID --json
-cargo run --locked -- --data-dir ./data session accept-draft SESSION_ID GENERATION_ID
+cargo run --locked -- --home ./home session show SESSION_ID --json
+cargo run --locked -- --home ./home session accept-draft SESSION_ID GENERATION_ID
 ```
 
 The show command lists generation IDs, statuses, drafts, usage, and acceptance links. The acceptance command requires a nonempty failed, cancelled, or interrupted draft.
@@ -409,8 +484,8 @@ A repeated acceptance returns the existing message with a current session versio
 The store creates schema 5 and upgrades versions 1 through 4 atomically. The upgrade retains rows and adds the worldbook archive table.
 Decoder defaults supply absent enrichment and acceptance fields. Legacy sessions require explicit configuration before generation.
 A failed upgrade rolls back. A future marker blocks writes.
-Profiles and snapshots store credential references only. The provider resolves credential values during dispatch.
-A `stored:NAME` reference reads `credentials.json` in the data directory. Other references name environment variables.
+Sessions and snapshots store credential references only. The provider resolves credential values during dispatch.
+A `config:NAME` reference reads the `api_key` of that provider profile in `config.toml`. Other references name environment variables.
 The [export tests](../crates/tavern/tests/native_exports.rs) check credential exclusion in both trace modes.
 
 ### Plugin schema markers

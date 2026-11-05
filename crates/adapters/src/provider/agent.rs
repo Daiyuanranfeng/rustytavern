@@ -13,7 +13,7 @@ pub enum AgentProviderEvent {
     Complete,
 }
 impl AgentProviderEvent {
-    pub(super) fn into_text(self) -> Result<ProviderEvent> {
+    pub fn into_text(self) -> Result<ProviderEvent> {
         Ok(match self {
             Self::Text { text } => ProviderEvent::Text { text },
             Self::Usage { usage } => ProviderEvent::Usage { usage },
@@ -120,10 +120,10 @@ fn schema_valid(schema: &Value, depth: usize) -> bool {
     {
         return false;
     }
-    if let Some(items) = object.get("items") {
-        if schema["type"] != "array" || !schema_valid(items, depth + 1) {
-            return false;
-        }
+    if let Some(items) = object.get("items")
+        && (schema["type"] != "array" || !schema_valid(items, depth + 1))
+    {
+        return false;
     }
     if object
         .get("enum")

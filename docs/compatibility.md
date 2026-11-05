@@ -10,13 +10,14 @@
 | Conversations | The product stores branches, alternatives, drafts, configuration revisions, and native exports. | The product needs broader reference workflow coverage. |
 | Providers | Five adapters stream text. OpenRouter has local and authorized live evidence. | Other direct vendor endpoints need live validation. |
 | Model discovery | The library fetches and filters advertised model capabilities. CLI and terminal selectors exist. | Integrated checks remain pending. Advertisements do not prove model behavior. |
-| Tools, MCP, and skills | OpenRouter and custom adapters transport typed tool calls. The runtime driver permits one text request. | Host tool execution, MCP, skills, and bounded multi-request loops remain pending. |
-| Web search and fetch | Card-source plugins can request bounded host artifact fetches. | General agent search and fetch remain pending. |
+| Tools, MCP, and skills | The essential [agent driver](../crates/plugins/README.md#agent-and-tools) runs a bounded tool loop on OpenRouter and custom adapters. Separate tool plugins connect stdio and HTTP MCP servers through `rmcp` and add Agent Skills. | Durable tool records, saved continuations for each tool step, and per-character skill selection remain pending. |
+| Web search and fetch | The essential `web_fetch` tool reads public HTTPS pages through the scoped host fetcher. | Web search remains pending. |
 | Voice and image input | The provider contract accepts text only. | Typed media inputs, storage, permissions, and adapters remain pending. |
 | Speech and realtime audio | The runtime has no audio operation. | Recognition, synthesis, and realtime sessions remain pending. |
 | Image generation | The runtime has no image generation operation. | Typed generation operations and artifact storage remain pending. |
 | Embeddings and reranking | The runtime has no dedicated operations. | Typed operations and adapters remain pending. |
-| Extensions | The product installs local packages and restores granted plugins. External processes supply card sources. | External processes do not supply arbitrary runtime service families. |
+| Installed plugins | The product installs local plugin directories and restores granted plugins. External processes supply card sources. | External processes do not supply arbitrary runtime service families. |
+| Extensions | An extension sets the terminal bubble colors. | Other appearance settings remain pending. |
 
 The product reports an adapter contract separately from a remote model capability. The product must not infer model support from a provider name.
 A trait definition does not establish complete feature support. The following sections record format, provider, and validation limits.
@@ -37,7 +38,7 @@ The private vector adapter executes 56 selected assertions without expected outp
 Three source-policy cases substitute DNS and HTTP operations in the exact source module. Those cases do not verify live DNS, TLS, or website availability.
 The external timeout case uses an actual process deadline.
 
-The 136 Rust tests pass on macOS with Rust 1.85 and 1.94 and Linux with Rust 1.85. The suite covers archives, prompt compilation, provider protocols, durable sessions, fencing, cancellation, plugins, extensions, configuration adoption, and exports.
+The Rust tests pass on macOS with Rust 1.99.1. The suite covers archives, prompt compilation, provider protocols, durable sessions, fencing, cancellation, plugins, extensions, tools, configuration adoption, and exports.
 Request tests compare inspection, persistence, and dispatch. The suite uses local model endpoints and makes no paid model request.
 Two terminal workflows and separate authorized live OpenRouter checks pass. The live checks cover character and persona names, restart, inspection, and credential-free storage.
 Other direct vendor endpoints have no live credential test yet. Private records retain the candidate hash, commands, model, and usage.
@@ -120,8 +121,8 @@ An edited export replaces `card.json` and retains the other entry payloads. The 
 The lookup makes no network request. The CLI provides the same operation.
 
 ```sh
-rustytavern --data-dir ./data card import character.charx
-rustytavern --data-dir ./data card asset CHARACTER_ID \
+rustytavern --home ./home card import character.charx
+rustytavern --home ./home card asset CHARACTER_ID \
   --uri embeded://assets/icon/images/portrait.png --output portrait.png
 ```
 
@@ -152,7 +153,7 @@ RustyTavern supplies five text adapters. Each prepared request records its `cont
 The contract identifies the implemented adapter subset. The contract does not identify every capability of the remote service.
 
 ```sh
-cargo run --locked -- --data-dir ./data config capabilities
+cargo run --locked -- --home ./home config capabilities
 ```
 
 The command reports roles, text input and output, streaming, parameters, system placement, and token-count mode. The text contracts expose no multimodal input or reasoning controls.
@@ -168,7 +169,7 @@ An explicit model ID does not require catalog discovery.
 | `gemini` | `gemini.generate_content.text-v1` | The adapter uses native `streamGenerateContent` SSE. | `GEMINI_API_KEY` |
 | `custom` | `custom.chat_completions.text-v1` | The adapter uses a declared Chat Completions subset. | The caller can omit a credential. |
 
-The serialized protocol name for the OpenAI adapter is `open_ai`. The CLI spelling remains `openai`.
+The serialized protocol names are `openrouter` and `openai`.
 The request stores a credential reference. The adapter resolves its value only during dispatch.
 The endpoint must use HTTP or HTTPS without URL credentials, authentication query parameters, or fragments. The adapter disables HTTP redirects.
 
@@ -185,7 +186,7 @@ The Anthropic adapter accepts up to 8191 strings. The Anthropic and Gemini adapt
 The adapter rejects unsupported parameter names and invalid value types before dispatch.
 
 ```sh
-cargo run --locked -- --data-dir ./data config provider \
+cargo run --locked -- --home ./home config provider \
   --name openrouter --kind openrouter --model openai/gpt-4.1-nano \
   --parameters '{"temperature":0.7,"top_p":0.9}'
 ```
@@ -210,7 +211,7 @@ The profile can permit fallback only through an explicit routing setting. The ru
 The [OpenRouter routing reference](https://openrouter.ai/docs/guides/routing/provider-selection) defines the remote routing controls.
 
 ```sh
-cargo run --locked -- --data-dir ./data config provider \
+cargo run --locked -- --home ./home config provider \
   --name routed --kind openrouter --model openai/gpt-4.1-nano \
   --routing '{"order":["openai"],"allow_fallbacks":false,"require_parameters":true}'
 ```
@@ -251,7 +252,7 @@ The [Anthropic context reference](https://platform.claude.com/docs/en/build-with
 ### Local model example
 
 ```sh
-cargo run --locked -- --data-dir ./data config provider \
+cargo run --locked -- --home ./home config provider \
   --name local --kind custom --model local-model \
   --endpoint http://127.0.0.1:8080/v1/chat/completions
 ```
@@ -267,7 +268,7 @@ The fixed reply only checks transport, response handling, and saved conversation
 ### Reference comparison
 
 Each case must identify one reference application and one source revision. Each case must freeze the card, persona, conversation, preset, provider, model, and generation options.
-The case must record the effective plugin and extension configuration. The capture server must record the complete request body at the model API boundary.
+The case must record the effective plugin configuration. The capture server must record the complete request body at the model API boundary.
 The comparator must compare the reference capture with the candidate dispatch. The comparator must also compare candidate inspection with candidate dispatch.
 
 The comparator must retain every message role and every message position. The comparator must retain whitespace and Unicode text exactly.

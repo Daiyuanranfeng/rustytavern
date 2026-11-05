@@ -6,6 +6,7 @@ use rustytavern_core::{Error, Result, digest};
 use rustytavern_plugin as plugin;
 use rustytavern_store as store;
 
+pub mod agent;
 pub mod driver;
 pub mod phases;
 
@@ -24,8 +25,8 @@ use driver::{ConversationDriver, DRIVER_CAPABILITIES, DriverContext, SingleReply
 use phases::{HookBinding, PhaseTrace, SavedEnrichment};
 use prompt::{ConservativeCounter, CoreProfile, PromptInput, PromptPlan, PromptProfile};
 use provider::{
-    CredentialResolver, EnvironmentCredentials, HttpProvider, PreparedRequest, ProviderAdapter,
-    ProviderConfig, ProviderStream,
+    AgentProviderStream, AgentRequest, CredentialResolver, EnvironmentCredentials, HttpProvider,
+    PreparedRequest, ProviderAdapter, ProviderConfig,
 };
 use session::{Generation, GenerationStatus, Role, Session, SessionConfiguration};
 use store::{Preparation, StoreBackend, Submit, now_ms};
@@ -148,6 +149,7 @@ pub struct Runtime {
     registry: Option<Arc<tokio::sync::Mutex<crate::plugin::PluginRegistry>>>,
     composition: Option<Arc<crate::plugin::CompositionLease>>,
     hooks: Vec<HookBinding>,
+    tools: agent::ToolSet,
     product_composition: Option<Value>,
     effective_lock: Value,
 }
@@ -164,6 +166,7 @@ impl Runtime {
             registry: None,
             composition: None,
             hooks: Vec::new(),
+            tools: Vec::new(),
             product_composition: None,
             effective_lock: Value::Null,
         }
@@ -309,6 +312,7 @@ impl Runtime {
             }
         }
         runtime.hooks = phases::bindings(Some(&lease))?;
+        runtime.tools = agent::tools(&lease)?;
         runtime.composition = Some(Arc::new(lease));
         runtime.effective_lock = runtime.composition_record()?;
         Ok(runtime)
@@ -742,7 +746,14 @@ impl Runtime {
         )?;
         self.profile.select_context(&mut plan, &session.options)?;
         loop {
-            let prepared = self.provider.prepare(&plan, &session.model, config)?;
+            let mut prepared = self.provider.prepare(&plan, &session.model, config)?;
+            if let Some(agent) = self.agent_request(Vec::new()) {
+                match self.provider.prepare_agent(prepared.clone(), &agent) {
+                    Ok(request) => prepared = request,
+                    Err(error) if error.code == "unsupported_provider_tools" => {}
+                    Err(error) => return Err(error),
+                }
+            }
             let units = serde_json::to_vec(&prepared.body)?.len();
             if units <= 8 * 1024 * 1024
                 && units
@@ -836,15 +847,35 @@ impl Runtime {
             ))?
     }
 
+    /// The method returns the composed tools for a tool driver.
+    fn agent_request(&self, continuation: Vec<provider::AgentTurn>) -> Option<AgentRequest> {
+        (self.driver.uses_tools() && !self.tools.is_empty()).then(|| AgentRequest {
+            tools: self.tools.iter().map(|tool| tool.definition()).collect(),
+            continuation,
+        })
+    }
+
     async fn dispatch(
         &self,
         generation: &Generation,
         request: PreparedRequest,
         cancellation: CancellationToken,
-    ) -> Result<ProviderStream> {
+        agent: Option<&AgentRequest>,
+    ) -> Result<AgentProviderStream> {
         self.renew(generation).await?;
+        let credentials = self.credentials.as_ref();
+        let Some(agent) = agent else {
+            let stream = self
+                .provider
+                .open_stream(request, credentials, cancellation)
+                .await?;
+            return Ok(Box::pin(futures_util::StreamExt::map(stream, |event| {
+                event.map(Into::into)
+            })));
+        };
+        let request = self.provider.prepare_agent(request, agent)?;
         self.provider
-            .open_stream(request, self.credentials.as_ref(), cancellation)
+            .open_agent_stream(request, credentials, cancellation)
             .await
     }
 

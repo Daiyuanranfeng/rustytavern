@@ -1,0 +1,25 @@
+{
+  "id": "inline-source",
+  "version": "0.1.0",
+  "host_protocol": "1",
+  "provides": [
+    "card.source.example/1"
+  ],
+  "implementation": {
+    "kind": "process",
+    "process": {
+      "executable": "{plugin}/source-plugin",
+      "accepted_hosts": [
+        "example.com"
+      ],
+      "timeout_ms": 30000
+    }
+  },
+  "commands": [
+    {
+      "name": "example-import",
+      "service": "card.source.example/1",
+      "operation": "fetch"
+    }
+  ]
+}

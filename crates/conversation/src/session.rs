@@ -421,15 +421,15 @@ impl SessionExport {
             {
                 return Err(invalid());
             }
-            if let Some(id) = generation.snapshot["character_id"].as_str() {
-                if !characters.contains(id) {
-                    return Err(invalid());
-                }
+            if let Some(id) = generation.snapshot["character_id"].as_str()
+                && !characters.contains(id)
+            {
+                return Err(invalid());
             }
-            if let Some(id) = generation.snapshot["persona"]["id"].as_str() {
-                if !personas.contains(id) {
-                    return Err(invalid());
-                }
+            if let Some(id) = generation.snapshot["persona"]["id"].as_str()
+                && !personas.contains(id)
+            {
+                return Err(invalid());
             }
             if let Some(books) = generation.snapshot.get("worldbooks") {
                 let books = books.as_array().ok_or_else(invalid)?;
@@ -453,8 +453,8 @@ impl SessionExport {
             {
                 return Err(invalid());
             }
-            if let Some(accepted) = &generation.accepted_message {
-                if !matches!(
+            if let Some(accepted) = &generation.accepted_message
+                && (!matches!(
                     generation.status,
                     GenerationStatus::Failed
                         | GenerationStatus::Cancelled
@@ -465,10 +465,9 @@ impl SessionExport {
                             && m.generation_id.as_ref() == Some(&generation.id)
                             && m.parent_id.as_ref() == Some(&generation.user_node)
                             && m.text == generation.draft
-                    })
-                {
-                    return Err(invalid());
-                }
+                    }))
+            {
+                return Err(invalid());
             }
         }
         if self.messages.iter().any(|m| {

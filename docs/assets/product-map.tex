@@ -81,7 +81,7 @@
   \draw[linegray,rounded corners=4pt] (12.6,0.4) rectangle (20.5,3.6);
 \end{scope}
 \node[boundary title] at (3.6,11.7) {RustyTavern};
-\node[note,anchor=west] at (13,3.2) {Product extension layer};
+\node[note,anchor=west] at (13,3.2) {Installed plugin layer};
 \node[actor] (person) at (0,9.7) {Conversation\\owner};
 \node[actor] (author) at (0,5.9) {Application\\author};
 \node[component,text width=26mm] (cli) at (5,9.7) {CLI};
@@ -89,8 +89,8 @@
 \node[component] (cards) at (16.8,10.2) {Character cards};
 \node[component] (persona) at (16.8,8.1) {User personas};
 \node[component] (sessions) at (16.8,5.8) {Persistent\\conversations};
-\node[component,text width=35mm] (plugins) at (9.2,2.2) {Runtime plugins};
-\node[component,text width=53mm] (extension) at (16.5,1.8) {Extension package\\Plugins, commands, defaults, assets};
+\node[component,text width=35mm] (plugins) at (9.2,2.2) {Essential and\\installed plugins};
+\node[component,text width=53mm] (extension) at (16.5,1.8) {Plugin directory\\plugin.json, executable, commands};
 \draw[dependency] (person.east) -- node[edge label,above] {uses} (cli.west);
 \draw[dependency] (cli.east) -- (7.4,9.7) |- node[edge label,pos=.7,above] {calls} (lib.west);
 \draw[dependency] (author.east) -- (7,5.9) |- node[edge label,pos=.75,above] {embeds} (lib.south west);
@@ -98,8 +98,8 @@
 \draw[dependency] (lib.east) -- node[edge label,above] {supports} (persona.west);
 \draw[dependency] (lib.south east) -| (13.3,7.3) |- node[edge label,pos=.75,above] {supports} (sessions.west);
 \draw[dependency] (lib.south) -- node[edge label,right] {selects services} (10,4.3) -| (plugins.north);
-\draw[dependency] (extension.west) -- (12.1,1.8) |- node[edge label,pos=.65,above] {bundles} (plugins.east);
-\node[note,anchor=west,text width=210mm] at (-1,-1.1) {The CLI and embedded applications use the same library. Optional extensions can bundle runtime plugins.};
+\draw[dependency] (extension.west) -- (12.1,1.8) |- node[edge label,pos=.65,above] {installs} (plugins.east);
+\node[note,anchor=west,text width=210mm] at (-1,-1.1) {The CLI and embedded applications use the same library. A user can install third-party plugins. Extensions change only the appearance.};
 
 \end{tikzpicture}
 \end{document}

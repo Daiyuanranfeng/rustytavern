@@ -1,6 +1,6 @@
 # Developer guide
 
-This guide serves library embedders, runtime-plugin developers, extension authors, and contributors.
+This guide serves library embedders, plugin developers, extension authors, and contributors.
 Each reader uses the same host contracts for durable state, permissions, cancellation, and configuration adoption.
 
 ## Reader paths
@@ -8,8 +8,8 @@ Each reader uses the same host contracts for durable state, permissions, cancell
 | Reader | Starting points | Development work |
 | --- | --- | --- |
 | Library embedder | The [architecture](architecture.md#current-implementation) and [library configuration interface](user-guide.md#library-interface). | The developer assembles services, creates sessions, calls typed operations, and supplies optional adapters. |
-| Runtime-plugin developer | The [native interface](#native-interface) and [standard services](#standard-plugins). | The developer implements behavior, declares grants and dependencies, registers services, and verifies cleanup. |
-| Extension author | The [package interface](#package-interface) and [reference packages](#reference-packages). | The author packages plugins, commands, defaults, and assets with documentation and explicit permissions. |
+| Plugin developer | The [native interface](#native-interface) and [standard services](#essential-plugins). | The developer implements behavior, declares grants and dependencies, registers services, and verifies cleanup. |
+| Extension author | The [extension interface](#extensions). | The author changes the application appearance. An extension cannot change agent behavior or agent context. |
 | Contributor | The [workspace boundaries](architecture.md#workspace-boundaries) and [root checks](../README.md#build-and-check). | The contributor changes the owning crate, preserves public contracts, and runs checks for the change. |
 
 The current native API remains experimental. A roadmap requirement does not create an implemented service contract.
@@ -17,7 +17,9 @@ The [product roadmap](product.md#required-target) identifies required features b
 
 ## Runtime plugins
 
-A plugin supplies a runtime implementation or a prompt contribution. An extension packages a product feature.
+A plugin changes agent behavior or adds content to the agent context. Drivers, providers, tools, MCP servers, skills, card sources, and prompt contributions are plugins.
+A user can [install a third-party plugin](#installed-plugins). An [extension](#extensions) changes only the application appearance.
+The [plugin crate](../crates/plugins/README.md) holds every essential plugin.
 
 The native API remains experimental in version `0.1.0`. The host does not load Rust dynamic libraries.
 An embedded application compiles native plugins into its executable. An external process uses the [stdio protocol](developer.md#external-card-source-protocol).
@@ -25,8 +27,8 @@ The current process interface supports card sources only.
 
 ### Design
 
-The registry owns each activation through an owner ID. The extension manager uses `extension:EXTENSION_ID` as an owner ID.
-Several extensions can share one identical plugin instance. The registry removes that instance after its last owner leaves.
+The registry owns each activation through an owner ID. The plugin manager uses `plugin:PLUGIN_ID` as an owner ID.
+The essential plugins use the `core-product` owner. The registry removes an instance after its last owner leaves.
 The registry rejects removal when a remaining plugin requires its services.
 
 The registry resolves dependencies before activation. The registry rejects missing services, dependency cycles, and ambiguous providers.
@@ -66,7 +68,7 @@ let profile: Arc<dyn PromptProfile> = Arc::new(CoreProfile);
 context.register("profile/1", Arc::new(profile))?;
 ```
 
-The consumer obtains this value with `service::<Arc<dyn PromptProfile>>("profile/1")`. The [standard plugin reference](developer.md#standard-plugins) lists the supported service types.
+The consumer obtains this value with `service::<Arc<dyn PromptProfile>>("profile/1")`. The [standard plugin reference](developer.md#essential-plugins) lists the supported service types.
 
 ### Manifest
 
@@ -83,7 +85,7 @@ The consumer obtains this value with `service::<Arc<dyn PromptProfile>>("profile
 | `artifact_hash` | The host records the executable identity. |
 | `configuration_hash` | The host records the implementation configuration identity. |
 
-The package manager computes both hashes during activation. The author must not use a version string as a substitute for an artifact hash.
+The plugin manager computes both hashes during activation. The author must not use a version string as a substitute for an artifact hash.
 The host grants only the intersection of requested and approved capabilities. A native plugin remains trusted Rust code inside the host process.
 Capability checks do not create an operating-system sandbox.
 
@@ -96,7 +98,7 @@ The host orders contributions by slot, priority, plugin ID, and section ID. The 
 An `optional` contribution can leave the request with an explicit budget omission. The `provenance` field retains source metadata.
 The host supplies producer metadata when that field is absent. The profile returns an error when required context exceeds its budget.
 
-The [edit extension](../crates/tavern/examples/extensions/lighthouse-edits/README.md) uses that interface without external I/O.
+The [edit plugin](../crates/tavern/examples/plugins/lighthouse-edits/README.md) uses that interface without external I/O.
 
 
 ### Implementation procedure
@@ -112,27 +114,36 @@ The [edit extension](../crates/tavern/examples/extensions/lighthouse-edits/READM
 9. Verify its effect through the same runtime that the application uses.
 10. Eject the owner and verify that the effect disappears.
 
-The [native example](../crates/tavern/examples/plugins/native-plugin.md) contains a complete implementation. The [lighthouse extension](../crates/tavern/examples/extensions/lighthouse-notes/README.md) uses the supplied contribution factory.
-The [source process example](../crates/tavern/examples/extensions/inline-source/README.md) requires no host recompilation.
+The [native example](../crates/tavern/examples/plugins/native-plugin.md) contains a complete implementation. The [lighthouse plugin](../crates/tavern/examples/plugins/lighthouse-notes/README.md) uses the supplied contribution factory.
+The [source process example](../crates/tavern/examples/plugins/inline-source/README.md) requires no host recompilation.
 
 ### Plugin documentation
 
 Each plugin requires a README or a linked interface document. A shared document must identify each plugin.
 The document must specify purpose, plugin ID, service, Rust type or protocol, inputs, outputs, configuration, grants, state, dependencies, cleanup, cancellation, examples, verification, limits, and trust. The author must update the document with each interface change.
 
-## Standard plugins
+## Essential plugins
 
-The standard product uses runtime plugins for its card decoder, conversation driver, prompt profile, provider, and store. The host installs these plugins through `app::default_registry`.
-The owner ID is `core-product`. The standard product does not wrap these integral plugins in optional extensions.
+The [plugin crate](../crates/plugins/README.md) holds every essential plugin. Each plugin family is one module.
+The standard agent activates the essential plugins through `plugins::registry`. The owner ID is `core-product`.
+The host grants each requested capability of an essential plugin. The `plugins.enabled` list in `config.toml` selects the optional plugins.
+Each `[plugins.ID]` table configures one plugin. Without `agent`, the `single-reply` driver serves `driver/1`.
 
-| Plugin ID | Factory | Service | Registered Rust type |
+| Plugin ID | Service | Registered Rust type | Requested capabilities |
 | --- | --- | --- | --- |
-| `org.rustytavern.decoder.cc-v2-v3` | `decoder.cc-v2-v3` | `card.decoder/1` | `Arc<dyn CardDecoder>` |
-| `org.rustytavern.driver.single-reply` | `driver.single-reply` | `driver/1` | `Arc<dyn ConversationDriver>` |
-| `org.rustytavern.profile.core-v1` | `profile.core-v1` | `profile/1` | `Arc<dyn PromptProfile>` |
-| `org.rustytavern.provider.http` | `provider.http` | `provider/1` | `Arc<dyn ProviderAdapter>` |
-| `org.rustytavern.store.sqlite` | `store.sqlite` | `store/1` | `Arc<dyn StoreBackend>` |
+| `decoder` | `card.decoder/1` | `Arc<dyn CardDecoder>` | None. Always on. |
+| `profile` | `profile/1` | `Arc<dyn PromptProfile>` | None. Always on. |
+| `provider` | `provider/1` | `Arc<dyn ProviderAdapter>` | None. Always on. |
+| `store` | `store/1` | `Arc<dyn StoreBackend>` | None. Always on. |
+| `agent` | `driver/1` | `Arc<dyn ConversationDriver>` | The three driver capabilities |
+| `single-reply` | `driver/1` | `Arc<dyn ConversationDriver>` | The three driver capabilities |
+| `web` | `tools.web/1` | `agent::ToolSet` | `network:https:*` |
+| `skills` | `tools.skills/1` | `agent::ToolSet` | `skills.read`, `prompt.contribute:before_history` |
+| `mcp` | `tools.mcp/1` | `agent::ToolSet` | `mcp.connect` |
+| `chub` | `card.source.chub/1` | `Arc<dyn CardSource>` | `network:https:api.chub.ai` |
+| `risurealm` | `card.source.risurealm/1` | `Arc<dyn CardSource>` | `network:https:realm.risuai.net` |
 
+An installed plugin can also select the `prompt.contributions` and `prompt.edits` factories.
 The registry wraps each table type in an outer `Arc`. The runtime selects decoder, driver, profile, and provider services from its composition lease.
 The application selects the store when it creates the runtime. A store binding change does not move existing session records.
 The provider adapter owns vendor stream decoding.
@@ -152,18 +163,18 @@ The provider adapter owns vendor stream decoding.
 
 A replacement profile must preserve the input snapshot and explain context omissions. A replacement provider must preserve credential exclusion and terminal stream semantics.
 An embedded application can supply another backend during registry construction. The `store.sqlite` factory uses the application's open store.
-The factory does not open a second database from package configuration.
+The factory does not open a second database from plugin configuration.
 
 ### Contribution factory
 
 The `prompt.contributions` factory registers static prompt contributions. The factory does not require a service in `provides`.
-Its configuration contains a `contributions` array. The [lighthouse package](../crates/tavern/examples/extensions/lighthouse-notes/README.md) provides two complete manifests.
+Its configuration contains a `contributions` array. The [lighthouse plugin](../crates/tavern/examples/plugins/lighthouse-notes/README.md) provides two complete manifests.
 An author can use this factory for prompt text without new Rust code.
 
 ### Edit factory
 
 The `prompt.edits` factory registers a pure `PromptHook` service. Its configuration contains a hook policy and explicit section edits.
-The [lighthouse edit package](../crates/tavern/examples/extensions/lighthouse-edits/README.md) supplies a complete manifest.
+The [lighthouse edit plugin](../crates/tavern/examples/plugins/lighthouse-edits/README.md) supplies a complete manifest.
 
 ### Source factories
 
@@ -171,7 +182,7 @@ The `source.chub` factory provides `card.source.chub/1`. The `source.risurealm` 
 Both services register `Arc<dyn CardSource>` through an outer `Arc`. The [source module](../crates/adapters/src/source/mod.rs) defines `id`, `recognize`, and asynchronous `fetch`.
 The `fetch` method returns an `Artifact` with bytes and `Provenance`. The common card importer checks the artifact hash and card format.
 
-The [Chub](../crates/tavern/bundled/chub/plugins/README.md) and [RisuRealm](../crates/tavern/bundled/risurealm/plugins/README.md) plugin guides describe their host grants. The [source tests](../crates/tavern/tests/sources.rs) use recorded or synthetic responses.
+The [plugin crate](../crates/plugins/README.md) lists their host grants. The [source tests](../crates/tavern/tests/sources.rs) use recorded or synthetic responses.
 Those tests do not establish continued availability of the public website endpoints.
 
 ## Decoder and driver services
@@ -212,7 +223,7 @@ The worker retains the selected composition until it returns. The low-level `Car
 ### Conversation driver
 
 The [driver module](../crates/runtime/src/driver.rs) defines `ConversationDriver` and `DriverContext`. The native service name is `driver/1`.
-The registered type is an outer `Arc` around `Arc<dyn ConversationDriver>`. The default `SingleReplyDriver` policy is `single-reply/1`.
+The registered type is an outer `Arc` around `Arc<dyn ConversationDriver>`. The essential agent driver policy is `agent/1`. The `SingleReplyDriver` policy is `single-reply/1`.
 
 | Interface | Contract |
 | --- | --- |
@@ -221,16 +232,22 @@ The registered type is an outer `Arc` around `Arc<dyn ConversationDriver>`. The 
 | `DriverContext::snapshot` | The method returns the immutable conversation view. |
 | `DriverContext::request` | The method returns the sanitized saved request. |
 | `DriverContext::next_event` | The method dispatches once and obtains normalized provider events. |
+| `DriverContext::open_agent_step` | The method adds the composed tools and a continuation to the saved request and dispatches one step. |
+| `DriverContext::next_agent_event` | The method obtains normalized events, including tool calls. |
+| `DriverContext::call_tool` | The host runs one composed tool and emits `tool_call` and `tool_result` events. |
 | `DriverContext::append_text` | The method persists text before the host emits its delta event. |
 | `DriverContext::cancellation_token` | The method supplies the current phase cancellation token. |
 
 The selected plugin must request and receive `session.read:current`, `session.write:current`, and `provider.generate`. The `DRIVER_CAPABILITIES` constant lists those names.
-The default preset explicitly grants them to its integral driver. An extension receives no automatic grant.
+The standard composition grants them to its essential driver. An installed plugin receives no automatic grant.
 The host rejects a selected driver with missing grants before session use. A directly configured native driver uses its embedding application's authority.
 
 The conversation view excludes provider configuration, composition history, and plugin state. The saved request contains credential references only.
 The driver receives no credential resolver or database handle. The driver cannot append text before dispatch.
 The first `next_event` call dispatches the already saved request. Later calls read the same request's stream.
+The `agent::AgentDriver` opens a new step after each completed step with tool calls. `ProviderAdapter::prepare_agent` extends the saved request for that step.
+A tool plugin registers `agent::ToolSet` as a `tools.NAME/1` service. The runtime collects every composed tool set, like the `prompt.hook.` services.
+For a driver whose `uses_tools` method returns true, the saved request contains the tool schemas.
 The host records usage before it exposes an accounting event to the driver.
 
 The driver can transform, buffer, or reject reply text. The host permits successful completion only after an actual provider completion event.
@@ -296,7 +313,7 @@ Cancellation stops dispatch while a pure worker finishes its local work. The wor
 
 Every hook requires `session.read:current`. The host invokes `enrich` only when the manifest requests `prompt.enrich`.
 The host also requires an effective `prompt.enrich` grant for that call. A transform-only hook does not need that capability.
-The [lighthouse edit example](../crates/tavern/examples/extensions/lighthouse-edits/README.md) uses a transform-only hook.
+The [lighthouse edit example](../crates/tavern/examples/plugins/lighthouse-edits/README.md) uses a transform-only hook.
 
 `HookInput::snapshot` contains the immutable conversation input. The host removes provider configuration, composition metadata, and plugin state from this view.
 `HookInput::state` contains the plugin's own saved state revisions. The host supplies those revisions only with `state.read:PLUGIN_ID`.
@@ -337,7 +354,7 @@ Replay compares the plan, phase trace, and request. A difference returns `nondet
 A different composition, profile, or absent saved enrichment blocks replay. Old generations remain readable and exportable.
 
 ```sh
-cargo run --locked -- --data-dir ./data prompt replay GENERATION_ID
+cargo run --locked -- --home ./home prompt replay GENERATION_ID
 ```
 
 ### Profile interface
@@ -412,7 +429,7 @@ The caller can inspect the new state before it retries. The host does not retry 
 
 The transaction appends every replacement and the schema marker together. An SQL failure rolls back all of those rows.
 The store retains all earlier revisions after success. A completed migration remains committed after a later activation failure.
-The registry owns service activation rollback separately. An extension author must account for that operation boundary.
+The registry owns service activation rollback separately. A plugin author must account for that operation boundary.
 
 ### Storage backend interface
 
@@ -428,66 +445,31 @@ A replacement backend must implement these operations. The backend must reject s
 The raw `state_*` methods remain trusted host storage operations. An application must use the checked context commands for plugin access.
 Native Rust code still shares process authority. The host interface does not provide an operating-system sandbox.
 
-### Packages, snapshots, and exports
+### Plugins, snapshots, and exports
 
-A native factory can migrate state during activation. The host registers the factory before package restoration or activation.
+A native factory can migrate state during activation. The host registers the factory before plugin restoration or activation.
 The external card-source protocol has no migration callback. A changed composition requires explicit session adoption.
 Migration does not rewrite generation snapshots. Replay uses saved entries and pinned composition.
 New generation rejects an unreadable current schema. Version 4 session exports retain namespace state and opaque schema-marker histories.
 Uninstallation retains that state.
 
-## Product extensions
+## Installed plugins
 
-An extension packages an optional product feature. An extension can contain plugins, commands, configuration defaults, and assets.
-An extension can contain no plugins.
+A user installs a third-party plugin from a local directory. The directory contains one `plugin.json` file and the files that the plugin uses.
+The `PluginManager` owns installation and enabled state. The `PluginRegistry` owns runtime plugin instances.
+The manager records each installed plugin as a `[plugins.ID]` table in `config.toml` with `path`, `grants`, and `trust_processes`.
+The caller saves `PluginManager::settings` into `config.toml` after a change.
 
-### Extensions: Design
+Installation reads `plugin.json` from its path and activates the plugin. Installation does not copy the directory or run a script.
+Activation validates command services before the manager records the plugin.
+An activation failure removes the newly activated plugin and restores the previous service bindings.
+The next application process restores the enabled installed plugins from `config.toml`.
+An enabled plugin does not change an existing session's saved composition automatically. The user adopts that change through `session configure`.
 
-The `ExtensionManager` owns package installation and enabled state. The `PluginRegistry` owns runtime plugin instances.
-The manager connects each enabled package to its plugin owner IDs. The manager stores its catalog as revisions in SQLite `plugin_state`.
-The namespace is `rustytavern.application`. The key is `extensions`.
-The manager uses a revision check to reject concurrent catalog changes.
+### Plugin manifest
 
-Installation copies a local package into the application data directory. Installation does not execute a script or start a plugin.
-Activation resolves dependencies and checks package hashes. Activation validates command services before it saves enabled state.
-An activation failure removes newly activated plugins. Rollback removes staged consumers before it restores previous service bindings.
-The manager uses the same rollback path for command validation and catalog conflicts. The next application process restores enabled plugins for runtime commands.
-Metadata commands inspect the catalog without starting package processes. An enabled package does not change an existing session's saved composition automatically.
-The user adopts that change through `session configure`.
-
-### Package interface
-
-The package root must contain `extension.json`. The [application module](../crates/tavern/src/app/mod.rs) defines the manifest types.
-
-```json
-{
-  "id": "example.notes",
-  "version": "0.1.0",
-  "product_api": "1",
-  "plugins": [{"manifest": "plugins/note.json"}],
-  "configuration_defaults": {"example": {"location": "harbor"}}
-}
-```
-
-| Field | Meaning |
-| --- | --- |
-| `id` | The value identifies the package. |
-| `version` | The value uses semantic versioning. |
-| `product_api` | The current value is `"1"`. |
-| `dependencies` | The object maps extension IDs to semantic version ranges. |
-| `plugins` | Each entry names a package-relative plugin manifest. |
-| `commands` | Each entry maps `name` to a `service` and an `operation`. |
-| `configuration_defaults` | The object supplies optional product settings. |
-| `bindings` | The object maps service names to preferred plugin IDs. |
-| `assets` | Each entry declares a relative `path` and its `sha256`. |
-
-The manager rejects unknown extension manifest fields. The manager rejects symbolic links, absolute asset paths, and parent traversal.
-A package can contain at most 512 regular files and 64 MiB of file data. The manager records the hash of every file, including documentation.
-The manager rejects a changed installed package at restore. An asset read also checks its file hash.
-
-### Plugin implementation selection
-
-A plugin manifest adds one `implementation` object to the runtime manifest. A native factory uses this shape.
+The `plugin.json` file holds the runtime manifest, one `implementation` object, and optional `commands`.
+The [application module](../crates/tavern/src/app/mod.rs) defines `PluginDefinition`. A native factory uses this shape.
 
 ```json
 {
@@ -513,79 +495,81 @@ A plugin manifest adds one `implementation` object to the runtime manifest. A na
 }
 ```
 
-The [standard plugin reference](developer.md#standard-plugins) lists compiled factory names. An embedded application can add a factory through `register_factory`.
+The [essential plugin reference](developer.md#essential-plugins) lists the compiled factory names. An embedded application can add a factory through `register_factory`.
 The `NativeFactory` receives a `PluginDefinition`. The factory returns `Result<Arc<dyn RuntimePlugin>>`.
-The application must register its factories before `restore` or `enable`. The stock CLI does not load arbitrary native code from a package.
-The [extension tests](../crates/tavern/tests/extensions.rs) show a custom native factory.
+The application must register its factories before `restore` or `enable`. The stock CLI does not load arbitrary native code from a plugin directory.
+The [installed plugin tests](../crates/tavern/tests/installed_plugins.rs) show a custom native factory.
 
-A process factory uses `"kind": "process"` and a `process` object. The host requires `--trust-processes` before it starts package executables.
-The host does not provide an operating-system sandbox for those executables.
+A process plugin uses `"kind": "process"` and a `process` object. A `{plugin}/` prefix selects a file inside the plugin directory.
+The host requires `--trust-processes` before it starts the executable. The host does not provide an operating-system sandbox.
 
-### Commands, defaults, and assets
+A `{plugin}/` path must stay inside the plugin directory. The manager rejects symbolic links and parent traversal in that path.
+
+### Commands
 
 A command names a declared runtime service and an operation. The host accepts `Arc<dyn CommandService>` for a general native command.
 The `call` method receives the operation, JSON arguments, and a cancellation token. The method returns JSON through `rustytavern::Result`.
 A card-source command uses `Arc<dyn CardSource>` with the `fetch` operation. The host validates and stores the returned card through the common importer.
+The CLI runs a command through `plugin run NAME --args JSON`. The CLI also accepts a root alias such as `example-import --url URL`.
 
-The CLI exposes commands through `extension run NAME --args JSON`. The CLI also accepts a root alias such as `example-import --url URL`.
-The explicit `extension run` form avoids conflicts with built-in command names.
+### Implementation procedure
 
-The library merges enabled defaults in dependency order. The library uses extension ID order to resolve independent packages.
-The explicit configuration overrides the resulting defaults. The configuration retains unknown product settings across provider updates.
-The caller obtains this result through `ExtensionManager::configuration`. The CLI uses `ExtensionManager::provider` to resolve provider profiles from those defaults.
-The CLI saves only explicit provider settings. The caller must connect custom settings to the product feature that uses them.
-A default does not create a new feature by itself. The library returns declared asset bytes through `ExtensionManager::asset`.
-The CLI writes those bytes with `extension asset`.
-
-### Extensions: Implementation procedure
-
-1. Copy the [asset example](../crates/tavern/examples/extensions/harbor-assets/README.md) or the [plugin example](../crates/tavern/examples/extensions/lighthouse-notes/README.md).
-2. Set a unique package ID and a semantic version.
-3. Declare each plugin, command, default, and asset in `extension.json`.
-4. Add a README that explains the design, interface, grants, and commands.
-5. Compute each declared asset hash with `shasum -a 256 PATH`.
-6. Install the local package.
-7. Enable the package with only its required grants.
-8. Verify its commands, assets, and runtime effect.
-9. Restart the CLI and verify restoration.
-10. Disable the package and verify removal of its product features.
+1. Copy the [contribution example](../crates/tavern/examples/plugins/lighthouse-notes/README.md) or the [process example](../crates/tavern/examples/plugins/inline-source/README.md).
+2. Set a unique plugin ID and a semantic version.
+3. Add a README that explains the design, interface, grants, and commands.
+4. Install the plugin directory.
+5. Enable the plugin with only its required grants.
+6. Verify its runtime effect and commands.
+7. Restart the CLI and verify restoration.
+8. Disable the plugin and verify removal of its effect.
 
 ```sh
-cargo run --locked -- --data-dir ./data extension install crates/tavern/examples/extensions/harbor-assets
-cargo run --locked -- --data-dir ./data extension enable example.harbor-assets
-cargo run --locked -- --data-dir ./data extension inspect example.harbor-assets
-cargo run --locked -- --data-dir ./data extension asset example.harbor-assets templates/harbor.txt --output ./harbor.txt
-cargo run --locked -- --data-dir ./data extension disable example.harbor-assets
-cargo run --locked -- --data-dir ./data extension uninstall example.harbor-assets
+cargo run --locked -- --home ./home plugin install crates/tavern/examples/plugins/lighthouse-notes --grant prompt.contribute:before_character --grant prompt.contribute:after_character
+cargo run --locked -- --home ./home plugin inspect lighthouse-notes
+cargo run --locked -- --home ./home plugin disable lighthouse-notes
+cargo run --locked -- --home ./home plugin uninstall lighthouse-notes
 ```
 
-The manager rejects an update while the installed package remains enabled. Disable the package before installation of its replacement.
-The manager does not download missing dependencies automatically. Enable all required installed dependencies before the dependent package.
-The manager rejects removal of a required enabled dependency. An explicit user service binding overrides package binding defaults.
-Conflicting package bindings require an explicit user binding.
+The manager rejects an update while the installed plugin remains active. Disable the plugin before installation of its replacement.
+Uninstallation removes the plugin table from `config.toml`. Uninstallation keeps user plugin state.
+A plugin update requires explicit session adoption before another generation.
+The plugin manifest accepts a positive `state_schema`. A compiled native factory can call the host migration command during activation.
 
-Uninstallation removes the disabled package from the catalog. Uninstallation keeps user plugin state and cached package files.
-Package updates require explicit session adoption before another generation. The saved generation keeps its original package version and asset hashes.
-The package interface accepts a positive `state_schema`. A compiled native factory can call the host migration command during activation.
+### Example plugins
 
-### Extension documentation
-
-Each package requires a root README with links to its plugin documents. The README must specify the package ID, feature, commands, arguments, defaults, assets, dependencies, grants, process trust, lifecycle, retained state, implementation example, and verification.
-An asset-only package also requires this document. The author can link canonical contracts but must identify package-specific behavior.
-
-### Reference packages
-
-| Package | Purpose |
+| Plugin | Purpose |
 | --- | --- |
-| [Chub](../crates/tavern/bundled/chub/README.md) | The bundled extension adds a website card source and an import command. |
-| [RisuRealm](../crates/tavern/bundled/risurealm/README.md) | The bundled extension adds a PNG card source and an import command. |
-| [Harbor assets](../crates/tavern/examples/extensions/harbor-assets/README.md) | The package shows assets and defaults without plugins. |
-| [Lighthouse notes](../crates/tavern/examples/extensions/lighthouse-notes/README.md) | The package shows two prompt plugins in one extension. |
-| [Lighthouse edits](../crates/tavern/examples/extensions/lighthouse-edits/README.md) | The package shows a pure prompt hook with explicit section edits. |
-| [Inline source](../crates/tavern/examples/extensions/inline-source/README.md) | The package shows an independent Rust plugin process. |
+| [Lighthouse notes](../crates/tavern/examples/plugins/lighthouse-notes/README.md) | The plugin adds two static prompt contributions. |
+| [Lighthouse edits](../crates/tavern/examples/plugins/lighthouse-edits/README.md) | The plugin adds a pure prompt hook with explicit section edits. |
+| [Inline source](../crates/tavern/examples/plugins/inline-source/README.md) | The plugin runs an independent Rust process and declares a command. |
 
-The author must test failure rollback, restart, disable, and uninstall. The author must test changed files and denied capabilities.
-The [extension tests](../crates/tavern/tests/extensions.rs) cover these package boundaries.
+The author must test failure rollback, restart, disable, uninstall, and denied capabilities.
+
+## Extensions
+
+An extension changes how an application looks. An extension cannot change agent behavior or agent context.
+A plugin does that work. An extension cannot contain plugins, commands, or grants.
+The [extension module](../crates/tavern/src/extension.rs) defines `Extension` and `theme`.
+
+Each `[extensions.NAME]` table in `config.toml` is one enabled extension. Remove the table to remove the extension.
+
+```toml
+[extensions.rose]
+description = "Pink user bubbles."
+user_bubble = "#ff5f87"
+assistant_bubble = "magenta"
+```
+
+| Field | Meaning |
+| --- | --- |
+| `description` | The optional text describes the extension. |
+| `user_bubble` | The optional color sets the user bubble. |
+| `assistant_bubble` | The optional color sets the character bubble. |
+
+A color is a name, such as `magenta`, or a hex value, such as `#5f87ff`. The terminal keeps its default for an invalid color.
+The configuration rejects unknown fields. `theme` merges the extensions in name order. A later name overrides an earlier name.
+The terminal reads the theme when it starts. The `extension list` command prints the extensions.
+The [configuration tests](../crates/tavern/tests/configuration.rs) cover themes and rejected fields.
 
 ## External card-source protocol
 
@@ -595,14 +579,14 @@ The [Rust example](../crates/plugin/examples/source_plugin.rs) implements the co
 
 ### Process definition
 
-The extension plugin manifest selects its executable with this object.
+The installed plugin manifest selects its executable with this object.
 
 ```json
 {
   "implementation": {
     "kind": "process",
     "process": {
-      "executable": "{package}/source-plugin",
+      "executable": "{plugin}/source-plugin",
       "args": [],
       "accepted_hosts": ["example.com"],
       "timeout_ms": 30000
@@ -611,8 +595,8 @@ The extension plugin manifest selects its executable with this object.
 }
 ```
 
-The executable must use an absolute path or a `{package}/` path. The host resolves `{package}/` arguments to installed files.
-The author must preserve executable permissions on the packaged binary. The timeout must fall between 1 and 120000 milliseconds.
+The executable must use an absolute path or a `{plugin}/` path. The host resolves `{plugin}/` arguments to installed files.
+The author must preserve executable permissions on the installed binary. The timeout must fall between 1 and 120000 milliseconds.
 The host clears the child environment except for `PATH`. The host discards child standard error in the current implementation.
 The plugin must write only protocol frames to standard output. The plugin must not depend on a particular working directory.
 
@@ -735,8 +719,8 @@ The host uses stable error codes for transport failures and invalid artifacts.
 2. Implement `initialize` and `card.source.fetch`.
 3. Copy each request ID into its response.
 4. Return an inline card or an invocation-scoped artifact handle.
-5. Add the executable to an [extension package](developer.md#product-extensions).
+5. Add the executable to a [plugin directory](developer.md#installed-plugins).
 6. Test handshake failure, malformed frames, cancellation, and timeout.
 
-The [inline-source README](../crates/tavern/examples/extensions/inline-source/README.md) supplies build and CLI commands. The [external tests](../crates/tavern/tests/external.rs) exercise protocol failures and limits.
+The [inline-source README](../crates/tavern/examples/plugins/inline-source/README.md) supplies build and CLI commands. The [external tests](../crates/tavern/tests/external.rs) exercise protocol failures and limits.
 The [process lifecycle tests](../crates/tavern/tests/process_lifecycle.rs) verify cooperative shutdown, late-result rejection, queue limits, and forced child cleanup on Unix.

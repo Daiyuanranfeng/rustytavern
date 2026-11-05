@@ -32,7 +32,7 @@ impl Ui {
             FormKind::Provider(name) => {
                 let selected = Application::open(&self.path)
                     .ok()
-                    .and_then(|app| app.config.providers.get(name).cloned());
+                    .and_then(|app| app.config.providers.get(name).map(|p| p.settings.clone()));
                 let config = selected.clone().unwrap_or_default();
                 let kind = match config.kind {
                     rustytavern::provider::ProviderKind::OpenRouter => "openrouter",
@@ -120,19 +120,15 @@ impl Ui {
                 ],
             ),
             FormKind::Install => (
-                "Install a product extension",
-                vec![field("Package path or builtin: chub, risurealm", "")],
-            ),
-            FormKind::Enable(id) => (
-                "Enable a product extension",
+                "Install a plugin",
                 vec![
-                    field("Extension ID", id),
+                    field("Plugin directory", ""),
                     field("Explicit grants: one per line", ""),
                     field("Trust external processes: yes or no", "no"),
                 ],
             ),
             FormKind::Run => (
-                "Run an extension command",
+                "Run a plugin command",
                 vec![field("Command name", ""), field("Arguments as JSON", "{}")],
             ),
         };
@@ -200,11 +196,8 @@ impl Ui {
                     .config
                     .providers
                     .remove(kind)
+                    .map(|p| p.settings)
                     .unwrap_or_default();
-                let reference = match key {
-                    Some(key) => Some(StoredCredentials::new(&self.path).save(kind, key)?),
-                    None => reference,
-                };
                 (
                     Command::Config {
                         command: ConfigCommand::Provider {
@@ -221,6 +214,7 @@ impl Ui {
                             },
                             endpoint: (!endpoint.is_empty()).then(|| endpoint.into()),
                             api_key_env: reference,
+                            api_key: key.map(str::to_owned),
                             context_limit: old.context_limit,
                             output_limit: old.output_limit,
                             parameters: serde_json::to_string(&old.parameters)?,
@@ -251,6 +245,7 @@ impl Ui {
                             model: values[2].clone(),
                             endpoint: (!values[3].is_empty()).then(|| values[3].clone()),
                             api_key_env: (!values[4].is_empty()).then(|| values[4].clone()),
+                            api_key: None,
                             context_limit: number(&values[5])?,
                             output_limit: number(&values[6])?,
                             parameters: values[7].clone(),
@@ -325,20 +320,9 @@ impl Ui {
                 After::Notice,
             ),
             FormKind::Install => (
-                Command::Extension {
-                    command: ExtensionCommand::Install {
-                        path: (!["chub", "risurealm"].contains(&values[0].as_str()))
-                            .then(|| values[0].clone().into()),
-                        builtin: (["chub", "risurealm"].contains(&values[0].as_str()))
-                            .then(|| values[0].clone()),
-                    },
-                },
-                After::Notice,
-            ),
-            FormKind::Enable(_) => (
-                Command::Extension {
-                    command: ExtensionCommand::Enable {
-                        extensions: vec![values[0].clone()],
+                Command::Plugin {
+                    command: PluginCommand::Install {
+                        path: values[0].clone().into(),
                         grant: values[1]
                             .lines()
                             .filter(|line| !line.is_empty())
@@ -350,8 +334,8 @@ impl Ui {
                 After::Notice,
             ),
             FormKind::Run => (
-                Command::Extension {
-                    command: ExtensionCommand::Run {
+                Command::Plugin {
+                    command: PluginCommand::Run {
                         command: values[0].clone(),
                         input: CommandInput {
                             args: Some(values[1].clone()),
@@ -360,19 +344,19 @@ impl Ui {
                         },
                     },
                 },
-                After::View("Extension result"),
+                After::View("Plugin result"),
             ),
         };
         self.command(command, after);
         Ok(())
     }
-    /// The method selects the source from the address and asks once for its network grant.
+    /// The method selects the source plugin from the address.
     fn fetch(&mut self, url: &str) -> Result<()> {
         use rustytavern::source::{ChubSource, RisuRealmSource};
-        let (source, host) = if ChubSource::resolve(url).is_ok() {
-            ("chub", "api.chub.ai")
+        let source = if ChubSource::resolve(url).is_ok() {
+            "chub"
         } else if RisuRealmSource::resolve(url).is_ok() {
-            ("risurealm", "realm.risuai.net")
+            "risurealm"
         } else {
             return Err(Error::new(
                 "invalid_input",
@@ -386,39 +370,7 @@ impl Ui {
                 json: true,
             },
         };
-        let id = format!("org.rustytavern.extension.{source}");
-        let app = Application::open(&self.path)?;
-        let registry = std::sync::Arc::new(tokio::sync::Mutex::new(
-            rustytavern::plugin::PluginRegistry::default(),
-        ));
-        if ExtensionManager::open(&app.data_dir, app.store.clone(), registry)?
-            .inspect(&id)
-            .is_ok_and(|package| package.enabled)
-        {
-            self.command(fetch, After::Card);
-            return Ok(());
-        }
-        let enable = Command::Extension {
-            command: ExtensionCommand::Enable {
-                extensions: vec![id],
-                grant: vec![format!("network:https:{host}")],
-                trust_processes: false,
-            },
-        };
-        let install = Command::Extension {
-            command: ExtensionCommand::Install {
-                path: None,
-                builtin: Some(source.into()),
-            },
-        };
-        let then = |command, after| After::Then(Box::new(command), Box::new(after));
-        self.menu(
-            &format!("Allow downloads from {host}?"),
-            vec![(
-                format!("Allow network access to {host} and download the character"),
-                Choice::Command(install, then(enable, then(fetch, After::Card))),
-            )],
-        );
+        self.command(fetch, After::Card);
         Ok(())
     }
 }
@@ -499,13 +451,13 @@ pub(super) fn connection<'a>(
     } else {
         input.to_owned()
     };
-    if let Some(other) = VENDORS.iter().find(|v| key.starts_with(v.2)) {
-        if other.0 != kind {
-            return Err(invalid(format!(
-                "The key looks like a {} key. Go back and select {}.",
-                other.0, other.0
-            )));
-        }
+    if let Some(other) = VENDORS.iter().find(|v| key.starts_with(v.2))
+        && other.0 != kind
+    {
+        return Err(invalid(format!(
+            "The key looks like a {} key. Go back and select {}.",
+            other.0, other.0
+        )));
     }
     Ok(if input.is_empty() || variable {
         (kind, Some(name.into()), None)

@@ -50,20 +50,21 @@ impl PublicFetcher {
             || url.password().is_some()
             || url.fragment().is_some()
             || url.port().is_some_and(|p| p != 443)
-            || !self.grants.contains(&format!("network:https:{host}"))
+            || !(self.grants.contains("network:https:*")
+                || self.grants.contains(&format!("network:https:{host}")))
         {
             return Err(Error::new(
                 "source_target_denied",
                 "The source has no grant for this HTTPS target.",
             ));
         }
-        if let Ok(address) = host.trim_matches(['[', ']']).parse::<IpAddr>() {
-            if !public_address(address) {
-                return Err(Error::new(
-                    "source_target_denied",
-                    "The card source resolves to a restricted address.",
-                ));
-            }
+        if let Ok(address) = host.trim_matches(['[', ']']).parse::<IpAddr>()
+            && !public_address(address)
+        {
+            return Err(Error::new(
+                "source_target_denied",
+                "The card source resolves to a restricted address.",
+            ));
         }
         Ok(url)
     }

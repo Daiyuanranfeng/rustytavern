@@ -291,7 +291,7 @@ async fn the_tavern_preset_resolves_all_five_services_and_rejects_missing_parts(
     ] {
         assert!(lease["resolved_bindings"][service].as_str().is_some());
     }
-    assert_eq!(lease["plugins"].as_array().unwrap().len(), 5);
+    assert_eq!(lease["plugins"].as_array().unwrap().len(), 10);
     let empty = Arc::new(tokio::sync::Mutex::new(PluginRegistry::default()));
     let lock = empty.lock().await.freeze().unwrap().snapshot();
     let runtime = Runtime::new(store.clone())

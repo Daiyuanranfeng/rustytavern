@@ -7,16 +7,18 @@ The project has no web backend or frontend.
 The implementation is in progress.
 The current CLI supports cards, worldbooks, personas, prompt inspection, streaming, sessions, alternatives, and branches.
 The product supports native runtime plugins and external card-source processes.
-The CLI installs, enables, inspects, and removes extension packages.
-The product supplies optional Chub and RisuRealm source extensions.
+A plugin changes agent behavior or adds content to the agent context.
+The essential plugins include the agent loop, web fetch, skills, MCP tools, and the Chub and RisuRealm sources.
+The CLI installs, enables, inspects, and removes third-party plugins.
+An extension changes only the application appearance, such as the bubble colors.
 The project does not claim full SillyTavern or RisuAI parity.
 
 The [workspace guide](docs/architecture.md#workspace-boundaries) defines the component crates and their dependency direction.
 
 ## Build and check
 
-The current development environment uses Rust 1.94.
-The declared minimum is Rust 1.85.
+The `rust-toolchain.toml` file pins Rust 1.99.1.
+The declared minimum is Rust 1.99.
 The build uses the resolved Cargo.lock file.
 
 ```sh
@@ -45,17 +47,18 @@ The [terminal guide](docs/user-guide.md#interactive-terminal) defines commands, 
 
 ## Script commands
 
-The examples use `./data` for durable records.
+The default home directory is `~/.rustytavern`. The examples use `./home` instead.
+The home directory holds `config.toml` for every setting and `rustytavern.db` for durable records.
 The OpenRouter adapter reads `OPENROUTER_API_KEY` from the process environment.
-The configuration stores the variable name.
-The configuration does not store the key value.
+The `--api-key KEY` option stores the key in `config.toml` instead.
+The [configuration guide](docs/user-guide.md#configuration-file) shows the complete file.
 
 ```sh
-cargo run -- --data-dir ./data config provider \
+cargo run -- --home ./home config provider \
   --name openrouter --kind openrouter \
   --model openai/gpt-4.1-nano --output-limit 256
-cargo run -- --data-dir ./data card import crates/tavern/examples/lumen.json --json
-cargo run -- --data-dir ./data persona create \
+cargo run -- --home ./home card import crates/tavern/examples/lumen.json --json
+cargo run -- --home ./home persona create \
   --name Alex --description "Alex charts the coast."
 ```
 
@@ -63,13 +66,13 @@ The import and persona commands print their IDs as JSON.
 The next command uses those IDs.
 
 ```sh
-rustytavern --data-dir ./data session new \
+rustytavern --home ./home session new \
   --character CHARACTER_ID --persona PERSONA_ID --provider openrouter
-rustytavern --data-dir ./data prompt inspect SESSION_ID \
+rustytavern --home ./home prompt inspect SESSION_ID \
   --message "Hello." --request
-rustytavern --data-dir ./data chat SESSION_ID \
+rustytavern --home ./home chat SESSION_ID \
   --message "Hello." --events --idempotency-key first-message
-rustytavern --data-dir ./data session show SESSION_ID --json
+rustytavern --home ./home session show SESSION_ID --json
 ```
 
 The last commands require the built binary on PATH.
@@ -80,12 +83,12 @@ The caller should reuse an idempotency key only for the same submission.
 ## Inspect, branch, and export
 
 ```sh
-rustytavern --data-dir ./data session regenerate SESSION_ID --events
-rustytavern --data-dir ./data session branch SESSION_ID --at MESSAGE_ID
-rustytavern --data-dir ./data session edit SESSION_ID \
+rustytavern --home ./home session regenerate SESSION_ID --events
+rustytavern --home ./home session branch SESSION_ID --at MESSAGE_ID
+rustytavern --home ./home session edit SESSION_ID \
   --at MESSAGE_ID --message "Another direction."
-rustytavern --data-dir ./data session export SESSION_ID --output session.json
-rustytavern --data-dir ./data card export CHARACTER_ID --output original.png
+rustytavern --home ./home session export SESSION_ID --output session.json
+rustytavern --home ./home card export CHARACTER_ID --output original.png
 ```
 
 An original card export returns the exact imported bytes.
@@ -105,7 +108,7 @@ The [native format guide](docs/user-guide.md#native-records-and-exports) defines
 - The [compatibility guide](docs/compatibility.md) defines formats, providers, reference comparisons, and evidence.
 
 Each [component](docs/architecture.md#current-implementation) retains its README.
-Each [bundled extension](crates/tavern/bundled/README.md) and [example package](crates/tavern/examples/README.md) retains its interface document.
+The [plugin crate](crates/plugins/README.md) and each [example plugin](crates/tavern/examples/README.md) retain their interface documents.
 
 ## License and source use
 

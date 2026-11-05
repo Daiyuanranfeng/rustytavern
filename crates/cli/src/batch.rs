@@ -3,11 +3,13 @@ use std::{
     path::PathBuf,
 };
 
+use std::sync::Arc;
+
 use rustytavern::{
     Error, Result,
-    app::{ExtensionManager, default_registry},
+    app::PluginManager,
     card::{Card, MAX_INPUT_BYTES},
-    config::{Application, default_data_dir},
+    config::{Application, default_home},
     prompt::PromptOptions,
     provider::{ProviderConfig, ProviderKind},
     runtime::GenerationHandle,
@@ -29,7 +31,7 @@ pub(super) async fn run(cli: Cli) -> Result<()> {
 }
 
 pub(super) async fn collect(
-    data_dir: PathBuf,
+    home: PathBuf,
     command: Command,
     cancellation: tokio_util::sync::CancellationToken,
 ) -> Result<Vec<Value>> {
@@ -48,7 +50,7 @@ pub(super) async fn collect(
     let mut output = Output::Values(Vec::new());
     execute(
         Cli {
-            data_dir: Some(data_dir),
+            home: Some(home),
             command: Some(command),
         },
         &mut output,
@@ -85,24 +87,40 @@ async fn execute(
     let command = cli
         .command
         .ok_or_else(|| Error::new("invalid_command", "The operation requires a command."))?;
-    let path = match cli.data_dir {
+    let path = match cli.home {
         Some(path) => path,
-        None => default_data_dir()?,
+        None => default_home()?,
     };
     let mut app = Application::open(path)?;
-    let registry = default_registry(app.store.clone()).await?;
-    let mut extensions =
-        ExtensionManager::open(&app.data_dir, app.store.clone(), registry.clone())?;
+    let session = match &command {
+        Command::Chat { session, .. }
+        | Command::Prompt {
+            command: PromptCommand::Inspect { session, .. },
+        }
+        | Command::Session {
+            command:
+                SessionCommand::Regenerate { session, .. }
+                | SessionCommand::Retry { session, .. }
+                | SessionCommand::Configure { session, .. },
+        } => Some(session.as_str()),
+        _ => None,
+    };
+    let effective = app.configuration_for(session)?;
+    let registry = app.registry_with(&effective).await?;
+    let mut manager = PluginManager::open(app.store.clone(), registry.clone(), &effective.plugins);
     let needs_runtime = matches!(
         &command,
         Command::Chat { .. }
             | Command::Prompt { .. }
-            | Command::ExtensionAlias(_)
+            | Command::PluginAlias(_)
             | Command::Card {
                 command: CardCommand::Fetch { .. } | CardCommand::Import { .. }
             }
-            | Command::Extension {
-                command: ExtensionCommand::Enable { .. } | ExtensionCommand::Run { .. }
+            | Command::Plugin {
+                command: PluginCommand::Install { .. }
+                    | PluginCommand::Enable { .. }
+                    | PluginCommand::Bind { .. }
+                    | PluginCommand::Run { .. }
             }
             | Command::Session {
                 command: SessionCommand::New { .. }
@@ -115,9 +133,9 @@ async fn execute(
             }
     );
     if needs_runtime {
-        extensions.restore().await?;
+        manager.restore().await?;
     }
-    let runtime = rustytavern::app::runtime(&extensions).await?;
+    let runtime = rustytavern::app::runtime(&manager, Arc::new(app.credentials())).await?;
     match command {
         Command::Model { command } => match command {
             ModelCommand::Discover {
@@ -128,12 +146,12 @@ async fn execute(
                 parameter,
             } => {
                 use rustytavern::provider::catalog::{CatalogClient, CatalogFilter};
-                let config = extensions.provider(&app.config, &provider)?;
+                let config = app.config.provider(&provider)?;
                 let mut catalog = CatalogClient::default()
                     .fetch(
                         &config,
                         endpoint.as_deref(),
-                        &rustytavern::config::StoredCredentials::new(&app.data_dir),
+                        &app.credentials(),
                         cancellation,
                     )
                     .await?;
@@ -147,7 +165,7 @@ async fn execute(
             }
             ModelCommand::Select { provider, model } => {
                 use rustytavern::provider::ProviderAdapter;
-                let mut config = extensions.provider(&app.config, &provider)?;
+                let mut config = app.config.provider(&provider)?;
                 let model = if config.kind == ProviderKind::Gemini {
                     model.strip_prefix("models/").unwrap_or(&model).to_owned()
                 } else {
@@ -155,9 +173,7 @@ async fn execute(
                 };
                 rustytavern::provider::HttpProvider.validate_config(&model, &config)?;
                 config.model = model;
-                app.config
-                    .providers
-                    .insert(provider.clone(), config.clone());
+                app.config.set_provider(&provider, config.clone(), None);
                 app.save_config()?;
                 output.write(&json!({"provider":provider,"configuration":config}))?;
             }
@@ -198,87 +214,77 @@ async fn execute(
                 )?)?;
             }
         },
-        Command::Extension { command } => match command {
-            ExtensionCommand::Install { path, builtin } => {
-                let package = match (path, builtin) {
-                    (Some(path), None) => extensions.install(&path)?,
-                    (None, Some(name)) => extensions.install_builtin(&name)?,
-                    _ => {
-                        return Err(Error::new(
-                            "invalid_extension_path",
-                            "The install command requires a path or --builtin name.",
-                        ));
+        Command::Extension {
+            command: ExtensionCommand::List,
+        } => output.write(&app.config.extensions)?,
+        Command::Plugin { command } => {
+            match command {
+                PluginCommand::Install {
+                    path,
+                    grant,
+                    trust_processes,
+                } => output.write(
+                    &manager
+                        .install(&path, grant.into_iter().collect(), trust_processes)
+                        .await?,
+                )?,
+                PluginCommand::List { .. } | PluginCommand::Inspect { .. } => {
+                    let mut records = registry
+                        .lock()
+                        .await
+                        .inspect()
+                        .iter()
+                        .map(serde_json::to_value)
+                        .collect::<std::result::Result<Vec<_>, _>>()?;
+                    records.extend(manager.list()?);
+                    if let PluginCommand::Inspect { plugin: id, .. } = command {
+                        output.write(
+                            &records
+                                .into_iter()
+                                .find(|p| p["manifest"]["id"] == id)
+                                .ok_or_else(|| {
+                                    Error::new("not_found", "The plugin does not exist.")
+                                })?,
+                        )?;
+                    } else {
+                        output.write(&records)?;
                     }
-                };
-                output.write(&package)?;
-            }
-            ExtensionCommand::List { .. } => output.write(&extensions.list())?,
-            ExtensionCommand::Inspect { extension, .. } => {
-                output.write(&extensions.inspect(&extension)?)?
-            }
-            ExtensionCommand::Enable {
-                extensions: ids,
-                grant,
-                trust_processes,
-            } => {
-                extensions
-                    .enable(&ids, grant.into_iter().collect(), trust_processes)
+                }
+                PluginCommand::Enable { plugin } => {
+                    manager.enable(&plugin).await?;
+                    output.write(&json!({"enabled":plugin}))?;
+                }
+                PluginCommand::Disable { plugin } => {
+                    manager.disable(&plugin).await?;
+                    output.write(&json!({"disabled":plugin}))?;
+                }
+                PluginCommand::Uninstall { plugin } => {
+                    manager.uninstall(&plugin).await?;
+                    output.write(&json!({"uninstalled":plugin}))?;
+                }
+                PluginCommand::Run { command, input } => {
+                    let arguments = input.read()?;
+                    let cancellation = cancellation.clone();
+                    let result = cancel_operation(
+                        manager.run_command(&command, arguments, cancellation.clone()),
+                        cancellation,
+                    )
                     .await?;
-                output.write(&json!({"enabled":ids}))?;
-            }
-            ExtensionCommand::Disable { extension } => {
-                extensions.disable(&extension).await?;
-                output.write(&json!({"disabled":extension}))?;
-            }
-            ExtensionCommand::Uninstall { extension } => {
-                extensions.uninstall(&extension)?;
-                output.write(&json!({"uninstalled":extension}))?;
-            }
-            ExtensionCommand::Asset {
-                extension,
-                path,
-                output: destination,
-            } => {
-                std::fs::write(&destination, extensions.asset(&extension, &path)?)?;
-                output.write(&json!({"output":destination}))?;
-            }
-            ExtensionCommand::Run { command, input } => {
-                let arguments = input.read()?;
-                let cancellation = cancellation.clone();
-                let result = cancel_operation(
-                    extensions.run_command(&command, arguments, cancellation.clone()),
-                    cancellation,
-                )
-                .await?;
-                output.write(&result)?;
-            }
-        },
-        Command::Plugin { command } => match command {
-            PluginCommand::Inspect { plugin, .. } => {
-                let mut records = registry
-                    .lock()
-                    .await
-                    .inspect()
-                    .iter()
-                    .map(serde_json::to_value)
-                    .collect::<std::result::Result<Vec<_>, _>>()?;
-                records.extend(extensions.declared_plugins()?);
-                if let Some(id) = plugin {
-                    output.write(
-                        &records
-                            .into_iter()
-                            .find(|p| p["manifest"]["id"] == id)
-                            .ok_or_else(|| Error::new("not_found", "The plugin does not exist."))?,
-                    )?;
-                } else {
-                    output.write(&records)?;
+                    output.write(&result)?;
+                }
+                PluginCommand::Bind { service, plugin } => {
+                    manager.bind(service.clone(), plugin.clone()).await?;
+                    output.write(&json!({"service":service,"plugin":plugin}))?;
                 }
             }
-            PluginCommand::Bind { service, plugin } => {
-                extensions.bind(service.clone(), plugin.clone()).await?;
-                output.write(&json!({"service":service,"plugin":plugin}))?;
+            if app.config.plugins.entries != manager.settings().entries
+                || app.config.plugins.enabled != manager.settings().enabled
+                || app.config.plugins.bindings != manager.settings().bindings
+            {
+                app.config.plugins = manager.settings().clone();
+                app.save_config()?;
             }
-        },
+        }
         Command::Preset {
             command: PresetCommand::Inspect {
                 preset, resolved, ..
@@ -288,18 +294,18 @@ async fn execute(
                 return Err(Error::new("invalid_preset", "The preset does not exist."));
             }
             if resolved {
-                output.write(&extensions.composition().await?)?;
+                output.write(&manager.composition().await?)?;
             } else {
                 output.write(
-                    &json!({"preset":preset,"standard_plugins":registry.lock().await.inspect(),"extensions":extensions.list()}),
+                    &json!({"preset":preset,"essential_plugins":registry.lock().await.inspect(),"installed_plugins":manager.list()?}),
                 )?;
             }
         }
-        Command::ExtensionAlias(arguments) => {
+        Command::PluginAlias(arguments) => {
             let (name, rest) = arguments.split_first().ok_or_else(|| {
                 Error::new(
-                    "invalid_extension_command",
-                    "The extension command name is missing.",
+                    "invalid_plugin_command",
+                    "The plugin command name is missing.",
                 )
             })?;
             let input = match rest {
@@ -310,14 +316,14 @@ async fn execute(
                 _ => {
                     return Err(Error::new(
                         "invalid_command_arguments",
-                        "The extension alias accepts a URL or --args JSON.",
+                        "The plugin command alias accepts a URL or --args JSON.",
                     ));
                 }
             };
             let cancellation = cancellation.clone();
             output.write(
                 &cancel_operation(
-                    extensions.run_command(name, input, cancellation.clone()),
+                    manager.run_command(name, input, cancellation.clone()),
                     cancellation,
                 )
                 .await?,
@@ -346,7 +352,7 @@ async fn execute(
             CardCommand::Fetch { url, source, .. } => {
                 let cancellation = cancellation.clone();
                 let result = cancel_operation(
-                    extensions.fetch_card(&url, &source, cancellation.clone()),
+                    manager.fetch_card(&url, &source, cancellation.clone()),
                     cancellation,
                 )
                 .await?;
@@ -404,6 +410,26 @@ async fn execute(
             PersonaCommand::List { .. } => output.write(&app.store.list("persona")?)?,
         },
         Command::Session { command } => match command {
+            SessionCommand::Set {
+                session,
+                key,
+                value,
+            } => {
+                let value = rustytavern::config::parse_value(&value)?;
+                let settings = app.set_session_setting(&session, &key, Some(value))?;
+                let adopted = rustytavern::app::adopt_session(&app, &session).await?;
+                output.write(&json!({"settings":settings,"version":adopted.version}))?;
+            }
+            SessionCommand::Unset { session, key } => {
+                let settings = app.set_session_setting(&session, &key, None)?;
+                let adopted = rustytavern::app::adopt_session(&app, &session).await?;
+                output.write(&json!({"settings":settings,"version":adopted.version}))?;
+            }
+            SessionCommand::Settings { session } => {
+                app.store.session(&session)?;
+                let effective = app.configuration_for(Some(&session))?;
+                output.write(&json!({"settings":app.session_settings(&session)?,"enabled_plugins":effective.plugins.enabled()}))?;
+            }
             SessionCommand::Configure {
                 session,
                 provider,
@@ -414,7 +440,7 @@ async fn execute(
             } => {
                 let mut target = app.store.session(&session)?;
                 target.provider = provider.unwrap_or(target.provider);
-                let config = extensions.provider(&app.config, &target.provider)?;
+                let config = app.config.provider(&target.provider)?;
                 target.model = model.unwrap_or_else(|| {
                     if config.model.is_empty() {
                         target.model.clone()
@@ -445,7 +471,7 @@ async fn execute(
                 ..
             } => {
                 let card = app.store.card(&character)?;
-                let config = extensions.provider(&app.config, &provider)?;
+                let config = app.config.provider(&provider)?;
                 let selected = if greeting == 0 {
                     card.text("first_mes").to_owned()
                 } else {
@@ -565,9 +591,7 @@ async fn execute(
             }
         }
         Command::Config { command } => match command {
-            ConfigCommand::Show => {
-                output.write(&extensions.configuration(&serde_json::to_value(&app.config)?)?)?
-            }
+            ConfigCommand::Show => output.write(&app.config.redacted()?)?,
             ConfigCommand::Capabilities => output.write(
                 &[
                     ProviderKind::OpenRouter,
@@ -584,6 +608,7 @@ async fn execute(
                 model,
                 endpoint,
                 api_key_env,
+                api_key,
                 context_limit,
                 output_limit,
                 parameters,
@@ -607,6 +632,12 @@ async fn execute(
                         "The provider name, model, and limits are invalid.",
                     ));
                 }
+                if api_key_env.is_some()
+                    && api_key.is_none()
+                    && let Some(profile) = app.config.providers.get_mut(&name)
+                {
+                    profile.api_key = None;
+                }
                 let config = ProviderConfig {
                     kind,
                     model,
@@ -619,9 +650,14 @@ async fn execute(
                     routing: routing
                         .map(|value| serde_json::from_str(&value))
                         .transpose()?,
-                    ..app.config.providers.get(&name).cloned().unwrap_or_default()
+                    ..app
+                        .config
+                        .providers
+                        .get(&name)
+                        .map(|p| p.settings.clone())
+                        .unwrap_or_default()
                 };
-                app.config.providers.insert(name.clone(), config);
+                app.config.set_provider(&name, config, api_key);
                 app.save_config()?;
                 output.write(&json!({"provider":name}))?;
             }

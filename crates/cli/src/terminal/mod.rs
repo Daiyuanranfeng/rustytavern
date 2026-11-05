@@ -13,8 +13,8 @@ use crossterm::{
 };
 use futures_util::StreamExt;
 use rustytavern::{
-    app::{ExtensionManager, default_registry},
-    config::{Application, StoredCredentials, default_data_dir},
+    app::PluginManager,
+    config::{Application, default_home},
     runtime::RuntimeEvent,
     session::Generation,
 };
@@ -65,7 +65,7 @@ pub(super) async fn run(path: Option<PathBuf>) -> Result<()> {
             "The interactive interface requires a terminal. Use --help for script commands.",
         ));
     }
-    let path = path.map(Ok).unwrap_or_else(default_data_dir)?;
+    let path = path.map(Ok).unwrap_or_else(default_home)?;
     let mut ui = Ui::open(path)?;
     if Application::open(&ui.path)?.config.providers.is_empty() {
         ui.slash("/provider")?;
@@ -104,7 +104,7 @@ pub(super) async fn run(path: Option<PathBuf>) -> Result<()> {
                         Some(Update::Finished(result)) => { ui.finish(result); ui.busy = false; }
                         None => return Err(Error::new("terminal_task", "The terminal operation ended without a result.")),
                     }
-                    if !ui.busy { if let Some(task) = job.take() { let _ = task.await; } }
+                    if !ui.busy && let Some(task) = job.take() { let _ = task.await; }
                 }
                 event = events.next() => {
                     let event = event.ok_or_else(|| Error::new("terminal_input", "The terminal input stream closed."))??;
@@ -168,10 +168,7 @@ async fn generate(
     sender: &mpsc::Sender<Update>,
 ) -> Result<Generation> {
     let app = Application::open(path)?;
-    let registry = default_registry(app.store.clone()).await?;
-    let mut extensions = ExtensionManager::open(&app.data_dir, app.store, registry)?;
-    extensions.restore().await?;
-    let runtime = rustytavern::app::runtime(&extensions).await?;
+    let runtime = rustytavern::app::session_runtime(&app, &session).await?;
     let provider = runtime.provider_config(&session).await?;
     let mut handle = if retry {
         runtime.regenerate(&session, provider).await?

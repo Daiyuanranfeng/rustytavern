@@ -488,8 +488,8 @@ fn future_schema_markers_block_writes_and_survive_export() {
 }
 
 #[tokio::test]
-async fn extension_upgrade_restores_its_native_migration_factory() {
-    use rustytavern::app::{ExtensionManager, NativeFactory, PluginDefinition};
+async fn plugin_upgrade_restores_its_native_migration_factory() {
+    use rustytavern::app::{NativeFactory, PluginDefinition, PluginManager};
     fn factory(store: Arc<SqliteStore>) -> NativeFactory {
         Arc::new(move |definition: &PluginDefinition| {
             let saved = store.clone();
@@ -521,48 +521,42 @@ async fn extension_upgrade_restores_its_native_migration_factory() {
     let store = Arc::new(SqliteStore::open(&path).unwrap());
     store.state_write(ID, "counter", &json!(7)).unwrap();
     let registry = Arc::new(tokio::sync::Mutex::new(PluginRegistry::default()));
-    let mut manager = ExtensionManager::open(data.path(), store.clone(), registry).unwrap();
+    let mut manager = PluginManager::open(store.clone(), registry, &Default::default());
     manager
         .register_factory("fixture.state".into(), factory(store.clone()))
         .unwrap();
     for schema in [1, 2] {
-        std::fs::write(source.path().join("extension.json"),serde_json::to_vec(&json!({"id":"example.state-package","version":format!("{schema}.0.0"),"product_api":"1","plugins":[{"manifest":"plugin.json"}]})).unwrap()).unwrap();
         std::fs::write(
             source.path().join("README.md"),
             "The fixture tests native state upgrades.\n",
         )
         .unwrap();
         std::fs::write(source.path().join("plugin.json"),serde_json::to_vec(&json!({"id":ID,"version":format!("{schema}.0.0"),"host_protocol":"1","state_schema":schema,"requested_capabilities":[format!("state.read:{ID}"),format!("state.write:{ID}")],"implementation":{"kind":"builtin","name":"fixture.state","configuration":{}}})).unwrap()).unwrap();
-        manager.install(source.path()).unwrap();
         manager
-            .enable(
-                &["example.state-package".into()],
-                grants().remove(ID).unwrap(),
-                false,
-            )
+            .install(source.path(), grants().remove(ID).unwrap(), false)
             .await
             .unwrap();
         assert_eq!(store.plugin_state_snapshot(ID).unwrap().schema, schema);
         if schema == 1 {
-            manager.disable("example.state-package").await.unwrap();
+            manager.disable(ID).await.unwrap();
         }
     }
+    let settings = manager.settings().clone();
     drop(manager);
     let store = Arc::new(SqliteStore::open(&path).unwrap());
     let before = store.plugin_state_snapshot(ID).unwrap();
-    let mut restored = ExtensionManager::open(
-        data.path(),
+    let mut restored = PluginManager::open(
         store.clone(),
         Arc::new(tokio::sync::Mutex::new(PluginRegistry::default())),
-    )
-    .unwrap();
+        &settings,
+    );
     restored
         .register_factory("fixture.state".into(), factory(store.clone()))
         .unwrap();
     restored.restore().await.unwrap();
     assert_eq!(store.plugin_state_snapshot(ID).unwrap(), before);
     assert_eq!(before.entries["counter"]["value"], json!({"count":7}));
-    restored.disable("example.state-package").await.unwrap();
-    restored.uninstall("example.state-package").unwrap();
+    restored.disable(ID).await.unwrap();
+    restored.uninstall(ID).await.unwrap();
     assert_eq!(store.plugin_state_snapshot(ID).unwrap(), before);
 }

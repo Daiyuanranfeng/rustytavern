@@ -461,26 +461,25 @@ fn validate_document(document: &Value) -> Result<()> {
         "creator",
         "character_version",
     ] {
-        if let Some(value) = data.get(field) {
-            if !value.is_string() {
-                return Err(Error::new(
-                    "invalid_card_field",
-                    format!("The data.{field} field must be a string."),
-                ));
-            }
+        if let Some(value) = data.get(field)
+            && !value.is_string()
+        {
+            return Err(Error::new(
+                "invalid_card_field",
+                format!("The data.{field} field must be a string."),
+            ));
         }
     }
     for field in ["alternate_greetings", "tags"] {
-        if let Some(value) = data.get(field) {
-            if !value
+        if let Some(value) = data.get(field)
+            && !value
                 .as_array()
                 .is_some_and(|values| values.iter().all(Value::is_string))
-            {
-                return Err(Error::new(
-                    "invalid_card_field",
-                    format!("The data.{field} field must contain strings."),
-                ));
-            }
+        {
+            return Err(Error::new(
+                "invalid_card_field",
+                format!("The data.{field} field must contain strings."),
+            ));
         }
     }
     if let Some(book) = data.get("character_book").filter(|v| !v.is_null()) {
@@ -511,16 +510,15 @@ fn validate_document(document: &Value) -> Result<()> {
                     ));
                 }
                 for key in ["keys", "secondary_keys"] {
-                    if let Some(value) = entry.get(key) {
-                        if !value
+                    if let Some(value) = entry.get(key)
+                        && !value
                             .as_array()
                             .is_some_and(|a| a.iter().all(Value::is_string))
-                        {
-                            return Err(Error::new(
-                                "invalid_card_field",
-                                "Lore keys must contain strings.",
-                            ));
-                        }
+                    {
+                        return Err(Error::new(
+                            "invalid_card_field",
+                            "Lore keys must contain strings.",
+                        ));
                     }
                 }
             }
@@ -653,14 +651,15 @@ pub fn compatibility(document: &Value) -> Vec<Diagnostic> {
                 "cooldown",
                 "sticky",
             ] {
-                if let Some(value) = entry.get(key).or_else(|| entry["extensions"].get(key)) {
-                    if !value.is_null() && value != &Value::Bool(false) {
-                        add(
-                            "unsupported_lore_rule",
-                            format!("{base}.{key}"),
-                            Severity::Unsupported,
-                        );
-                    }
+                if let Some(value) = entry.get(key).or_else(|| entry["extensions"].get(key))
+                    && !value.is_null()
+                    && value != &Value::Bool(false)
+                {
+                    add(
+                        "unsupported_lore_rule",
+                        format!("{base}.{key}"),
+                        Severity::Unsupported,
+                    );
                 }
             }
             if entry["position"]

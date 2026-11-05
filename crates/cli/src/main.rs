@@ -13,8 +13,9 @@ use std::path::PathBuf;
     about = "RustyTavern runs persistent character conversations."
 )]
 struct Cli {
+    /// The home directory holds config.toml and rustytavern.db. The default is ~/.rustytavern.
     #[arg(long, global = true)]
-    data_dir: Option<PathBuf>,
+    home: Option<PathBuf>,
     #[command(subcommand)]
     command: Option<Command>,
 }
@@ -48,20 +49,20 @@ enum Command {
         #[command(subcommand)]
         command: ConfigCommand,
     },
-    Extension {
-        #[command(subcommand)]
-        command: ExtensionCommand,
-    },
     Plugin {
         #[command(subcommand)]
         command: PluginCommand,
+    },
+    Extension {
+        #[command(subcommand)]
+        command: ExtensionCommand,
     },
     Preset {
         #[command(subcommand)]
         command: PresetCommand,
     },
     #[command(external_subcommand)]
-    ExtensionAlias(Vec<String>),
+    PluginAlias(Vec<String>),
     Chat {
         session: String,
         #[command(flatten)]
@@ -181,6 +182,22 @@ enum PersonaCommand {
 }
 #[derive(Subcommand)]
 enum SessionCommand {
+    /// The command sets one plugins key for this session, for example plugins.enabled '["agent"]'.
+    Set {
+        session: String,
+        key: String,
+        /// The value uses TOML syntax.
+        value: String,
+    },
+    /// The command removes one session setting.
+    Unset {
+        session: String,
+        key: String,
+    },
+    /// The command prints the session settings and the enabled plugins.
+    Settings {
+        session: String,
+    },
     Configure {
         session: String,
         #[arg(long)]
@@ -283,6 +300,7 @@ enum PromptCommand {
     },
 }
 #[derive(Subcommand)]
+#[allow(clippy::large_enum_variant)]
 enum ConfigCommand {
     Show,
     Capabilities,
@@ -297,6 +315,9 @@ enum ConfigCommand {
         endpoint: Option<String>,
         #[arg(long)]
         api_key_env: Option<String>,
+        /// The command stores the key in config.toml.
+        #[arg(long)]
+        api_key: Option<String>,
         #[arg(long, default_value_t = 16384)]
         context_limit: usize,
         #[arg(long, default_value_t = 1024)]
@@ -309,55 +330,44 @@ enum ConfigCommand {
         merge_system_messages: bool,
     },
 }
+/// An extension changes only the application appearance.
 #[derive(Subcommand)]
+/// The `[extensions.NAME]` tables of config.toml define the extensions.
 enum ExtensionCommand {
+    List,
+}
+/// A plugin changes agent behavior or adds content to the agent context.
+#[derive(Subcommand)]
+enum PluginCommand {
     Install {
-        #[arg(conflicts_with = "builtin")]
-        path: Option<PathBuf>,
+        path: PathBuf,
         #[arg(long)]
-        builtin: Option<String>,
+        grant: Vec<String>,
+        #[arg(long)]
+        trust_processes: bool,
     },
     List {
         #[arg(long)]
         json: bool,
     },
     Inspect {
-        extension: String,
+        plugin: String,
         #[arg(long)]
         json: bool,
     },
     Enable {
-        #[arg(required=true,num_args=1..)]
-        extensions: Vec<String>,
-        #[arg(long)]
-        grant: Vec<String>,
-        #[arg(long)]
-        trust_processes: bool,
+        plugin: String,
     },
     Disable {
-        extension: String,
+        plugin: String,
     },
     Uninstall {
-        extension: String,
-    },
-    Asset {
-        extension: String,
-        path: String,
-        #[arg(long)]
-        output: PathBuf,
+        plugin: String,
     },
     Run {
         command: String,
         #[command(flatten)]
         input: CommandInput,
-    },
-}
-#[derive(Subcommand)]
-enum PluginCommand {
-    Inspect {
-        plugin: Option<String>,
-        #[arg(long)]
-        json: bool,
     },
     Bind {
         service: String,
@@ -429,7 +439,7 @@ async fn main() {
     let result = if cli.command.is_some() {
         batch::run(cli).await
     } else {
-        terminal::run(cli.data_dir).await
+        terminal::run(cli.home).await
     };
     if let Err(error) = result {
         eprintln!(

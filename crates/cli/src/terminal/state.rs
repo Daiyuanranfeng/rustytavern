@@ -6,7 +6,6 @@ use rustytavern::{
     session::{Generation, GenerationStatus},
 };
 use serde::{Deserialize, Serialize};
-use std::io::{Read, Write};
 use tui_textarea::TextArea;
 
 pub(super) const COMMANDS: &[(&str, &str)] = &[
@@ -19,11 +18,14 @@ pub(super) const COMMANDS: &[(&str, &str)] = &[
     ("/retry", "Regenerate the last reply"),
     (
         "/settings",
-        "Lorebooks, branches, export, extensions, and more",
+        "Lorebooks, branches, export, plugins, and more",
     ),
     ("/help", "Read commands and keys"),
     ("/quit", "Close the terminal"),
 ];
+
+/// The namespace and key of the terminal selections in the database.
+const PREFERENCES: (&str, &str) = ("rustytavern.terminal", "preferences");
 
 #[derive(Default, Serialize, Deserialize)]
 #[serde(default, deny_unknown_fields)]
@@ -31,6 +33,8 @@ pub(super) struct Preferences {
     pub session: Option<String>,
     pub character: Option<String>,
     pub persona: Option<String>,
+    /// The `default_provider` setting in `config.toml` holds this value.
+    #[serde(skip)]
     pub provider: Option<String>,
 }
 
@@ -51,7 +55,6 @@ pub(super) enum After {
     Provider(String),
     Setup(String),
     Models(Vec<String>),
-    Then(Box<Command>, Box<After>),
     Session,
     Refresh,
     View(&'static str),
@@ -69,7 +72,6 @@ pub(super) enum FormKind {
     Prompt,
     Bind,
     Install,
-    Enable(String),
     Run,
 }
 pub(super) enum Choice {
@@ -140,6 +142,8 @@ pub(super) struct Message {
 }
 pub(super) struct Ui {
     pub path: PathBuf,
+    /// The enabled extensions set the user and character bubble colors.
+    pub bubbles: [ratatui::style::Color; 2],
     pub preferences: Preferences,
     pub composer: TextArea<'static>,
     pub overlay: Option<Overlay>,
@@ -290,27 +294,25 @@ pub(super) fn field(name: &'static str, value: &str) -> Field {
 
 impl Ui {
     pub fn open(path: PathBuf) -> Result<Self> {
-        Application::open(&path)?;
-        let preference_path = path.join("terminal.json");
-        let (preferences, notice) = if preference_path.exists() {
-            let mut bytes = Vec::new();
-            std::fs::File::open(preference_path)?
-                .take(65537)
-                .read_to_end(&mut bytes)?;
-            match serde_json::from_slice(&bytes) {
-                Ok(value) if bytes.len() <= 65536 => (value, String::new()),
-                _ => (
+        let app = Application::open(&path)?;
+        let (preferences, notice) = match app.store.state_read(PREFERENCES.0, PREFERENCES.1)? {
+            Some(value) => match serde_json::from_value(value) {
+                Ok(value) => (value, String::new()),
+                Err(_) => (
                     Preferences::default(),
                     "The terminal preferences are invalid. Use /chats to select a chat.".into(),
                 ),
-            }
-        } else {
-            (
+            },
+            None => (
                 Preferences::default(),
                 "Use /provider, /character, /persona, then /new.".into(),
-            )
+            ),
         };
+        let mut preferences: Preferences = preferences;
+        preferences.provider = app.config.default_provider.clone();
+        let theme = rustytavern::extension::theme(&app.config.extensions);
         let mut ui = Self {
+            bubbles: super::view::bubbles(&theme),
             path,
             preferences,
             composer: editor(""),
@@ -343,20 +345,28 @@ impl Ui {
         }
         Ok(ui)
     }
+    /// The method saves the terminal selections in the database.
     pub fn save(&self) -> Result<()> {
-        let mut file = tempfile::NamedTempFile::new_in(&self.path)?;
-        file.write_all(&serde_json::to_vec(&self.preferences)?)?;
-        file.as_file().sync_all()?;
-        file.persist(self.path.join("terminal.json")).map_err(|e| {
-            Error::new("io", "The terminal preferences cannot be saved.").with_source(e.error)
-        })?;
+        let mut app = Application::open(&self.path)?;
+        app.store.state_write(
+            PREFERENCES.0,
+            PREFERENCES.1,
+            &serde_json::to_value(&self.preferences)?,
+        )?;
+        if app.config.default_provider != self.preferences.provider {
+            app.config.default_provider = self.preferences.provider.clone();
+            app.save_config()?;
+        }
         Ok(())
     }
     pub fn refresh(&mut self) -> Result<()> {
         let app = Application::open(&self.path)?;
         let Some(id) = &self.preferences.session else {
             self.model = self.preferences.provider.as_ref().and_then(|name| {
-                Some([app.config.providers.get(name)?.model.clone(), name.clone()])
+                Some([
+                    app.config.providers.get(name)?.settings.model.clone(),
+                    name.clone(),
+                ])
             });
             return Ok(());
         };
@@ -821,10 +831,6 @@ impl Ui {
                 }
                 After::Setup(name) => {
                     self.catalogs(vec![name]);
-                    return Ok(());
-                }
-                After::Then(command, after) => {
-                    self.command(*command, *after);
                     return Ok(());
                 }
                 After::Card => self.preferences.character = value["id"].as_str().map(str::to_owned),
