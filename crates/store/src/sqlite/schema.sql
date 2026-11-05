@@ -1,0 +1,10 @@
+CREATE TABLE IF NOT EXISTS cards(id TEXT PRIMARY KEY, payload TEXT NOT NULL);
+CREATE TABLE IF NOT EXISTS worldbooks(id TEXT PRIMARY KEY, payload TEXT NOT NULL);
+CREATE TABLE IF NOT EXISTS personas(id TEXT PRIMARY KEY, payload TEXT NOT NULL);
+CREATE TABLE IF NOT EXISTS sessions(id TEXT PRIMARY KEY, payload TEXT NOT NULL, version INTEGER NOT NULL, head TEXT, owner TEXT, lease_until INTEGER NOT NULL DEFAULT 0, fence INTEGER NOT NULL DEFAULT 0);
+CREATE TABLE IF NOT EXISTS messages(seq INTEGER PRIMARY KEY AUTOINCREMENT, id TEXT NOT NULL UNIQUE, session_id TEXT NOT NULL REFERENCES sessions(id), parent_id TEXT REFERENCES messages(id), role TEXT NOT NULL, text TEXT NOT NULL, generation_id TEXT);
+CREATE TABLE IF NOT EXISTS generations(id TEXT PRIMARY KEY, session_id TEXT NOT NULL REFERENCES sessions(id), idempotency_key TEXT, payload TEXT NOT NULL, UNIQUE(session_id,idempotency_key));
+CREATE TABLE IF NOT EXISTS plugin_state(namespace TEXT NOT NULL, key TEXT NOT NULL, revision INTEGER NOT NULL, payload TEXT NOT NULL, PRIMARY KEY(namespace,key,revision));
+CREATE INDEX IF NOT EXISTS message_session ON messages(session_id,seq);
+CREATE INDEX IF NOT EXISTS generation_session ON generations(session_id);
+PRAGMA user_version=5;

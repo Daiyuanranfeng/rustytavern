@@ -1,0 +1,664 @@
+{
+  "schema_version": 2,
+  "session": {
+    "id": "session-6b5e9426-6811-479e-ab51-0b6792ed4249",
+    "character_id": "card-2ac24fca5069e775d0e4fc0a",
+    "persona_id": "persona-0d21c156afcc97079a0f04ab",
+    "provider": "local",
+    "model": "fixture",
+    "head": "message-68cd77a7-afce-4bad-b7bd-43dc75bcb009",
+    "version": 3,
+    "accept_reduced": false,
+    "options": {
+      "context_limit": 16384,
+      "output_limit": 1024,
+      "protocol_margin": 128,
+      "lore_budget": 2048,
+      "example_budget": 1024,
+      "main_instruction": "You act as {{char}}. You keep the character's identity and voice.",
+      "post_history_instruction": "",
+      "note": ""
+    },
+    "composition": {
+      "bindings": {},
+      "configuration_schema": 1,
+      "contributions": [],
+      "extensions": [],
+      "identity": "0f877651a7ad591e7b59bc45d724089e82f258d57d43a93eccd77edbdf88525c",
+      "native": {
+        "artifact_hash": "df3c304b3eb695e53604f6386e316735fe98bb37c747c2831112eaefced41773",
+        "profile": "core-v1",
+        "provider": "rustytavern::provider::HttpProvider"
+      },
+      "plugins": [
+        {
+          "grants": [],
+          "manifest": {
+            "allowed_slots": [],
+            "artifact_hash": "df3c304b3eb695e53604f6386e316735fe98bb37c747c2831112eaefced41773",
+            "configuration_hash": "21e20b017556b89727fe0835a3990c4090e108fff03c1848da162c4ba03e1760",
+            "host_protocol": "1",
+            "id": "org.rustytavern.profile.core-v1",
+            "provides": [
+              "profile/1"
+            ],
+            "requested_capabilities": [],
+            "requires": [],
+            "state_schema": 1,
+            "version": "0.1.0"
+          },
+          "owners": [
+            "core-product"
+          ],
+          "state": "active"
+        },
+        {
+          "grants": [],
+          "manifest": {
+            "allowed_slots": [],
+            "artifact_hash": "df3c304b3eb695e53604f6386e316735fe98bb37c747c2831112eaefced41773",
+            "configuration_hash": "c065285358166d98ca7056f8cbbecf41f29367ee5e13398f8edc8d7e4e516529",
+            "host_protocol": "1",
+            "id": "org.rustytavern.provider.http",
+            "provides": [
+              "provider/1"
+            ],
+            "requested_capabilities": [],
+            "requires": [],
+            "state_schema": 1,
+            "version": "0.1.0"
+          },
+          "owners": [
+            "core-product"
+          ],
+          "state": "active"
+        },
+        {
+          "grants": [],
+          "manifest": {
+            "allowed_slots": [],
+            "artifact_hash": "df3c304b3eb695e53604f6386e316735fe98bb37c747c2831112eaefced41773",
+            "configuration_hash": "f89b57fdb148e6ca6e3fba4ef3f8c4e411c50595808f1c07e3b0c2df408b498e",
+            "host_protocol": "1",
+            "id": "org.rustytavern.store.sqlite",
+            "provides": [
+              "store/1"
+            ],
+            "requested_capabilities": [],
+            "requires": [],
+            "state_schema": 1,
+            "version": "0.1.0"
+          },
+          "owners": [
+            "core-product"
+          ],
+          "state": "active"
+        }
+      ],
+      "preset": "tavern",
+      "service_identity": "03a274850ff1f42e2a1ad70ae91125347996b53a66d8a449aa2b3375552e6485",
+      "session_configurations": [
+        {
+          "accept_reduced": false,
+          "character_id": "card-2ac24fca5069e775d0e4fc0a",
+          "composition": {
+            "bindings": {},
+            "contributions": [],
+            "extensions": [],
+            "identity": "0f877651a7ad591e7b59bc45d724089e82f258d57d43a93eccd77edbdf88525c",
+            "native": {
+              "artifact_hash": "df3c304b3eb695e53604f6386e316735fe98bb37c747c2831112eaefced41773",
+              "profile": "core-v1",
+              "provider": "rustytavern::provider::HttpProvider"
+            },
+            "plugins": [
+              {
+                "grants": [],
+                "manifest": {
+                  "allowed_slots": [],
+                  "artifact_hash": "df3c304b3eb695e53604f6386e316735fe98bb37c747c2831112eaefced41773",
+                  "configuration_hash": "21e20b017556b89727fe0835a3990c4090e108fff03c1848da162c4ba03e1760",
+                  "host_protocol": "1",
+                  "id": "org.rustytavern.profile.core-v1",
+                  "provides": [
+                    "profile/1"
+                  ],
+                  "requested_capabilities": [],
+                  "requires": [],
+                  "state_schema": 1,
+                  "version": "0.1.0"
+                },
+                "owners": [
+                  "core-product"
+                ],
+                "state": "active"
+              },
+              {
+                "grants": [],
+                "manifest": {
+                  "allowed_slots": [],
+                  "artifact_hash": "df3c304b3eb695e53604f6386e316735fe98bb37c747c2831112eaefced41773",
+                  "configuration_hash": "c065285358166d98ca7056f8cbbecf41f29367ee5e13398f8edc8d7e4e516529",
+                  "host_protocol": "1",
+                  "id": "org.rustytavern.provider.http",
+                  "provides": [
+                    "provider/1"
+                  ],
+                  "requested_capabilities": [],
+                  "requires": [],
+                  "state_schema": 1,
+                  "version": "0.1.0"
+                },
+                "owners": [
+                  "core-product"
+                ],
+                "state": "active"
+              },
+              {
+                "grants": [],
+                "manifest": {
+                  "allowed_slots": [],
+                  "artifact_hash": "df3c304b3eb695e53604f6386e316735fe98bb37c747c2831112eaefced41773",
+                  "configuration_hash": "f89b57fdb148e6ca6e3fba4ef3f8c4e411c50595808f1c07e3b0c2df408b498e",
+                  "host_protocol": "1",
+                  "id": "org.rustytavern.store.sqlite",
+                  "provides": [
+                    "store/1"
+                  ],
+                  "requested_capabilities": [],
+                  "requires": [],
+                  "state_schema": 1,
+                  "version": "0.1.0"
+                },
+                "owners": [
+                  "core-product"
+                ],
+                "state": "active"
+              }
+            ],
+            "preset": "tavern",
+            "service_identity": "03a274850ff1f42e2a1ad70ae91125347996b53a66d8a449aa2b3375552e6485"
+          },
+          "identity": "ca12f8d4bb4fd0f2e7c153784bb4293005474c7d2ffb55432d9b530eea2dd8d7",
+          "model": "fixture",
+          "options": {
+            "context_limit": 16384,
+            "example_budget": 1024,
+            "lore_budget": 2048,
+            "main_instruction": "You act as {{char}}. You keep the character's identity and voice.",
+            "note": "",
+            "output_limit": 1024,
+            "post_history_instruction": "",
+            "protocol_margin": 128
+          },
+          "persona_id": "persona-0d21c156afcc97079a0f04ab",
+          "profile": "core-v1",
+          "provider": "local",
+          "provider_config": {
+            "api_key_env": null,
+            "context_limit": 16384,
+            "endpoint": "http://127.0.0.1:49625/chat",
+            "kind": "custom",
+            "model": "fixture",
+            "output_limit": 1024,
+            "parameters": {},
+            "routing": null,
+            "timeout_seconds": 120
+          },
+          "revision": 1
+        }
+      ]
+    }
+  },
+  "includes_prompt_traces": false,
+  "characters": [
+    {
+      "id": "card-2ac24fca5069e775d0e4fc0a",
+      "source_hash": "2ac24fca5069e775d0e4fc0abcb3f3ac6e984a37b41d3456e198bd4b8c7ba8f7",
+      "format": "json",
+      "selected_envelope": null,
+      "conflicting_envelopes": false,
+      "document": {
+        "data": {
+          "alternate_greetings": [
+            "Welcome back, {{user}}."
+          ],
+          "character_version": "1",
+          "creator": "RustyTavern synthetic fixture",
+          "creator_notes": "",
+          "description": "{{char}} keeps a lighthouse.",
+          "extensions": {
+            "org.example.sentinel": {
+              "execute": false,
+              "value": 7
+            }
+          },
+          "first_mes": "Hello, {{user}}. I am {{char}}.",
+          "mes_example": "",
+          "name": "Lumen",
+          "personality": "Lumen speaks in short sentences.",
+          "post_history_instructions": "",
+          "scenario": "{{user}} visits the harbor.",
+          "system_prompt": "",
+          "tags": []
+        },
+        "spec": "chara_card_v3",
+        "spec_version": "3.0"
+      },
+      "diagnostics": [
+        {
+          "code": "unverified_extension",
+          "field": "data.extensions.org.example.sentinel",
+          "severity": "warning"
+        }
+      ],
+      "original": "eyJzcGVjIjoiY2hhcmFfY2FyZF92MyIsInNwZWNfdmVyc2lvbiI6IjMuMCIsImRhdGEiOnsibmFtZSI6Ikx1bWVuIiwiZGVzY3JpcHRpb24iOiJ7e2NoYXJ9fSBrZWVwcyBhIGxpZ2h0aG91c2UuIiwicGVyc29uYWxpdHkiOiJMdW1lbiBzcGVha3MgaW4gc2hvcnQgc2VudGVuY2VzLiIsInNjZW5hcmlvIjoie3t1c2VyfX0gdmlzaXRzIHRoZSBoYXJib3IuIiwiZmlyc3RfbWVzIjoiSGVsbG8sIHt7dXNlcn19LiBJIGFtIHt7Y2hhcn19LiIsIm1lc19leGFtcGxlIjoiIiwiY3JlYXRvcl9ub3RlcyI6IiIsInN5c3RlbV9wcm9tcHQiOiIiLCJwb3N0X2hpc3RvcnlfaW5zdHJ1Y3Rpb25zIjoiIiwiYWx0ZXJuYXRlX2dyZWV0aW5ncyI6WyJXZWxjb21lIGJhY2ssIHt7dXNlcn19LiJdLCJ0YWdzIjpbXSwiY3JlYXRvciI6IlJ1c3R5VGF2ZXJuIHN5bnRoZXRpYyBmaXh0dXJlIiwiY2hhcmFjdGVyX3ZlcnNpb24iOiIxIiwiZXh0ZW5zaW9ucyI6eyJvcmcuZXhhbXBsZS5zZW50aW5lbCI6eyJ2YWx1ZSI6NywiZXhlY3V0ZSI6ZmFsc2V9fX19Cg==",
+      "provenance": null
+    }
+  ],
+  "personas": [
+    {
+      "id": "persona-0d21c156afcc97079a0f04ab",
+      "name": "Alex",
+      "description": "A visitor."
+    }
+  ],
+  "plugin_state": [],
+  "messages": [
+    {
+      "id": "message-d1e6b9bb-6f5d-46aa-a40a-4d35215039d2",
+      "parent_id": null,
+      "role": "assistant",
+      "text": "Hello, Alex. I am Lumen.",
+      "generation_id": null
+    },
+    {
+      "id": "message-be3c45e3-ba14-4507-9ed0-d071d63f8c09",
+      "parent_id": "message-d1e6b9bb-6f5d-46aa-a40a-4d35215039d2",
+      "role": "user",
+      "text": "Hello.",
+      "generation_id": null
+    },
+    {
+      "id": "message-68cd77a7-afce-4bad-b7bd-43dc75bcb009",
+      "parent_id": "message-be3c45e3-ba14-4507-9ed0-d071d63f8c09",
+      "role": "assistant",
+      "text": "A partial reply.",
+      "generation_id": "generation-fdb70e60-327d-4902-87d2-adc0ba89862a"
+    }
+  ],
+  "generations": [
+    {
+      "id": "generation-fdb70e60-327d-4902-87d2-adc0ba89862a",
+      "session_id": "session-6b5e9426-6811-479e-ab51-0b6792ed4249",
+      "user_node": "message-be3c45e3-ba14-4507-9ed0-d071d63f8c09",
+      "status": "failed",
+      "draft": "A partial reply.",
+      "accepted_message": "message-68cd77a7-afce-4bad-b7bd-43dc75bcb009",
+      "snapshot": {
+        "character_document": {
+          "data": {
+            "alternate_greetings": [
+              "Welcome back, {{user}}."
+            ],
+            "character_version": "1",
+            "creator": "RustyTavern synthetic fixture",
+            "creator_notes": "",
+            "description": "{{char}} keeps a lighthouse.",
+            "extensions": {
+              "org.example.sentinel": {
+                "execute": false,
+                "value": 7
+              }
+            },
+            "first_mes": "Hello, {{user}}. I am {{char}}.",
+            "mes_example": "",
+            "name": "Lumen",
+            "personality": "Lumen speaks in short sentences.",
+            "post_history_instructions": "",
+            "scenario": "{{user}} visits the harbor.",
+            "system_prompt": "",
+            "tags": []
+          },
+          "spec": "chara_card_v3",
+          "spec_version": "3.0"
+        },
+        "character_id": "card-2ac24fca5069e775d0e4fc0a",
+        "history": [
+          {
+            "generation_id": null,
+            "id": "message-d1e6b9bb-6f5d-46aa-a40a-4d35215039d2",
+            "parent_id": null,
+            "role": "assistant",
+            "text": "Hello, Alex. I am Lumen."
+          }
+        ],
+        "persona": {
+          "description": "A visitor.",
+          "id": "persona-0d21c156afcc97079a0f04ab",
+          "name": "Alex"
+        },
+        "plugin_composition": {
+          "bindings": {},
+          "contributions": [],
+          "extensions": [],
+          "identity": "0f877651a7ad591e7b59bc45d724089e82f258d57d43a93eccd77edbdf88525c",
+          "native": {
+            "artifact_hash": "df3c304b3eb695e53604f6386e316735fe98bb37c747c2831112eaefced41773",
+            "profile": "core-v1",
+            "provider": "rustytavern::provider::HttpProvider"
+          },
+          "plugins": [
+            {
+              "grants": [],
+              "manifest": {
+                "allowed_slots": [],
+                "artifact_hash": "df3c304b3eb695e53604f6386e316735fe98bb37c747c2831112eaefced41773",
+                "configuration_hash": "21e20b017556b89727fe0835a3990c4090e108fff03c1848da162c4ba03e1760",
+                "host_protocol": "1",
+                "id": "org.rustytavern.profile.core-v1",
+                "provides": [
+                  "profile/1"
+                ],
+                "requested_capabilities": [],
+                "requires": [],
+                "state_schema": 1,
+                "version": "0.1.0"
+              },
+              "owners": [
+                "core-product"
+              ],
+              "state": "active"
+            },
+            {
+              "grants": [],
+              "manifest": {
+                "allowed_slots": [],
+                "artifact_hash": "df3c304b3eb695e53604f6386e316735fe98bb37c747c2831112eaefced41773",
+                "configuration_hash": "c065285358166d98ca7056f8cbbecf41f29367ee5e13398f8edc8d7e4e516529",
+                "host_protocol": "1",
+                "id": "org.rustytavern.provider.http",
+                "provides": [
+                  "provider/1"
+                ],
+                "requested_capabilities": [],
+                "requires": [],
+                "state_schema": 1,
+                "version": "0.1.0"
+              },
+              "owners": [
+                "core-product"
+              ],
+              "state": "active"
+            },
+            {
+              "grants": [],
+              "manifest": {
+                "allowed_slots": [],
+                "artifact_hash": "df3c304b3eb695e53604f6386e316735fe98bb37c747c2831112eaefced41773",
+                "configuration_hash": "f89b57fdb148e6ca6e3fba4ef3f8c4e411c50595808f1c07e3b0c2df408b498e",
+                "host_protocol": "1",
+                "id": "org.rustytavern.store.sqlite",
+                "provides": [
+                  "store/1"
+                ],
+                "requested_capabilities": [],
+                "requires": [],
+                "state_schema": 1,
+                "version": "0.1.0"
+              },
+              "owners": [
+                "core-product"
+              ],
+              "state": "active"
+            }
+          ],
+          "preset": "tavern",
+          "service_identity": "03a274850ff1f42e2a1ad70ae91125347996b53a66d8a449aa2b3375552e6485"
+        },
+        "plugin_state": {},
+        "profile": "core-v1",
+        "provider_config": {
+          "api_key_env": null,
+          "context_limit": 16384,
+          "endpoint": "http://127.0.0.1:49625/chat",
+          "kind": "custom",
+          "model": "fixture",
+          "output_limit": 1024,
+          "parameters": {},
+          "routing": null,
+          "timeout_seconds": 120
+        },
+        "schema_version": 2,
+        "session": {
+          "accept_reduced": false,
+          "character_id": "card-2ac24fca5069e775d0e4fc0a",
+          "composition": {
+            "bindings": {},
+            "configuration_schema": 1,
+            "contributions": [],
+            "extensions": [],
+            "identity": "0f877651a7ad591e7b59bc45d724089e82f258d57d43a93eccd77edbdf88525c",
+            "native": {
+              "artifact_hash": "df3c304b3eb695e53604f6386e316735fe98bb37c747c2831112eaefced41773",
+              "profile": "core-v1",
+              "provider": "rustytavern::provider::HttpProvider"
+            },
+            "plugins": [
+              {
+                "grants": [],
+                "manifest": {
+                  "allowed_slots": [],
+                  "artifact_hash": "df3c304b3eb695e53604f6386e316735fe98bb37c747c2831112eaefced41773",
+                  "configuration_hash": "21e20b017556b89727fe0835a3990c4090e108fff03c1848da162c4ba03e1760",
+                  "host_protocol": "1",
+                  "id": "org.rustytavern.profile.core-v1",
+                  "provides": [
+                    "profile/1"
+                  ],
+                  "requested_capabilities": [],
+                  "requires": [],
+                  "state_schema": 1,
+                  "version": "0.1.0"
+                },
+                "owners": [
+                  "core-product"
+                ],
+                "state": "active"
+              },
+              {
+                "grants": [],
+                "manifest": {
+                  "allowed_slots": [],
+                  "artifact_hash": "df3c304b3eb695e53604f6386e316735fe98bb37c747c2831112eaefced41773",
+                  "configuration_hash": "c065285358166d98ca7056f8cbbecf41f29367ee5e13398f8edc8d7e4e516529",
+                  "host_protocol": "1",
+                  "id": "org.rustytavern.provider.http",
+                  "provides": [
+                    "provider/1"
+                  ],
+                  "requested_capabilities": [],
+                  "requires": [],
+                  "state_schema": 1,
+                  "version": "0.1.0"
+                },
+                "owners": [
+                  "core-product"
+                ],
+                "state": "active"
+              },
+              {
+                "grants": [],
+                "manifest": {
+                  "allowed_slots": [],
+                  "artifact_hash": "df3c304b3eb695e53604f6386e316735fe98bb37c747c2831112eaefced41773",
+                  "configuration_hash": "f89b57fdb148e6ca6e3fba4ef3f8c4e411c50595808f1c07e3b0c2df408b498e",
+                  "host_protocol": "1",
+                  "id": "org.rustytavern.store.sqlite",
+                  "provides": [
+                    "store/1"
+                  ],
+                  "requested_capabilities": [],
+                  "requires": [],
+                  "state_schema": 1,
+                  "version": "0.1.0"
+                },
+                "owners": [
+                  "core-product"
+                ],
+                "state": "active"
+              }
+            ],
+            "preset": "tavern",
+            "service_identity": "03a274850ff1f42e2a1ad70ae91125347996b53a66d8a449aa2b3375552e6485",
+            "session_configurations": [
+              {
+                "accept_reduced": false,
+                "character_id": "card-2ac24fca5069e775d0e4fc0a",
+                "composition": {
+                  "bindings": {},
+                  "contributions": [],
+                  "extensions": [],
+                  "identity": "0f877651a7ad591e7b59bc45d724089e82f258d57d43a93eccd77edbdf88525c",
+                  "native": {
+                    "artifact_hash": "df3c304b3eb695e53604f6386e316735fe98bb37c747c2831112eaefced41773",
+                    "profile": "core-v1",
+                    "provider": "rustytavern::provider::HttpProvider"
+                  },
+                  "plugins": [
+                    {
+                      "grants": [],
+                      "manifest": {
+                        "allowed_slots": [],
+                        "artifact_hash": "df3c304b3eb695e53604f6386e316735fe98bb37c747c2831112eaefced41773",
+                        "configuration_hash": "21e20b017556b89727fe0835a3990c4090e108fff03c1848da162c4ba03e1760",
+                        "host_protocol": "1",
+                        "id": "org.rustytavern.profile.core-v1",
+                        "provides": [
+                          "profile/1"
+                        ],
+                        "requested_capabilities": [],
+                        "requires": [],
+                        "state_schema": 1,
+                        "version": "0.1.0"
+                      },
+                      "owners": [
+                        "core-product"
+                      ],
+                      "state": "active"
+                    },
+                    {
+                      "grants": [],
+                      "manifest": {
+                        "allowed_slots": [],
+                        "artifact_hash": "df3c304b3eb695e53604f6386e316735fe98bb37c747c2831112eaefced41773",
+                        "configuration_hash": "c065285358166d98ca7056f8cbbecf41f29367ee5e13398f8edc8d7e4e516529",
+                        "host_protocol": "1",
+                        "id": "org.rustytavern.provider.http",
+                        "provides": [
+                          "provider/1"
+                        ],
+                        "requested_capabilities": [],
+                        "requires": [],
+                        "state_schema": 1,
+                        "version": "0.1.0"
+                      },
+                      "owners": [
+                        "core-product"
+                      ],
+                      "state": "active"
+                    },
+                    {
+                      "grants": [],
+                      "manifest": {
+                        "allowed_slots": [],
+                        "artifact_hash": "df3c304b3eb695e53604f6386e316735fe98bb37c747c2831112eaefced41773",
+                        "configuration_hash": "f89b57fdb148e6ca6e3fba4ef3f8c4e411c50595808f1c07e3b0c2df408b498e",
+                        "host_protocol": "1",
+                        "id": "org.rustytavern.store.sqlite",
+                        "provides": [
+                          "store/1"
+                        ],
+                        "requested_capabilities": [],
+                        "requires": [],
+                        "state_schema": 1,
+                        "version": "0.1.0"
+                      },
+                      "owners": [
+                        "core-product"
+                      ],
+                      "state": "active"
+                    }
+                  ],
+                  "preset": "tavern",
+                  "service_identity": "03a274850ff1f42e2a1ad70ae91125347996b53a66d8a449aa2b3375552e6485"
+                },
+                "identity": "ca12f8d4bb4fd0f2e7c153784bb4293005474c7d2ffb55432d9b530eea2dd8d7",
+                "model": "fixture",
+                "options": {
+                  "context_limit": 16384,
+                  "example_budget": 1024,
+                  "lore_budget": 2048,
+                  "main_instruction": "You act as {{char}}. You keep the character's identity and voice.",
+                  "note": "",
+                  "output_limit": 1024,
+                  "post_history_instruction": "",
+                  "protocol_margin": 128
+                },
+                "persona_id": "persona-0d21c156afcc97079a0f04ab",
+                "profile": "core-v1",
+                "provider": "local",
+                "provider_config": {
+                  "api_key_env": null,
+                  "context_limit": 16384,
+                  "endpoint": "http://127.0.0.1:49625/chat",
+                  "kind": "custom",
+                  "model": "fixture",
+                  "output_limit": 1024,
+                  "parameters": {},
+                  "routing": null,
+                  "timeout_seconds": 120
+                },
+                "revision": 1
+              }
+            ]
+          },
+          "head": "message-d1e6b9bb-6f5d-46aa-a40a-4d35215039d2",
+          "id": "session-6b5e9426-6811-479e-ab51-0b6792ed4249",
+          "model": "fixture",
+          "options": {
+            "context_limit": 16384,
+            "example_budget": 1024,
+            "lore_budget": 2048,
+            "main_instruction": "You act as {{char}}. You keep the character's identity and voice.",
+            "note": "",
+            "output_limit": 1024,
+            "post_history_instruction": "",
+            "protocol_margin": 128
+          },
+          "persona_id": "persona-0d21c156afcc97079a0f04ab",
+          "provider": "local",
+          "version": 0
+        },
+        "submitted_text": "Hello."
+      },
+      "enrichment": {
+        "schema_version": 1,
+        "input_hash": "5fb26c6e5e5821e8e9e613be4571ce8f49f0d09e0818ded877bb743784248a84",
+        "composition_id": "0f877651a7ad591e7b59bc45d724089e82f258d57d43a93eccd77edbdf88525c",
+        "complete": true,
+        "records": []
+      },
+      "request": null,
+      "usage": {
+        "total_tokens": 9
+      },
+      "error": {
+        "code": "output_limit",
+        "message": "The provider exhausted the output allowance."
+      },
+      "fencing_token": 1,
+      "session_version": 1
+    }
+  ]
+}

@@ -1,0 +1,13 @@
+{
+  "id": "example.lighthouse-notes",
+  "version": "0.1.0",
+  "product_api": "1",
+  "plugins": [
+    {
+      "manifest": "plugins/world.json"
+    },
+    {
+      "manifest": "plugins/voice.json"
+    }
+  ]
+}

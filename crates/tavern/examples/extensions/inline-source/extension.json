@@ -1,0 +1,17 @@
+{
+  "id": "example.inline-source",
+  "version": "0.1.0",
+  "product_api": "1",
+  "plugins": [
+    {
+      "manifest": "plugins/source.json"
+    }
+  ],
+  "commands": [
+    {
+      "name": "example-import",
+      "service": "card.source.example/1",
+      "operation": "fetch"
+    }
+  ]
+}

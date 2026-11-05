@@ -1,0 +1,16 @@
+{
+  "id": "org.rustytavern.source.risurealm",
+  "version": "0.1.0",
+  "host_protocol": "1",
+  "provides": [
+    "card.source.risurealm/1"
+  ],
+  "requested_capabilities": [
+    "network:https:realm.risuai.net"
+  ],
+  "state_schema": 1,
+  "implementation": {
+    "kind": "builtin",
+    "name": "source.risurealm"
+  }
+}

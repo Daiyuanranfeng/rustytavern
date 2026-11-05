@@ -1,0 +1,11 @@
+{
+  "api_key_env": null,
+  "context_limit": 16384,
+  "endpoint": "http://127.0.0.1:1",
+  "kind": "custom",
+  "model": "fixture",
+  "output_limit": 1024,
+  "parameters": {},
+  "routing": null,
+  "timeout_seconds": 120
+}

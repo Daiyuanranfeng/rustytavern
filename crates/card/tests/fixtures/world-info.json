@@ -1,0 +1,132 @@
+{
+  "name": "Harbor",
+  "entries": {
+    "12": {
+      "uid": 12,
+      "displayIndex": 0,
+      "futureSetting": {
+        "retain": null
+      },
+      "characterFilter": {
+        "names": [
+          "Aster"
+        ],
+        "tags": [
+          "tag-1",
+          7
+        ],
+        "isExclude": false,
+        "futureFilter": true
+      },
+      "extensions": {
+        "vendor.native": null
+      },
+      "key": [
+        "harbor"
+      ],
+      "keysecondary": [
+        "lantern"
+      ],
+      "comment": "An authored fixture.",
+      "content": "The harbor has a stone tower.",
+      "constant": true,
+      "vectorized": true,
+      "selective": true,
+      "selectiveLogic": 1,
+      "addMemo": true,
+      "order": 2,
+      "position": 2,
+      "disable": true,
+      "ignoreBudget": true,
+      "excludeRecursion": true,
+      "preventRecursion": true,
+      "matchPersonaDescription": true,
+      "matchCharacterDescription": true,
+      "matchCharacterPersonality": true,
+      "matchCharacterDepthPrompt": true,
+      "matchScenario": true,
+      "matchCreatorNotes": true,
+      "delayUntilRecursion": 0,
+      "probability": 2,
+      "useProbability": true,
+      "depth": 2,
+      "outletName": "An authored fixture.",
+      "group": "An authored fixture.",
+      "groupOverride": true,
+      "groupWeight": 2,
+      "scanDepth": null,
+      "caseSensitive": null,
+      "matchWholeWords": null,
+      "useGroupScoring": null,
+      "automationId": "An authored fixture.",
+      "role": 1,
+      "sticky": null,
+      "cooldown": null,
+      "delay": null,
+      "characterFilterNames": [
+        "harbor"
+      ],
+      "characterFilterTags": [
+        "harbor"
+      ],
+      "characterFilterExclude": true,
+      "triggers": [
+        "harbor"
+      ]
+    }
+  },
+  "originalData": {
+    "name": "Harbor book",
+    "description": "An authored worldbook.",
+    "scan_depth": 4,
+    "token_budget": 512,
+    "recursive_scanning": false,
+    "extensions": {
+      "vendor.book": [
+        1,
+        null
+      ]
+    },
+    "entries": [
+      {
+        "keys": [
+          "harbor",
+          "港"
+        ],
+        "content": "The harbor has a stone tower.",
+        "extensions": {
+          "depth": 4,
+          "sticky": null,
+          "vendor.option": {
+            "keep": true
+          }
+        },
+        "enabled": true,
+        "insertion_order": 10,
+        "case_sensitive": false,
+        "use_regex": false,
+        "constant": false,
+        "name": "Harbor",
+        "priority": 1,
+        "id": "harbor-1",
+        "comment": "An authored fixture.",
+        "selective": true,
+        "secondary_keys": [
+          "lantern"
+        ],
+        "position": "before_char",
+        "future_entry": {
+          "keep": [
+            false,
+            null,
+            7
+          ]
+        }
+      }
+    ],
+    "future_book": true
+  },
+  "future_file": {
+    "retain": true
+  }
+}

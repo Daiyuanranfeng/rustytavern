@@ -1,0 +1,112 @@
+{
+  "spec": "chara_card_v3",
+  "spec_version": "3.0",
+  "data": {
+    "name": "Aster",
+    "description": "Aster keeps a harbor tower.",
+    "personality": "Aster speaks clearly.",
+    "scenario": "A visitor enters the harbor.",
+    "first_mes": "Welcome to the harbor.",
+    "mes_example": "Aster: The lamp is ready.",
+    "creator_notes": "This card is a test fixture.",
+    "system_prompt": "",
+    "post_history_instructions": "",
+    "creator": "RustyTavern fixtures",
+    "character_version": "1",
+    "alternate_greetings": [
+      "Welcome back."
+    ],
+    "tags": [
+      "harbor"
+    ],
+    "extensions": {
+      "vendor.card": {
+        "keep": null
+      }
+    },
+    "character_book": {
+      "name": "Harbor book",
+      "description": "An authored worldbook.",
+      "scan_depth": 4,
+      "token_budget": 512,
+      "recursive_scanning": false,
+      "extensions": {
+        "vendor.book": [
+          1,
+          null
+        ]
+      },
+      "entries": [
+        {
+          "keys": [
+            "harbor",
+            "港"
+          ],
+          "content": "The harbor has a stone tower.",
+          "extensions": {
+            "depth": 4,
+            "sticky": null,
+            "vendor.option": {
+              "keep": true
+            }
+          },
+          "enabled": true,
+          "insertion_order": 10,
+          "case_sensitive": false,
+          "use_regex": false,
+          "constant": false,
+          "name": "Harbor",
+          "priority": 1,
+          "id": "harbor-1",
+          "comment": "An authored fixture.",
+          "selective": true,
+          "secondary_keys": [
+            "lantern"
+          ],
+          "position": "before_char",
+          "future_entry": {
+            "keep": [
+              false,
+              null,
+              7
+            ]
+          }
+        }
+      ],
+      "future_book": true
+    },
+    "assets": [
+      {
+        "type": "icon",
+        "uri": "embeded://assets/icon/images/main.png",
+        "name": "main",
+        "ext": "png",
+        "future_asset": {
+          "keep": true
+        }
+      }
+    ],
+    "nickname": "Ash",
+    "creator_notes_multilingual": {
+      "en": "A fixture.",
+      "ja": "テスト。"
+    },
+    "source": [
+      "https://example.com/fixture"
+    ],
+    "group_only_greetings": [
+      "The visitors arrive."
+    ],
+    "creation_date": 1700000000,
+    "modification_date": 1700000001,
+    "future_data": {
+      "retain": null
+    }
+  },
+  "future_header": {
+    "retain": [
+      null,
+      false
+    ]
+  }
+}

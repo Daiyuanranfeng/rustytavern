@@ -1,0 +1,15 @@
+[package]
+name = "rustytavern-conversation"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+publish.workspace = true
+description = "Conversation records, provider settings, and pure prompt compilation."
+
+[dependencies]
+rustytavern-core.workspace = true
+rustytavern-card.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+
+[dev-dependencies]

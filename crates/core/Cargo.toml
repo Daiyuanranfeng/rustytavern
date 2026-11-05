@@ -1,0 +1,20 @@
+[package]
+name = "rustytavern-core"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+publish.workspace = true
+description = "Shared character records, artifact records, errors, and identities."
+
+[features]
+sqlite = ["dep:rusqlite"]
+
+[dependencies]
+serde.workspace = true
+serde_json.workspace = true
+sha2.workspace = true
+uuid.workspace = true
+thiserror.workspace = true
+rusqlite = { workspace = true, optional = true }
+
+[dev-dependencies]

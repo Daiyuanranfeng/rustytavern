@@ -1,0 +1,6 @@
+{
+  "id": "example.lighthouse-edits",
+  "version": "0.1.0",
+  "product_api": "1",
+  "plugins": [{"manifest": "plugins/setting.json"}]
+}

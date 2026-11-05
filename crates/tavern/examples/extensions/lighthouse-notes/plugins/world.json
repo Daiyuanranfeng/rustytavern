@@ -1,0 +1,27 @@
+{
+  "id": "example.lighthouse.world",
+  "version": "0.1.0",
+  "host_protocol": "1",
+  "requested_capabilities": [
+    "prompt.contribute:before_character"
+  ],
+  "allowed_slots": [
+    "before_character"
+  ],
+  "implementation": {
+    "kind": "builtin",
+    "name": "prompt.contributions",
+    "configuration": {
+      "contributions": [
+        {
+          "plugin_id": "",
+          "section_id": "world",
+          "slot": "before_character",
+          "priority": 0,
+          "role": "system",
+          "text": "The harbor has a lighthouse and a chart room."
+        }
+      ]
+    }
+  }
+}

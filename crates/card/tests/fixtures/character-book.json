@@ -1,0 +1,51 @@
+{
+  "name": "Harbor book",
+  "description": "An authored worldbook.",
+  "scan_depth": 4,
+  "token_budget": 512,
+  "recursive_scanning": false,
+  "extensions": {
+    "vendor.book": [
+      1,
+      null
+    ]
+  },
+  "entries": [
+    {
+      "keys": [
+        "harbor",
+        "港"
+      ],
+      "content": "The harbor has a stone tower.",
+      "extensions": {
+        "depth": 4,
+        "sticky": null,
+        "vendor.option": {
+          "keep": true
+        }
+      },
+      "enabled": true,
+      "insertion_order": 10,
+      "case_sensitive": false,
+      "use_regex": false,
+      "constant": false,
+      "name": "Harbor",
+      "priority": 1,
+      "id": "harbor-1",
+      "comment": "An authored fixture.",
+      "selective": true,
+      "secondary_keys": [
+        "lantern"
+      ],
+      "position": "before_char",
+      "future_entry": {
+        "keep": [
+          false,
+          null,
+          7
+        ]
+      }
+    }
+  ],
+  "future_book": true
+}

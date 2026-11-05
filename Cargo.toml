@@ -1,0 +1,40 @@
+[workspace]
+members = ["crates/*"]
+resolver = "3"
+
+[workspace.package]
+version = "0.1.0"
+edition = "2024"
+rust-version = "1.85"
+publish = false
+
+[workspace.dependencies]
+rustytavern-conversation = { path = "crates/conversation" }
+rustytavern-adapters = { path = "crates/adapters" }
+rustytavern-runtime = { path = "crates/runtime" }
+rustytavern-plugin = { path = "crates/plugin" }
+rustytavern-store = { path = "crates/store" }
+rustytavern = { path = "crates/tavern" }
+rustytavern-core = { path = "crates/core" }
+rustytavern-card = { path = "crates/card" }
+async-trait = "0.1.89"
+base64 = "0.22.1"
+clap = { version = "4.6", features = ["derive"] }
+crc32fast = "1.4"
+futures-util = "0.3"
+reqwest = { version = "0.12.28", default-features = false, features = ["json", "stream", "rustls-tls"] }
+rusqlite = { version = "0.31", features = ["bundled"] }
+semver = "1"
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+sha2 = "0.10.9"
+thiserror = "2"
+tokio = { version = "1", features = ["rt-multi-thread", "macros", "signal", "sync", "time", "process", "io-util", "net"] }
+tokio-util = { version = "0.7", features = ["rt"] }
+url = "2"
+uuid = { version = "1", features = ["v4", "serde"] }
+tempfile = "3"
+zip = { version = "~7.3.0", default-features = false, features = ["deflate-flate2-zlib-rs"] }
+ratatui = { version = "0.29", default-features = false, features = ["crossterm", "unstable-rendered-line-info"] }
+crossterm = { version = "0.28", features = ["event-stream"] }
+tui-textarea = "0.7"

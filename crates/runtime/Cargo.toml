@@ -1,0 +1,23 @@
+[package]
+name = "rustytavern-runtime"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+publish.workspace = true
+description = "Generation control, durable events, cancellation, and prompt phases."
+
+[dependencies]
+rustytavern-core.workspace = true
+rustytavern-card.workspace = true
+rustytavern-conversation.workspace = true
+rustytavern-plugin.workspace = true
+rustytavern-adapters.workspace = true
+rustytavern-store.workspace = true
+async-trait.workspace = true
+futures-util.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+tokio.workspace = true
+tokio-util.workspace = true
+
+[dev-dependencies]

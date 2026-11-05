@@ -1,0 +1,15 @@
+{
+  "id": "example.lighthouse.setting",
+  "version": "0.1.0",
+  "host_protocol": "1",
+  "provides": ["prompt.hook.lighthouse/1"],
+  "requested_capabilities": ["session.read:current", "prompt.transform:description"],
+  "implementation": {
+    "kind": "builtin",
+    "name": "prompt.edits",
+    "configuration": {
+      "policy": {"priority": 0, "required": true, "timeout_ms": 30000},
+      "edits": [{"section_id": "description", "mode": "append", "text": " The lighthouse lamp shines blue."}]
+    }
+  }
+}

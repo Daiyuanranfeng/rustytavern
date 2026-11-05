@@ -1,0 +1,16 @@
+{
+  "id": "example.harbor-assets",
+  "version": "0.1.0",
+  "product_api": "1",
+  "assets": [
+    {
+      "path": "templates/harbor.txt",
+      "sha256": "8aff6d437459b0f2087de77e6800e9765a41efaa16c1968bd90294011973ba8e"
+    }
+  ],
+  "configuration_defaults": {
+    "example": {
+      "location": "harbor"
+    }
+  }
+}

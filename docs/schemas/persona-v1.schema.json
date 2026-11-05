@@ -1,0 +1,36 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "urn:rustytavern:persona-export:1",
+  "title": "RustyTavern persona export version 1",
+  "type": "object",
+  "required": [
+    "schema_version",
+    "persona"
+  ],
+  "properties": {
+    "schema_version": {
+      "const": 1
+    },
+    "persona": {
+      "type": "object",
+      "required": [
+        "id",
+        "name",
+        "description"
+      ],
+      "properties": {
+        "id": {
+          "type": "string",
+          "pattern": "^persona-[0-9a-f]{24}$"
+        },
+        "name": {
+          "type": "string",
+          "minLength": 1
+        },
+        "description": {
+          "type": "string"
+        }
+      }
+    }
+  }
+}

@@ -1,0 +1,16 @@
+{
+  "id": "org.rustytavern.source.chub",
+  "version": "0.1.0",
+  "host_protocol": "1",
+  "provides": [
+    "card.source.chub/1"
+  ],
+  "requested_capabilities": [
+    "network:https:api.chub.ai"
+  ],
+  "state_schema": 1,
+  "implementation": {
+    "kind": "builtin",
+    "name": "source.chub"
+  }
+}

@@ -1,0 +1,61 @@
+[
+  [
+    "custom",
+    {
+      "choices": [
+        {
+          "delta": {
+            "content": "Partial"
+          },
+          "finish_reason": "length"
+        }
+      ],
+      "usage": {
+        "total_tokens": 9
+      }
+    }
+  ],
+  [
+    "anthropic",
+    {
+      "type": "message_delta",
+      "delta": {
+        "stop_reason": "max_tokens"
+      },
+      "usage": {
+        "total_tokens": 9
+      }
+    }
+  ],
+  [
+    "gemini",
+    {
+      "candidates": [
+        {
+          "content": {
+            "parts": [
+              {
+                "text": "Partial"
+              }
+            ]
+          },
+          "finishReason": "MAX_TOKENS"
+        }
+      ],
+      "usageMetadata": {
+        "total_tokens": 9
+      }
+    }
+  ],
+  [
+    "open_ai",
+    {
+      "type": "response.incomplete",
+      "response": {
+        "usage": {
+          "total_tokens": 9
+        }
+      }
+    }
+  ]
+]

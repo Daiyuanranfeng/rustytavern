@@ -1,0 +1,2079 @@
+{
+  "schema_version": 1,
+  "date": "2026-11-04",
+  "status": "The assertions define the selected design. Embedded result states describe the initial baseline. The ignored verification workspace stores current execution results.",
+  "input_rules": "Each case starts with the base. Explicit operation inputs override the base. The set map uses dotted card paths. Each case uses an isolated store.",
+  "projection_rules": "Each expect object defines the exact fields and types that the adapter must return. The report retains full raw results separately.",
+  "limits": "The fixture_units counter tests context allocation only. It does not test real tokenization. Source and plugin limits in individual cases override production defaults.",
+  "reference_rules": "Each upstream result remains independent. Related observations do not establish complete workflow results. The report must retain deliberate differences.",
+  "bases": {
+    "character_session": {
+      "character": {
+        "spec": "chara_card_v3",
+        "spec_version": "3.0",
+        "data": {
+          "name": "Lumen",
+          "description": "{{char}} keeps a lighthouse.",
+          "personality": "Lumen speaks in short sentences.",
+          "scenario": "{{user}} visits the harbor.",
+          "first_mes": "Hello, {{user}}. I am {{char}}.",
+          "mes_example": "",
+          "creator_notes": "",
+          "system_prompt": "",
+          "post_history_instructions": "",
+          "alternate_greetings": [
+            "Welcome back, {{user}}."
+          ],
+          "tags": [],
+          "creator": "RustyTavern synthetic fixture",
+          "character_version": "1",
+          "extensions": {
+            "org.example.sentinel": {
+              "value": 7,
+              "execute": false
+            }
+          }
+        }
+      },
+      "persona": {
+        "id": "persona-1",
+        "revision": "persona-r1",
+        "name": "Alex",
+        "description": "Alex charts the coast."
+      },
+      "character_revision": "character-r1",
+      "behavior_profile": "core-v1",
+      "clock": "2026-11-04T00:00:00Z",
+      "seed": 17,
+      "locale": "en-US",
+      "timezone": "UTC",
+      "profile_defaults": {
+        "main_instruction": "You act as the character.",
+        "post_history_instruction": ""
+      },
+      "history": [],
+      "message": "Hello."
+    }
+  },
+  "files": {
+    "card_v3": {
+      "path": "synthetic/card-v3.json",
+      "sha256": "2ac24fca5069e775d0e4fc0abcb3f3ac6e984a37b41d3456e198bd4b8c7ba8f7",
+      "bytes": 529
+    },
+    "card_v2": {
+      "path": "synthetic/card-v2.json",
+      "sha256": "e466a05fb9dcaa87b39349d1f93c7ffd49650e930f7075fd043783419d128e66",
+      "bytes": 529
+    },
+    "dual_png": {
+      "path": "synthetic/dual.png",
+      "sha256": "890953b05789254acf144717454f07a5e7c595a196e3605a8669dcc85aa37d70",
+      "bytes": 1513
+    },
+    "broken_preferred_png": {
+      "path": "synthetic/broken-preferred.png",
+      "sha256": "41db437c8045ec089c33634c0335b16d3e291a0e073d2d29c03dd2f4ca84b042",
+      "bytes": 821
+    },
+    "uppercase_png": {
+      "path": "synthetic/uppercase.png",
+      "sha256": "4d8ecc8f73d29db9c5be347631c438f3ed4520702191fe17fb2c42c501d87b3a",
+      "bytes": 791
+    },
+    "bad_crc_png": {
+      "path": "synthetic/bad-crc.png",
+      "sha256": "198fc06d91718d32bbacad50488c2038847cc63359c1c2faa625f02a623fe51c",
+      "bytes": 791
+    },
+    "no_card_png": {
+      "path": "synthetic/no-card.png",
+      "sha256": "abc58d5127d7cdf313beb9ec8ee839860a9c6bfbc48c8b8eb6a3f7d8bb63de6f",
+      "bytes": 70
+    },
+    "card_json_wrong_type": {
+      "path": "synthetic/wrong-type.json",
+      "sha256": "e97e711788277a215756d49e8389282e2878ba195bd99a77e9c41d04c72226ca",
+      "bytes": 522
+    },
+    "invalid_json": {
+      "path": "synthetic/invalid.json",
+      "sha256": "be302461cda285db3ed2d45fb767b23e08ca8808b35a638009937df22b332d73",
+      "bytes": 7
+    },
+    "legacy_card": {
+      "path": "synthetic/legacy.json",
+      "sha256": "aa9ed0f82f30f4c3f8cf039a5a908a62de4542971b26fdf9c7a4e1e76a312004",
+      "bytes": 475
+    }
+  },
+  "cases": [
+    {
+      "id": "CARD-001",
+      "family": "card",
+      "origin": "proposed",
+      "operation": "card.import",
+      "base": "character_session",
+      "input": {
+        "file": "card_v3"
+      },
+      "expect": {
+        "spec": "chara_card_v3",
+        "name": "Lumen",
+        "unknown_values": {
+          "org.example.sentinel": {
+            "value": 7,
+            "execute": false
+          }
+        }
+      },
+      "comparison": "Exact typed projection. The adapter also retains raw output.",
+      "related_observations": [],
+      "results": {
+        "SillyTavern": {
+          "status": "not_run"
+        },
+        "RisuAI": {
+          "status": "not_run"
+        },
+        "RustyTavern": {
+          "status": "not_run"
+        }
+      }
+    },
+    {
+      "id": "CARD-002",
+      "family": "card",
+      "origin": "proposed",
+      "operation": "card.import",
+      "base": "character_session",
+      "input": {
+        "file": "dual_png"
+      },
+      "expect": {
+        "selected_envelope": "ccv3",
+        "name": "Lumen",
+        "conflicting_envelopes": true
+      },
+      "comparison": "Exact typed projection. The adapter also retains raw output.",
+      "related_observations": [
+        "OBS-001"
+      ],
+      "results": {
+        "SillyTavern": {
+          "status": "not_run"
+        },
+        "RisuAI": {
+          "status": "not_run"
+        },
+        "RustyTavern": {
+          "status": "not_run"
+        }
+      }
+    },
+    {
+      "id": "CARD-003",
+      "family": "card",
+      "origin": "proposed",
+      "operation": "card.import",
+      "base": "character_session",
+      "input": {
+        "file": "broken_preferred_png"
+      },
+      "expect": {
+        "error": "invalid_card_json",
+        "created_revisions": 0,
+        "fallback_used": false
+      },
+      "comparison": "Exact typed projection. The adapter also retains raw output.",
+      "related_observations": [
+        "OBS-002"
+      ],
+      "results": {
+        "SillyTavern": {
+          "status": "not_run"
+        },
+        "RisuAI": {
+          "status": "not_run"
+        },
+        "RustyTavern": {
+          "status": "not_run"
+        }
+      }
+    },
+    {
+      "id": "CARD-004",
+      "family": "card",
+      "origin": "proposed",
+      "operation": "card.import",
+      "base": "character_session",
+      "input": {
+        "file": "bad_crc_png"
+      },
+      "expect": {
+        "error": "invalid_png_crc",
+        "created_revisions": 0
+      },
+      "comparison": "Exact typed projection. The adapter also retains raw output.",
+      "related_observations": [
+        "OBS-009"
+      ],
+      "results": {
+        "SillyTavern": {
+          "status": "not_run"
+        },
+        "RisuAI": {
+          "status": "not_run"
+        },
+        "RustyTavern": {
+          "status": "not_run"
+        }
+      }
+    },
+    {
+      "id": "CARD-005",
+      "family": "card",
+      "origin": "proposed",
+      "operation": "card.import",
+      "base": "character_session",
+      "input": {
+        "file": "card_json_wrong_type"
+      },
+      "expect": {
+        "error": "invalid_card_field",
+        "field": "data.name",
+        "created_revisions": 0
+      },
+      "comparison": "Exact typed projection. The adapter also retains raw output.",
+      "related_observations": [],
+      "results": {
+        "SillyTavern": {
+          "status": "not_run"
+        },
+        "RisuAI": {
+          "status": "not_run"
+        },
+        "RustyTavern": {
+          "status": "not_run"
+        }
+      }
+    },
+    {
+      "id": "CARD-006",
+      "family": "card",
+      "origin": "proposed",
+      "operation": "card.export_original",
+      "base": "character_session",
+      "input": {
+        "file": "dual_png"
+      },
+      "expect": {
+        "sha256": "890953b05789254acf144717454f07a5e7c595a196e3605a8669dcc85aa37d70",
+        "bytes": 1513
+      },
+      "comparison": "Exact typed projection. The adapter also retains raw output.",
+      "related_observations": [],
+      "results": {
+        "SillyTavern": {
+          "status": "not_run"
+        },
+        "RisuAI": {
+          "status": "not_run"
+        },
+        "RustyTavern": {
+          "status": "not_run"
+        }
+      }
+    },
+    {
+      "id": "CARD-007",
+      "family": "card",
+      "origin": "proposed",
+      "operation": "card.import",
+      "base": "character_session",
+      "input": {
+        "file": "no_card_png"
+      },
+      "expect": {
+        "error": "missing_card_envelope",
+        "created_revisions": 0
+      },
+      "comparison": "Exact typed projection. The adapter also retains raw output.",
+      "related_observations": [],
+      "results": {
+        "SillyTavern": {
+          "status": "not_run"
+        },
+        "RisuAI": {
+          "status": "not_run"
+        },
+        "RustyTavern": {
+          "status": "not_run"
+        }
+      }
+    },
+    {
+      "id": "CARD-008",
+      "family": "card",
+      "origin": "proposed",
+      "operation": "card.export_edited",
+      "base": "character_session",
+      "input": {
+        "file": "card_v3",
+        "set": {
+          "data.name": "Beacon"
+        }
+      },
+      "expect": {
+        "name": "Beacon",
+        "unknown_values": {
+          "org.example.sentinel": {
+            "value": 7,
+            "execute": false
+          }
+        },
+        "spec": "chara_card_v3"
+      },
+      "comparison": "Exact typed projection. The adapter also retains raw output.",
+      "related_observations": [],
+      "results": {
+        "SillyTavern": {
+          "status": "not_run"
+        },
+        "RisuAI": {
+          "status": "not_run"
+        },
+        "RustyTavern": {
+          "status": "not_run"
+        }
+      }
+    },
+    {
+      "id": "PROMPT-001",
+      "family": "prompt",
+      "origin": "proposed",
+      "operation": "template.expand",
+      "base": "character_session",
+      "input": {
+        "template": "{{char}} meets {{user}}."
+      },
+      "expect": {
+        "text": "Lumen meets Alex."
+      },
+      "comparison": "Exact typed projection. The adapter also retains raw output.",
+      "related_observations": [],
+      "results": {
+        "SillyTavern": {
+          "status": "not_run"
+        },
+        "RisuAI": {
+          "status": "not_run"
+        },
+        "RustyTavern": {
+          "status": "not_run"
+        }
+      }
+    },
+    {
+      "id": "PROMPT-002",
+      "family": "prompt",
+      "origin": "proposed",
+      "operation": "template.expand",
+      "base": "character_session",
+      "input": {
+        "template": "{{char}} meets {{user}}.",
+        "persona_name": "{{char}}"
+      },
+      "expect": {
+        "text": "Lumen meets {{char}}."
+      },
+      "comparison": "Exact typed projection. The adapter also retains raw output.",
+      "related_observations": [],
+      "results": {
+        "SillyTavern": {
+          "status": "not_run"
+        },
+        "RisuAI": {
+          "status": "not_run"
+        },
+        "RustyTavern": {
+          "status": "not_run"
+        }
+      }
+    },
+    {
+      "id": "PROMPT-003",
+      "family": "prompt",
+      "origin": "proposed",
+      "operation": "instruction.override",
+      "base": "character_session",
+      "input": {
+        "default": "Base.",
+        "override": "Before {{original}} After."
+      },
+      "expect": {
+        "text": "Before Base. After."
+      },
+      "comparison": "Exact typed projection. The adapter also retains raw output.",
+      "related_observations": [],
+      "results": {
+        "SillyTavern": {
+          "status": "not_run"
+        },
+        "RisuAI": {
+          "status": "not_run"
+        },
+        "RustyTavern": {
+          "status": "not_run"
+        }
+      }
+    },
+    {
+      "id": "PROMPT-004",
+      "family": "prompt",
+      "origin": "proposed",
+      "operation": "instruction.override",
+      "base": "character_session",
+      "input": {
+        "default": "Base.",
+        "override": ""
+      },
+      "expect": {
+        "text": "Base."
+      },
+      "comparison": "Exact typed projection. The adapter also retains raw output.",
+      "related_observations": [],
+      "results": {
+        "SillyTavern": {
+          "status": "not_run"
+        },
+        "RisuAI": {
+          "status": "not_run"
+        },
+        "RustyTavern": {
+          "status": "not_run"
+        }
+      }
+    },
+    {
+      "id": "PROMPT-005",
+      "family": "prompt",
+      "origin": "proposed",
+      "operation": "prompt.compile",
+      "base": "character_session",
+      "input": {
+        "set": {
+          "data.description": "{{getvar::secret}}"
+        },
+        "reduced_profile_accepted": false
+      },
+      "expect": {
+        "error": "unsupported_behavior",
+        "field": "data.description",
+        "network_calls": 0
+      },
+      "comparison": "Exact typed projection. The adapter also retains raw output.",
+      "related_observations": [],
+      "results": {
+        "SillyTavern": {
+          "status": "not_run"
+        },
+        "RisuAI": {
+          "status": "not_run"
+        },
+        "RustyTavern": {
+          "status": "not_run"
+        }
+      }
+    },
+    {
+      "id": "PROMPT-006",
+      "family": "prompt",
+      "origin": "proposed",
+      "operation": "session.new",
+      "base": "character_session",
+      "input": {
+        "greeting_index": 1
+      },
+      "expect": {
+        "initial_messages": [
+          {
+            "role": "assistant",
+            "text": "Welcome back, Alex."
+          }
+        ],
+        "message_count_after_reopen": 1
+      },
+      "comparison": "Exact typed projection. The adapter also retains raw output.",
+      "related_observations": [],
+      "results": {
+        "SillyTavern": {
+          "status": "not_run"
+        },
+        "RisuAI": {
+          "status": "not_run"
+        },
+        "RustyTavern": {
+          "status": "not_run"
+        }
+      }
+    },
+    {
+      "id": "PROMPT-007",
+      "family": "prompt",
+      "origin": "proposed",
+      "operation": "prompt.compile",
+      "base": "character_session",
+      "input": {
+        "message": "{{char}} is literal user text."
+      },
+      "expect": {
+        "current_user_text": "{{char}} is literal user text."
+      },
+      "comparison": "Exact typed projection. The adapter also retains raw output.",
+      "related_observations": [],
+      "results": {
+        "SillyTavern": {
+          "status": "not_run"
+        },
+        "RisuAI": {
+          "status": "not_run"
+        },
+        "RustyTavern": {
+          "status": "not_run"
+        }
+      }
+    },
+    {
+      "id": "LORE-001",
+      "family": "lore",
+      "origin": "proposed",
+      "operation": "lore.select",
+      "base": "character_session",
+      "input": {
+        "scan_text": "The beacon shines.",
+        "entries": [
+          {
+            "id": "a",
+            "keys": [
+              "beacon"
+            ],
+            "enabled": true,
+            "case_sensitive": true,
+            "order": 1,
+            "content": "Light."
+          }
+        ]
+      },
+      "expect": {
+        "admitted_ids": [
+          "a"
+        ]
+      },
+      "comparison": "Exact typed projection. The adapter also retains raw output.",
+      "related_observations": [],
+      "results": {
+        "SillyTavern": {
+          "status": "not_run"
+        },
+        "RisuAI": {
+          "status": "not_run"
+        },
+        "RustyTavern": {
+          "status": "not_run"
+        }
+      }
+    },
+    {
+      "id": "LORE-002",
+      "family": "lore",
+      "origin": "proposed",
+      "operation": "lore.select",
+      "base": "character_session",
+      "input": {
+        "scan_text": "The BEACON shines.",
+        "entries": [
+          {
+            "id": "a",
+            "keys": [
+              "beacon"
+            ],
+            "enabled": true,
+            "case_sensitive": true,
+            "order": 1,
+            "content": "Light."
+          }
+        ]
+      },
+      "expect": {
+        "admitted_ids": []
+      },
+      "comparison": "Exact typed projection. The adapter also retains raw output.",
+      "related_observations": [],
+      "results": {
+        "SillyTavern": {
+          "status": "not_run"
+        },
+        "RisuAI": {
+          "status": "not_run"
+        },
+        "RustyTavern": {
+          "status": "not_run"
+        }
+      }
+    },
+    {
+      "id": "LORE-003",
+      "family": "lore",
+      "origin": "proposed",
+      "operation": "lore.select",
+      "base": "character_session",
+      "input": {
+        "scan_text": "beacon",
+        "entries": [
+          {
+            "id": "a",
+            "keys": [
+              "beacon"
+            ],
+            "secondary_keys": [
+              "storm"
+            ],
+            "selective": true,
+            "enabled": true,
+            "order": 1,
+            "content": "Danger."
+          }
+        ]
+      },
+      "expect": {
+        "admitted_ids": []
+      },
+      "comparison": "Exact typed projection. The adapter also retains raw output.",
+      "related_observations": [],
+      "results": {
+        "SillyTavern": {
+          "status": "not_run"
+        },
+        "RisuAI": {
+          "status": "not_run"
+        },
+        "RustyTavern": {
+          "status": "not_run"
+        }
+      }
+    },
+    {
+      "id": "LORE-004",
+      "family": "lore",
+      "origin": "proposed",
+      "operation": "lore.select",
+      "base": "character_session",
+      "input": {
+        "scan_text": "beacon storm",
+        "entries": [
+          {
+            "id": "a",
+            "keys": [
+              "beacon"
+            ],
+            "secondary_keys": [
+              "storm",
+              "fog"
+            ],
+            "selective": true,
+            "enabled": true,
+            "order": 1,
+            "content": "Danger."
+          }
+        ]
+      },
+      "expect": {
+        "admitted_ids": [
+          "a"
+        ]
+      },
+      "comparison": "Exact typed projection. The adapter also retains raw output.",
+      "related_observations": [],
+      "results": {
+        "SillyTavern": {
+          "status": "not_run"
+        },
+        "RisuAI": {
+          "status": "not_run"
+        },
+        "RustyTavern": {
+          "status": "not_run"
+        }
+      }
+    },
+    {
+      "id": "LORE-005",
+      "family": "lore",
+      "origin": "proposed",
+      "operation": "lore.select",
+      "base": "character_session",
+      "input": {
+        "budget": 3,
+        "counter": "fixture_units",
+        "entries": [
+          {
+            "id": "a",
+            "constant": true,
+            "enabled": true,
+            "order": 1,
+            "content": "A",
+            "units": 4
+          },
+          {
+            "id": "b",
+            "constant": true,
+            "enabled": true,
+            "order": 1,
+            "content": "B",
+            "units": 2
+          }
+        ]
+      },
+      "expect": {
+        "admitted_ids": [
+          "b"
+        ],
+        "omitted": [
+          {
+            "id": "a",
+            "reason": "lore_budget"
+          }
+        ]
+      },
+      "comparison": "Exact typed projection. The adapter also retains raw output.",
+      "related_observations": [],
+      "results": {
+        "SillyTavern": {
+          "status": "not_run"
+        },
+        "RisuAI": {
+          "status": "not_run"
+        },
+        "RustyTavern": {
+          "status": "not_run"
+        }
+      }
+    },
+    {
+      "id": "LORE-006",
+      "family": "lore",
+      "origin": "proposed",
+      "operation": "lore.select",
+      "base": "character_session",
+      "input": {
+        "scan_depth": 0,
+        "scan_text": "beacon",
+        "entries": [
+          {
+            "id": "a",
+            "keys": [
+              "beacon"
+            ],
+            "enabled": true,
+            "order": 1,
+            "content": "A"
+          },
+          {
+            "id": "b",
+            "constant": true,
+            "enabled": true,
+            "order": 2,
+            "content": "B"
+          }
+        ]
+      },
+      "expect": {
+        "admitted_ids": [
+          "b"
+        ]
+      },
+      "comparison": "Exact typed projection. The adapter also retains raw output.",
+      "related_observations": [],
+      "results": {
+        "SillyTavern": {
+          "status": "not_run"
+        },
+        "RisuAI": {
+          "status": "not_run"
+        },
+        "RustyTavern": {
+          "status": "not_run"
+        }
+      }
+    },
+    {
+      "id": "LORE-007",
+      "family": "lore",
+      "origin": "proposed",
+      "operation": "lore.select",
+      "base": "character_session",
+      "input": {
+        "scan_text": "ice cream",
+        "entries": [
+          {
+            "id": "a",
+            "keys": [
+              "icecream"
+            ],
+            "enabled": true,
+            "order": 1,
+            "content": "A"
+          }
+        ]
+      },
+      "expect": {
+        "admitted_ids": []
+      },
+      "comparison": "Exact typed projection. The adapter also retains raw output.",
+      "related_observations": [],
+      "results": {
+        "SillyTavern": {
+          "status": "not_run"
+        },
+        "RisuAI": {
+          "status": "not_run"
+        },
+        "RustyTavern": {
+          "status": "not_run"
+        }
+      }
+    },
+    {
+      "id": "CONTEXT-001",
+      "family": "context",
+      "origin": "proposed",
+      "operation": "context.select",
+      "base": "character_session",
+      "input": {
+        "counter": "fixture_units",
+        "context_limit": 20,
+        "output_reserve": 4,
+        "protocol_margin": 1,
+        "mandatory_units": 8,
+        "lore": [
+          {
+            "id": "l1",
+            "units": 3
+          }
+        ],
+        "examples": [
+          {
+            "id": "e1",
+            "units": 2
+          }
+        ],
+        "history_turns_oldest_first": [
+          {
+            "id": "t1",
+            "units": 2
+          },
+          {
+            "id": "t2",
+            "units": 2
+          }
+        ],
+        "lore_cap": 3,
+        "example_cap": 2
+      },
+      "expect": {
+        "lore_ids": [
+          "l1"
+        ],
+        "example_ids": [
+          "e1"
+        ],
+        "history_turn_ids": [
+          "t2"
+        ],
+        "input_units": 15,
+        "deleted_durable_nodes": 0
+      },
+      "comparison": "Exact typed projection. The adapter also retains raw output.",
+      "related_observations": [],
+      "results": {
+        "SillyTavern": {
+          "status": "not_run"
+        },
+        "RisuAI": {
+          "status": "not_run"
+        },
+        "RustyTavern": {
+          "status": "not_run"
+        }
+      }
+    },
+    {
+      "id": "CONTEXT-002",
+      "family": "context",
+      "origin": "proposed",
+      "operation": "context.select",
+      "base": "character_session",
+      "input": {
+        "counter": "fixture_units",
+        "context_limit": 10,
+        "output_reserve": 4,
+        "protocol_margin": 1,
+        "mandatory_units": 6
+      },
+      "expect": {
+        "error": "mandatory_context_overflow",
+        "network_calls": 0
+      },
+      "comparison": "Exact typed projection. The adapter also retains raw output.",
+      "related_observations": [],
+      "results": {
+        "SillyTavern": {
+          "status": "not_run"
+        },
+        "RisuAI": {
+          "status": "not_run"
+        },
+        "RustyTavern": {
+          "status": "not_run"
+        }
+      }
+    },
+    {
+      "id": "SESSION-001",
+      "family": "session",
+      "origin": "proposed",
+      "operation": "session.submit_twice",
+      "base": "character_session",
+      "input": {
+        "idempotency_key": "submit-1",
+        "provider_reply": "Welcome."
+      },
+      "expect": {
+        "user_nodes": 1,
+        "generations": 1,
+        "assistant_nodes": 1
+      },
+      "comparison": "Exact typed projection. The adapter also retains raw output.",
+      "related_observations": [],
+      "results": {
+        "SillyTavern": {
+          "status": "not_run"
+        },
+        "RisuAI": {
+          "status": "not_run"
+        },
+        "RustyTavern": {
+          "status": "not_run"
+        }
+      }
+    },
+    {
+      "id": "SESSION-002",
+      "family": "session",
+      "origin": "proposed",
+      "operation": "session.regenerate",
+      "base": "character_session",
+      "input": {
+        "initial_reply": "First.",
+        "alternative_reply": "Second."
+      },
+      "expect": {
+        "user_nodes": 1,
+        "assistant_alternatives": 2,
+        "distinct_generation_ids": 2,
+        "shared_user_parent": true
+      },
+      "comparison": "Exact typed projection. The adapter also retains raw output.",
+      "related_observations": [],
+      "results": {
+        "SillyTavern": {
+          "status": "not_run"
+        },
+        "RisuAI": {
+          "status": "not_run"
+        },
+        "RustyTavern": {
+          "status": "not_run"
+        }
+      }
+    },
+    {
+      "id": "SESSION-003",
+      "family": "session",
+      "origin": "proposed",
+      "operation": "session.cancel",
+      "base": "character_session",
+      "input": {
+        "stream_events": [
+          {
+            "type": "text",
+            "text": "Par"
+          },
+          {
+            "type": "cancel"
+          },
+          {
+            "type": "text",
+            "text": "late"
+          },
+          {
+            "type": "complete"
+          }
+        ]
+      },
+      "expect": {
+        "status": "cancelled",
+        "draft": "Par",
+        "committed_assistant_nodes": 0,
+        "draft_in_next_prompt": false
+      },
+      "comparison": "Exact typed projection. The adapter also retains raw output.",
+      "related_observations": [],
+      "results": {
+        "SillyTavern": {
+          "status": "not_run"
+        },
+        "RisuAI": {
+          "status": "not_run"
+        },
+        "RustyTavern": {
+          "status": "not_run"
+        }
+      }
+    },
+    {
+      "id": "SESSION-004",
+      "family": "session",
+      "origin": "proposed",
+      "operation": "session.rebind",
+      "base": "character_session",
+      "input": {
+        "initial_persona_name": "Alex",
+        "new_persona_name": "Sam",
+        "old_generation_template": "{{user}}"
+      },
+      "expect": {
+        "old_generation_text": "Alex",
+        "new_generation_text": "Sam"
+      },
+      "comparison": "Exact typed projection. The adapter also retains raw output.",
+      "related_observations": [],
+      "results": {
+        "SillyTavern": {
+          "status": "not_run"
+        },
+        "RisuAI": {
+          "status": "not_run"
+        },
+        "RustyTavern": {
+          "status": "not_run"
+        }
+      }
+    },
+    {
+      "id": "SESSION-005",
+      "family": "session",
+      "origin": "proposed",
+      "operation": "session.writer_takeover",
+      "base": "character_session",
+      "input": {
+        "owner_a_token": 1,
+        "lease_expired": true,
+        "owner_b_token": 2,
+        "owner_a_late_commit": "Late."
+      },
+      "expect": {
+        "owner_a_commit": "rejected",
+        "active_fencing_token": 2,
+        "owner_a_assistant_nodes": 0
+      },
+      "comparison": "Exact typed projection. The adapter also retains raw output.",
+      "related_observations": [],
+      "results": {
+        "SillyTavern": {
+          "status": "not_run"
+        },
+        "RisuAI": {
+          "status": "not_run"
+        },
+        "RustyTavern": {
+          "status": "not_run"
+        }
+      }
+    },
+    {
+      "id": "SESSION-006",
+      "family": "session",
+      "origin": "proposed",
+      "operation": "session.recover",
+      "base": "character_session",
+      "input": {
+        "generation_status": "streaming",
+        "lease_expired": false,
+        "other_owner_live": true
+      },
+      "expect": {
+        "generation_status": "streaming",
+        "restarted_requests": 0
+      },
+      "comparison": "Exact typed projection. The adapter also retains raw output.",
+      "related_observations": [],
+      "results": {
+        "SillyTavern": {
+          "status": "not_run"
+        },
+        "RisuAI": {
+          "status": "not_run"
+        },
+        "RustyTavern": {
+          "status": "not_run"
+        }
+      }
+    },
+    {
+      "id": "PLUGIN-001",
+      "family": "plugin",
+      "origin": "proposed",
+      "operation": "plugins.activate",
+      "base": "character_session",
+      "input": {
+        "plugins": [
+          {
+            "id": "a",
+            "requires": [
+              "missing/1"
+            ],
+            "provides": []
+          }
+        ]
+      },
+      "expect": {
+        "error": "missing_service",
+        "active_plugins": [],
+        "network_calls": 0
+      },
+      "comparison": "Exact typed projection. The adapter also retains raw output.",
+      "related_observations": [],
+      "results": {
+        "SillyTavern": {
+          "status": "not_run"
+        },
+        "RisuAI": {
+          "status": "not_run"
+        },
+        "RustyTavern": {
+          "status": "not_run"
+        }
+      }
+    },
+    {
+      "id": "PLUGIN-002",
+      "family": "plugin",
+      "origin": "proposed",
+      "operation": "plugins.activate",
+      "base": "character_session",
+      "input": {
+        "plugins": [
+          {
+            "id": "a",
+            "requires": [
+              "b/1"
+            ],
+            "provides": [
+              "a/1"
+            ]
+          },
+          {
+            "id": "b",
+            "requires": [
+              "a/1"
+            ],
+            "provides": [
+              "b/1"
+            ]
+          }
+        ]
+      },
+      "expect": {
+        "error": "dependency_cycle",
+        "active_plugins": []
+      },
+      "comparison": "Exact typed projection. The adapter also retains raw output.",
+      "related_observations": [],
+      "results": {
+        "SillyTavern": {
+          "status": "not_run"
+        },
+        "RisuAI": {
+          "status": "not_run"
+        },
+        "RustyTavern": {
+          "status": "not_run"
+        }
+      }
+    },
+    {
+      "id": "PLUGIN-003",
+      "family": "plugin",
+      "origin": "proposed",
+      "operation": "plugins.activation_rollback",
+      "base": "character_session",
+      "input": {
+        "plugin": "a",
+        "actions": [
+          "register:section-a",
+          "acquire:timer-a",
+          "fail"
+        ]
+      },
+      "expect": {
+        "registered_sections": [],
+        "open_resources": [],
+        "plugin_status": "failed"
+      },
+      "comparison": "Exact typed projection. The adapter also retains raw output.",
+      "related_observations": [],
+      "results": {
+        "SillyTavern": {
+          "status": "not_run"
+        },
+        "RisuAI": {
+          "status": "not_run"
+        },
+        "RustyTavern": {
+          "status": "not_run"
+        }
+      }
+    },
+    {
+      "id": "PLUGIN-004",
+      "family": "plugin",
+      "origin": "proposed",
+      "operation": "plugins.host_call",
+      "base": "character_session",
+      "input": {
+        "plugin": "a",
+        "grants": [],
+        "service": "host.fetch/1",
+        "url": "https://example.com/card.png"
+      },
+      "expect": {
+        "error": "capability_denied",
+        "network_calls": 0
+      },
+      "comparison": "Exact typed projection. The adapter also retains raw output.",
+      "related_observations": [],
+      "results": {
+        "SillyTavern": {
+          "status": "not_run"
+        },
+        "RisuAI": {
+          "status": "not_run"
+        },
+        "RustyTavern": {
+          "status": "not_run"
+        }
+      }
+    },
+    {
+      "id": "PLUGIN-005",
+      "family": "plugin",
+      "origin": "proposed",
+      "operation": "plugins.prompt_contribute",
+      "base": "character_session",
+      "input": {
+        "slot": "before_character",
+        "contributions": [
+          {
+            "plugin": "b",
+            "section": "s2",
+            "priority": 0
+          },
+          {
+            "plugin": "a",
+            "section": "s1",
+            "priority": 0
+          }
+        ]
+      },
+      "expect": {
+        "ordered_sections": [
+          "a:s1",
+          "b:s2"
+        ]
+      },
+      "comparison": "Exact typed projection. The adapter also retains raw output.",
+      "related_observations": [],
+      "results": {
+        "SillyTavern": {
+          "status": "not_run"
+        },
+        "RisuAI": {
+          "status": "not_run"
+        },
+        "RustyTavern": {
+          "status": "not_run"
+        }
+      }
+    },
+    {
+      "id": "PLUGIN-006",
+      "family": "plugin",
+      "origin": "proposed",
+      "operation": "plugins.update_during_generation",
+      "base": "character_session",
+      "input": {
+        "active_version": "1.0.0",
+        "requested_version": "1.1.0"
+      },
+      "expect": {
+        "active_generation_version": "1.0.0",
+        "update_status": "deferred"
+      },
+      "comparison": "Exact typed projection. The adapter also retains raw output.",
+      "related_observations": [],
+      "results": {
+        "SillyTavern": {
+          "status": "not_run"
+        },
+        "RisuAI": {
+          "status": "not_run"
+        },
+        "RustyTavern": {
+          "status": "not_run"
+        }
+      }
+    },
+    {
+      "id": "PLUGIN-007",
+      "family": "plugin",
+      "origin": "proposed",
+      "operation": "plugins.state_write",
+      "base": "character_session",
+      "input": {
+        "caller": "a",
+        "namespace": "b",
+        "grants": [
+          "state.write:a"
+        ]
+      },
+      "expect": {
+        "error": "capability_denied",
+        "state_changes": 0
+      },
+      "comparison": "Exact typed projection. The adapter also retains raw output.",
+      "related_observations": [],
+      "results": {
+        "SillyTavern": {
+          "status": "not_run"
+        },
+        "RisuAI": {
+          "status": "not_run"
+        },
+        "RustyTavern": {
+          "status": "not_run"
+        }
+      }
+    },
+    {
+      "id": "PLUGIN-008",
+      "family": "plugin",
+      "origin": "proposed",
+      "operation": "plugins.invoke",
+      "base": "character_session",
+      "input": {
+        "plugin": "source-a",
+        "behavior": "never_reply",
+        "deadline_ms": 1000,
+        "clock": "virtual"
+      },
+      "expect": {
+        "error": "plugin_timeout",
+        "repeated_side_effects": 0,
+        "created_card_revisions": 0
+      },
+      "comparison": "Exact typed projection. The adapter also retains raw output.",
+      "related_observations": [],
+      "results": {
+        "SillyTavern": {
+          "status": "not_run"
+        },
+        "RisuAI": {
+          "status": "not_run"
+        },
+        "RustyTavern": {
+          "status": "not_run"
+        }
+      }
+    },
+    {
+      "id": "SOURCE-001",
+      "family": "source",
+      "origin": "proposed",
+      "operation": "source.recognize",
+      "base": "character_session",
+      "input": {
+        "adapter": "chub",
+        "url": "https://chub.ai.evil.example/characters/a/b"
+      },
+      "expect": {
+        "recognized": false,
+        "network_calls": 0
+      },
+      "comparison": "Exact typed projection. The adapter also retains raw output.",
+      "related_observations": [],
+      "results": {
+        "SillyTavern": {
+          "status": "not_run"
+        },
+        "RisuAI": {
+          "status": "not_run"
+        },
+        "RustyTavern": {
+          "status": "not_run"
+        }
+      }
+    },
+    {
+      "id": "SOURCE-002",
+      "family": "source",
+      "origin": "proposed",
+      "operation": "source.fetch",
+      "base": "character_session",
+      "input": {
+        "url": "https://public.example/card.png",
+        "grants": [
+          "network:https:public.example"
+        ],
+        "mock_redirect": "http://127.0.0.1/private"
+      },
+      "expect": {
+        "error": "source_target_denied",
+        "redirect_target_requests": 0
+      },
+      "comparison": "Exact typed projection. The adapter also retains raw output.",
+      "related_observations": [],
+      "results": {
+        "SillyTavern": {
+          "status": "not_run"
+        },
+        "RisuAI": {
+          "status": "not_run"
+        },
+        "RustyTavern": {
+          "status": "not_run"
+        }
+      }
+    },
+    {
+      "id": "SOURCE-003",
+      "family": "source",
+      "origin": "proposed",
+      "operation": "source.fetch",
+      "base": "character_session",
+      "input": {
+        "url": "https://public.example/card.png",
+        "grants": [
+          "network:https:public.example"
+        ],
+        "max_bytes": 16,
+        "mock_body_bytes": 17
+      },
+      "expect": {
+        "error": "source_size_limit",
+        "created_card_revisions": 0
+      },
+      "comparison": "Exact typed projection. The adapter also retains raw output.",
+      "related_observations": [],
+      "results": {
+        "SillyTavern": {
+          "status": "not_run"
+        },
+        "RisuAI": {
+          "status": "not_run"
+        },
+        "RustyTavern": {
+          "status": "not_run"
+        }
+      }
+    },
+    {
+      "id": "SOURCE-004",
+      "family": "source",
+      "origin": "proposed",
+      "operation": "source.fetch",
+      "base": "character_session",
+      "input": {
+        "url": "https://public.example/card.png",
+        "grants": [
+          "network:https:public.example"
+        ],
+        "mock_status": 401
+      },
+      "expect": {
+        "error": "source_auth_required",
+        "created_card_revisions": 0,
+        "automatic_login_attempts": 0
+      },
+      "comparison": "Exact typed projection. The adapter also retains raw output.",
+      "related_observations": [],
+      "results": {
+        "SillyTavern": {
+          "status": "not_run"
+        },
+        "RisuAI": {
+          "status": "not_run"
+        },
+        "RustyTavern": {
+          "status": "not_run"
+        }
+      }
+    },
+    {
+      "id": "SOURCE-005",
+      "family": "source",
+      "origin": "proposed",
+      "operation": "source.update",
+      "base": "character_session",
+      "input": {
+        "existing_revision": "r1",
+        "downloaded_file": "card_v3",
+        "active_session_revision": "r1"
+      },
+      "expect": {
+        "created_revisions": 1,
+        "active_session_revision": "r1",
+        "original_revision_deleted": false
+      },
+      "comparison": "Exact typed projection. The adapter also retains raw output.",
+      "related_observations": [],
+      "results": {
+        "SillyTavern": {
+          "status": "not_run"
+        },
+        "RisuAI": {
+          "status": "not_run"
+        },
+        "RustyTavern": {
+          "status": "not_run"
+        }
+      }
+    },
+    {
+      "id": "STREAM-001",
+      "family": "stream",
+      "origin": "proposed",
+      "operation": "provider.normalized_stream",
+      "base": "character_session",
+      "input": {
+        "events": [
+          {
+            "type": "text",
+            "text": "Hello."
+          },
+          {
+            "type": "complete",
+            "finish_reason": "stop"
+          }
+        ]
+      },
+      "expect": {
+        "status": "completed",
+        "text": "Hello.",
+        "assistant_nodes": 1
+      },
+      "comparison": "Exact typed projection. The adapter also retains raw output.",
+      "related_observations": [],
+      "results": {
+        "SillyTavern": {
+          "status": "not_run"
+        },
+        "RisuAI": {
+          "status": "not_run"
+        },
+        "RustyTavern": {
+          "status": "not_run"
+        }
+      }
+    },
+    {
+      "id": "STREAM-002",
+      "family": "stream",
+      "origin": "proposed",
+      "operation": "provider.normalized_stream",
+      "base": "character_session",
+      "input": {
+        "events": [
+          {
+            "type": "text",
+            "text": "Hello."
+          },
+          {
+            "type": "eof"
+          }
+        ]
+      },
+      "expect": {
+        "status": "failed",
+        "error": "incomplete_stream",
+        "assistant_nodes": 0,
+        "draft": "Hello."
+      },
+      "comparison": "Exact typed projection. The adapter also retains raw output.",
+      "related_observations": [],
+      "results": {
+        "SillyTavern": {
+          "status": "not_run"
+        },
+        "RisuAI": {
+          "status": "not_run"
+        },
+        "RustyTavern": {
+          "status": "not_run"
+        }
+      }
+    },
+    {
+      "id": "STREAM-003",
+      "family": "stream",
+      "origin": "proposed",
+      "operation": "provider.normalized_stream",
+      "base": "character_session",
+      "input": {
+        "events": [
+          {
+            "type": "text",
+            "text": "Hello."
+          },
+          {
+            "type": "complete",
+            "finish_reason": "length"
+          }
+        ]
+      },
+      "expect": {
+        "status": "failed",
+        "error": "output_limit",
+        "assistant_nodes": 0,
+        "draft": "Hello."
+      },
+      "comparison": "Exact typed projection. The adapter also retains raw output.",
+      "related_observations": [],
+      "results": {
+        "SillyTavern": {
+          "status": "not_run"
+        },
+        "RisuAI": {
+          "status": "not_run"
+        },
+        "RustyTavern": {
+          "status": "not_run"
+        }
+      }
+    },
+    {
+      "id": "CARD-009",
+      "family": "card",
+      "origin": "proposed",
+      "operation": "card.import",
+      "base": "character_session",
+      "input": {
+        "file": "legacy_card",
+        "decoders": [
+          "ccv2",
+          "ccv3"
+        ]
+      },
+      "expect": {
+        "error": "unsupported_card_format",
+        "created_revisions": 0
+      },
+      "comparison": "Exact typed projection. The adapter also retains raw output.",
+      "related_observations": [],
+      "results": {
+        "SillyTavern": {
+          "status": "not_run"
+        },
+        "RisuAI": {
+          "status": "not_run"
+        },
+        "RustyTavern": {
+          "status": "not_run"
+        }
+      }
+    },
+    {
+      "id": "PLUGIN-009",
+      "family": "plugin",
+      "origin": "proposed",
+      "operation": "plugins.handshake",
+      "base": "character_session",
+      "input": {
+        "host_protocol": "1",
+        "plugin_protocol": "2"
+      },
+      "expect": {
+        "error": "incompatible_plugin_protocol",
+        "registrations": 0
+      },
+      "comparison": "Exact typed projection. The adapter also retains raw output.",
+      "related_observations": [],
+      "results": {
+        "SillyTavern": {
+          "status": "not_run"
+        },
+        "RisuAI": {
+          "status": "not_run"
+        },
+        "RustyTavern": {
+          "status": "not_run"
+        }
+      }
+    },
+    {
+      "id": "PLUGIN-010",
+      "family": "plugin",
+      "origin": "proposed",
+      "operation": "plugins.bind",
+      "base": "character_session",
+      "input": {
+        "service": "profile/1",
+        "providers": [
+          "profile-a",
+          "profile-b"
+        ],
+        "explicit_binding": null
+      },
+      "expect": {
+        "error": "ambiguous_service",
+        "active_sessions": 0
+      },
+      "comparison": "Exact typed projection. The adapter also retains raw output.",
+      "related_observations": [],
+      "results": {
+        "SillyTavern": {
+          "status": "not_run"
+        },
+        "RisuAI": {
+          "status": "not_run"
+        },
+        "RustyTavern": {
+          "status": "not_run"
+        }
+      }
+    },
+    {
+      "id": "PLUGIN-011",
+      "family": "plugin",
+      "origin": "proposed",
+      "operation": "plugins.protocol_read",
+      "base": "character_session",
+      "input": {
+        "stdout_frames": [
+          "plain log text"
+        ]
+      },
+      "expect": {
+        "error": "invalid_plugin_frame",
+        "committed_actions": 0
+      },
+      "comparison": "Exact typed projection. The adapter also retains raw output.",
+      "related_observations": [],
+      "results": {
+        "SillyTavern": {
+          "status": "not_run"
+        },
+        "RisuAI": {
+          "status": "not_run"
+        },
+        "RustyTavern": {
+          "status": "not_run"
+        }
+      }
+    },
+    {
+      "id": "EXTENSION-001",
+      "family": "extension",
+      "origin": "proposed",
+      "operation": "extensions.enable",
+      "base": "character_session",
+      "input": {
+        "extension": {
+          "id": "harbor-pack",
+          "version": "1.0.0",
+          "product_api": "1",
+          "plugins": [],
+          "assets": [
+            {
+              "path": "templates/harbor.txt",
+              "contents": "A harbor."
+            }
+          ]
+        }
+      },
+      "expect": {
+        "extension_status": "enabled",
+        "active_plugin_ids": [],
+        "available_assets": [
+          "templates/harbor.txt"
+        ]
+      },
+      "comparison": "Exact typed projection. The adapter also retains raw output.",
+      "related_observations": [],
+      "results": {
+        "SillyTavern": {
+          "status": "not_run"
+        },
+        "RisuAI": {
+          "status": "not_run"
+        },
+        "RustyTavern": {
+          "status": "not_run"
+        }
+      }
+    },
+    {
+      "id": "EXTENSION-002",
+      "family": "extension",
+      "origin": "proposed",
+      "operation": "extensions.enable",
+      "base": "character_session",
+      "input": {
+        "extension": {
+          "id": "memory",
+          "plugins": [
+            {
+              "id": "retriever",
+              "provides": [
+                "memory.read/1"
+              ],
+              "requires": []
+            },
+            {
+              "id": "contributor",
+              "provides": [
+                "prompt.contribute/1"
+              ],
+              "requires": [
+                "memory.read/1"
+              ]
+            }
+          ]
+        }
+      },
+      "expect": {
+        "extension_status": "enabled",
+        "activation_order": [
+          "retriever",
+          "contributor"
+        ]
+      },
+      "comparison": "Exact typed projection. The adapter also retains raw output.",
+      "related_observations": [],
+      "results": {
+        "SillyTavern": {
+          "status": "not_run"
+        },
+        "RisuAI": {
+          "status": "not_run"
+        },
+        "RustyTavern": {
+          "status": "not_run"
+        }
+      }
+    },
+    {
+      "id": "EXTENSION-003",
+      "family": "extension",
+      "origin": "proposed",
+      "operation": "extensions.enable",
+      "base": "character_session",
+      "input": {
+        "previous_plugins": [
+          "base"
+        ],
+        "extension": {
+          "id": "memory",
+          "commands": [
+            "remember"
+          ],
+          "plugins": [
+            {
+              "id": "retriever",
+              "activation": "success"
+            },
+            {
+              "id": "contributor",
+              "activation": "fail"
+            }
+          ]
+        }
+      },
+      "expect": {
+        "extension_status": "failed",
+        "active_plugin_ids": [
+          "base"
+        ],
+        "registered_extension_commands": [],
+        "staged_resources": []
+      },
+      "comparison": "Exact typed projection. The adapter also retains raw output.",
+      "related_observations": [],
+      "results": {
+        "SillyTavern": {
+          "status": "not_run"
+        },
+        "RisuAI": {
+          "status": "not_run"
+        },
+        "RustyTavern": {
+          "status": "not_run"
+        }
+      }
+    },
+    {
+      "id": "EXTENSION-004",
+      "family": "extension",
+      "origin": "proposed",
+      "operation": "extensions.disable",
+      "base": "character_session",
+      "input": {
+        "extension": "source-ui",
+        "plugin_instances": [
+          {
+            "id": "source-1",
+            "owners": [
+              "source-ui",
+              "embedded-caller"
+            ]
+          }
+        ],
+        "extension_commands": [
+          "source-import"
+        ]
+      },
+      "expect": {
+        "extension_status": "disabled",
+        "active_plugin_ids": [
+          "source-1"
+        ],
+        "remaining_owners": [
+          "embedded-caller"
+        ],
+        "registered_extension_commands": []
+      },
+      "comparison": "Exact typed projection. The adapter also retains raw output.",
+      "related_observations": [],
+      "results": {
+        "SillyTavern": {
+          "status": "not_run"
+        },
+        "RisuAI": {
+          "status": "not_run"
+        },
+        "RustyTavern": {
+          "status": "not_run"
+        }
+      }
+    },
+    {
+      "id": "EXTENSION-005",
+      "family": "extension",
+      "origin": "proposed",
+      "operation": "extensions.uninstall",
+      "base": "character_session",
+      "input": {
+        "extension": "memory",
+        "active_generation": false,
+        "dependent_extensions": [],
+        "stored_data": {
+          "characters": 1,
+          "sessions": 1,
+          "plugin_state_revisions": 1
+        }
+      },
+      "expect": {
+        "package_installed": false,
+        "stored_data": {
+          "characters": 1,
+          "sessions": 1,
+          "plugin_state_revisions": 1
+        }
+      },
+      "comparison": "Exact typed projection. The adapter also retains raw output.",
+      "related_observations": [],
+      "results": {
+        "SillyTavern": {
+          "status": "not_run"
+        },
+        "RisuAI": {
+          "status": "not_run"
+        },
+        "RustyTavern": {
+          "status": "not_run"
+        }
+      }
+    },
+    {
+      "id": "EXTENSION-006",
+      "family": "extension",
+      "origin": "proposed",
+      "operation": "extensions.enable",
+      "base": "character_session",
+      "input": {
+        "extension": {
+          "id": "bad-assets",
+          "plugins": [],
+          "assets": [
+            {
+              "path": "../escape.txt",
+              "contents": "Outside."
+            }
+          ]
+        }
+      },
+      "expect": {
+        "error": "invalid_extension_asset_path",
+        "extension_status": "disabled",
+        "writes_outside_package": 0
+      },
+      "comparison": "Exact typed projection. The adapter also retains raw output.",
+      "related_observations": [],
+      "results": {
+        "SillyTavern": {
+          "status": "not_run"
+        },
+        "RisuAI": {
+          "status": "not_run"
+        },
+        "RustyTavern": {
+          "status": "not_run"
+        }
+      }
+    }
+  ],
+  "open_vectors": [
+    {
+      "id": "OPEN-001",
+      "input_file": "uppercase_png",
+      "reason": "The upstream helpers differ on case. The first profile milestone must freeze this expectation."
+    },
+    {
+      "id": "OPEN-002",
+      "reason": "The first profile milestone must freeze macro escaping and example-dialogue grammar."
+    },
+    {
+      "id": "OPEN-003",
+      "reason": "The provider milestone must add exact native wire fixtures for every advertised adapter."
+    },
+    {
+      "id": "OPEN-004",
+      "reason": "The source milestone must capture current Chub and RisuRealm response bodies and content hashes."
+    },
+    {
+      "id": "OPEN-005",
+      "reason": "The first implementation milestone must freeze production parser and transport limits."
+    }
+  ]
+}

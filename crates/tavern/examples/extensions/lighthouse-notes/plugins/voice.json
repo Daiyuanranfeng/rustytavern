@@ -1,0 +1,27 @@
+{
+  "id": "example.lighthouse.voice",
+  "version": "0.1.0",
+  "host_protocol": "1",
+  "requested_capabilities": [
+    "prompt.contribute:after_character"
+  ],
+  "allowed_slots": [
+    "after_character"
+  ],
+  "implementation": {
+    "kind": "builtin",
+    "name": "prompt.contributions",
+    "configuration": {
+      "contributions": [
+        {
+          "plugin_id": "",
+          "section_id": "voice",
+          "slot": "after_character",
+          "priority": 0,
+          "role": "system",
+          "text": "The character uses clear and brief replies."
+        }
+      ]
+    }
+  }
+}

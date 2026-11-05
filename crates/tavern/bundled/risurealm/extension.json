@@ -1,0 +1,20 @@
+{
+  "id": "org.rustytavern.extension.risurealm",
+  "version": "0.1.0",
+  "product_api": "1",
+  "plugins": [
+    {
+      "manifest": "plugins/source.json"
+    }
+  ],
+  "commands": [
+    {
+      "name": "risurealm-import",
+      "service": "card.source.risurealm/1",
+      "operation": "fetch"
+    }
+  ],
+  "configuration_defaults": {
+    "card_source": "risurealm"
+  }
+}

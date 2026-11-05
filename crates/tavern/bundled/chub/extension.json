@@ -1,0 +1,20 @@
+{
+  "id": "org.rustytavern.extension.chub",
+  "version": "0.1.0",
+  "product_api": "1",
+  "plugins": [
+    {
+      "manifest": "plugins/source.json"
+    }
+  ],
+  "commands": [
+    {
+      "name": "chub-import",
+      "service": "card.source.chub/1",
+      "operation": "fetch"
+    }
+  ],
+  "configuration_defaults": {
+    "card_source": "chub"
+  }
+}

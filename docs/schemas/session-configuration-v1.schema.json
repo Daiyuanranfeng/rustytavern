@@ -1,0 +1,207 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "urn:rustytavern:session-configuration:1",
+  "title": "RustyTavern session configuration version 1",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "revision",
+    "identity",
+    "character_id",
+    "persona_id",
+    "provider",
+    "model",
+    "accept_reduced",
+    "options",
+    "profile",
+    "provider_config",
+    "composition"
+  ],
+  "properties": {
+    "revision": {
+      "type": "integer",
+      "minimum": 1
+    },
+    "identity": {
+      "type": "string",
+      "pattern": "^[0-9a-f]{64}$"
+    },
+    "character_id": {
+      "type": "string",
+      "minLength": 1
+    },
+    "persona_id": {
+      "type": "string",
+      "minLength": 1
+    },
+    "provider": {
+      "type": "string",
+      "minLength": 1
+    },
+    "model": {
+      "type": "string",
+      "minLength": 1
+    },
+    "profile": {
+      "type": "string",
+      "minLength": 1
+    },
+    "accept_reduced": {
+      "type": "boolean"
+    },
+    "options": {
+      "type": "object",
+      "required": [
+        "context_limit",
+        "output_limit",
+        "protocol_margin",
+        "lore_budget",
+        "example_budget",
+        "main_instruction",
+        "post_history_instruction",
+        "note"
+      ],
+      "properties": {
+        "context_limit": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "output_limit": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "protocol_margin": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "lore_budget": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "example_budget": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "main_instruction": {
+          "type": "string"
+        },
+        "post_history_instruction": {
+          "type": "string"
+        },
+        "note": {
+          "type": "string"
+        }
+      }
+    },
+    "provider_config": {
+      "type": "object",
+      "required": [
+        "kind",
+        "model",
+        "endpoint",
+        "api_key_env",
+        "context_limit",
+        "output_limit",
+        "parameters",
+        "routing",
+        "timeout_seconds"
+      ],
+      "properties": {
+        "kind": {
+          "enum": [
+            "open_router",
+            "open_ai",
+            "anthropic",
+            "gemini",
+            "custom"
+          ]
+        },
+        "model": {
+          "type": "string"
+        },
+        "endpoint": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "api_key_env": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "context_limit": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "output_limit": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "timeout_seconds": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "parameters": {
+          "type": "object"
+        },
+        "routing": {
+          "type": [
+            "object",
+            "null"
+          ]
+        },
+        "merge_system_messages": {
+          "type": "boolean",
+          "default": false
+        }
+      }
+    },
+    "composition": {
+      "type": "object",
+      "required": [
+        "identity",
+        "native",
+        "plugins",
+        "bindings",
+        "contributions",
+        "service_identity"
+      ],
+      "properties": {
+        "identity": {
+          "type": "string",
+          "pattern": "^[0-9a-f]{64}$"
+        },
+        "native": {
+          "type": "object"
+        },
+        "plugins": {
+          "type": "array"
+        },
+        "bindings": {
+          "type": "object"
+        },
+        "contributions": {
+          "type": "array"
+        },
+        "service_identity": {
+          "type": "string"
+        },
+        "extensions": {
+          "type": "array"
+        }
+      }
+    },
+    "worldbook_ids": {
+      "type": "array",
+      "default": [],
+      "maxItems": 16,
+      "uniqueItems": true,
+      "items": {
+        "type": "string",
+        "pattern": "^worldbook-[0-9a-f]{64}$"
+      }
+    }
+  }
+}
