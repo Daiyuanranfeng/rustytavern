@@ -1,0 +1,13 @@
+{
+  "id": "org.rustytavern.extension.web",
+  "version": "0.1.0",
+  "product_api": "1",
+  "dependencies": {
+    "org.rustytavern.extension.agent": "^0.1"
+  },
+  "plugins": [
+    {
+      "manifest": "plugins/tools.json"
+    }
+  ]
+}

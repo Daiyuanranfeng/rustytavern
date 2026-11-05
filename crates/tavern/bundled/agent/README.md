@@ -9,26 +9,23 @@ The loop calls the model, runs the requested tools, and stops at a reply without
 
 The package ID is `org.rustytavern.extension.agent`.
 The package binds `driver/1` to `org.rustytavern.driver.agent`.
-Each grant adds one tool source.
+The extension adds no tool.
+Tool extensions register tools on the shared plugin context.
 
-| Grant | Tool | Source |
+| Extension | Tool | Grant |
 | --- | --- | --- |
-| `network:https:*` | `web_fetch` | Public HTTPS pages |
-| `skills.read` | `skill` | `DATA_DIR/skills/NAME/SKILL.md` in the Agent Skills format |
-| `mcp.connect` | `SERVER__TOOL` | Servers in `DATA_DIR/mcp.json` |
-
-The driver also requires `session.read:current`, `session.write:current`, and `provider.generate`.
+| [Web](../web/README.md) | `web_fetch` | `network:https:*` or `network:https:HOST` |
+| [Skills](../skills/README.md) | `skill` | `skills.read` and `prompt.contribute:before_history` |
+| [MCP](../mcp/README.md) | `SERVER__TOOL` | `mcp.connect` |
 
 ```sh
 cargo run --locked -- --data-dir ./data extension install --builtin agent
 cargo run --locked -- --data-dir ./data extension enable org.rustytavern.extension.agent \
-  --grant session.read:current --grant session.write:current --grant provider.generate \
-  --grant 'network:https:*' --grant skills.read --grant mcp.connect
+  --grant session.read:current --grant session.write:current --grant provider.generate
 ```
 
-A session pins its driver.
-An earlier session requires an explicit configuration change before it uses the agent.
-The `chat --events` command prints a `tool_result` event for each tool call.
+A session pins its composition.
+An earlier session requires an explicit configuration change before it uses the agent or a new tool.
 
 ## Implementation
 

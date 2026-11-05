@@ -221,9 +221,9 @@ The registered type is an outer `Arc` around `Arc<dyn ConversationDriver>`. The 
 | `DriverContext::snapshot` | The method returns the immutable conversation view. |
 | `DriverContext::request` | The method returns the sanitized saved request. |
 | `DriverContext::next_event` | The method dispatches once and obtains normalized provider events. |
-| `DriverContext::open_agent_step` | The method adds tools and a continuation to the saved request and dispatches one agent step. |
+| `DriverContext::open_agent_step` | The method adds the composed tools and a continuation to the saved request and dispatches one step. |
 | `DriverContext::next_agent_event` | The method obtains normalized events, including tool calls. |
-| `DriverContext::report_tool` | The method emits a `tool_call` or `tool_result` event. |
+| `DriverContext::call_tool` | The host runs one composed tool and emits `tool_call` and `tool_result` events. |
 | `DriverContext::append_text` | The method persists text before the host emits its delta event. |
 | `DriverContext::cancellation_token` | The method supplies the current phase cancellation token. |
 
@@ -235,6 +235,8 @@ The conversation view excludes provider configuration, composition history, and 
 The driver receives no credential resolver or database handle. The driver cannot append text before dispatch.
 The first `next_event` call dispatches the already saved request. Later calls read the same request's stream.
 The `agent::AgentDriver` opens a new step after each completed step with tool calls. `ProviderAdapter::prepare_agent` extends the saved request for that step.
+A tool plugin registers `agent::ToolSet` as a `tools.NAME/1` service. The runtime collects every composed tool set, like the `prompt.hook.` services.
+For a driver whose `uses_tools` method returns true, the saved request contains the tool schemas.
 The host records usage before it exposes an accounting event to the driver.
 
 The driver can transform, buffer, or reject reply text. The host permits successful completion only after an actual provider completion event.

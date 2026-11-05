@@ -1,6 +1,7 @@
-//! The minimal agent loop follows the pi-agent-core design.
-//! The loop calls the model and runs the requested tools.
+//! The agent loop follows the minimal pi-agent-core design.
+//! The loop calls the model and runs the requested tools through the host.
 //! The loop stops at the first reply without tool calls.
+//! Plugins register tools as `tools.NAME/1` services.
 
 use std::sync::Arc;
 
@@ -10,12 +11,10 @@ use tokio_util::sync::CancellationToken;
 
 use crate::{
     Error, Result,
-    driver::{ConversationDriver, DriverContext, SingleReplyDriver},
-    provider::{AgentProviderEvent, AgentRequest, AgentTurn, ToolDefinition, ToolResult},
+    driver::{ConversationDriver, DriverContext},
+    plugin::CompositionLease,
+    provider::{AgentProviderEvent, AgentTurn, ToolDefinition},
 };
-
-/// The driver truncates each tool result to this byte count.
-pub const MAX_TOOL_RESULT_BYTES: usize = 65_536;
 
 #[async_trait]
 pub trait AgentTool: Send + Sync {
@@ -23,15 +22,40 @@ pub trait AgentTool: Send + Sync {
     async fn call(&self, arguments: Value, cancellation: CancellationToken) -> Result<String>;
 }
 
+/// A plugin registers this type as a `tools.NAME/1` service.
+pub type ToolSet = Vec<Arc<dyn AgentTool>>;
+
+/// The function collects every composed tool set.
+pub(crate) fn tools(composition: &CompositionLease) -> Result<ToolSet> {
+    let mut tools: ToolSet = Vec::new();
+    for service in composition.service_names("tools.") {
+        if !service.ends_with("/1") {
+            return Err(Error::new(
+                "incompatible_plugin_protocol",
+                "The tool set requires another service protocol.",
+            ));
+        }
+        for tool in composition.service::<ToolSet>(&service)?.iter() {
+            let name = tool.definition().name;
+            if tools.iter().any(|t| t.definition().name == name) {
+                return Err(Error::new(
+                    "duplicate_tool",
+                    format!("Two plugins register the {name} tool."),
+                ));
+            }
+            tools.push(tool.clone());
+        }
+    }
+    Ok(tools)
+}
+
 pub struct AgentDriver {
-    tools: Vec<Arc<dyn AgentTool>>,
     max_steps: usize,
 }
 impl AgentDriver {
     /// The provider contract limits a continuation to 64 steps.
-    pub fn new(tools: Vec<Arc<dyn AgentTool>>, max_steps: usize) -> Self {
+    pub fn new(max_steps: usize) -> Self {
         Self {
-            tools,
             max_steps: max_steps.min(64),
         }
     }
@@ -42,16 +66,13 @@ impl ConversationDriver for AgentDriver {
     fn id(&self) -> &str {
         "agent/1"
     }
+    fn uses_tools(&self) -> bool {
+        true
+    }
     async fn run(&self, context: &mut DriverContext) -> Result<()> {
-        if self.tools.is_empty() {
-            return SingleReplyDriver.run(context).await;
-        }
-        let mut agent = AgentRequest {
-            tools: self.tools.iter().map(|tool| tool.definition()).collect(),
-            continuation: Vec::new(),
-        };
+        let mut continuation: Vec<AgentTurn> = Vec::new();
         loop {
-            context.open_agent_step(&agent).await?;
+            context.open_agent_step(&continuation).await?;
             let mut turn = AgentTurn::default();
             while let Some(event) = context.next_agent_event().await? {
                 match event {
@@ -67,42 +88,16 @@ impl ConversationDriver for AgentDriver {
             if turn.calls.is_empty() {
                 return Ok(());
             }
-            if agent.continuation.len() >= self.max_steps {
+            if continuation.len() >= self.max_steps {
                 return Err(Error::new(
                     "tool_step_limit",
                     "The agent exceeds its tool step limit.",
                 ));
             }
             for call in &turn.calls {
-                context.report_tool(call, None)?;
-                let index = agent.tools.iter().position(|t| t.name == call.name);
-                let result = match index {
-                    Some(index) => {
-                        self.tools[index]
-                            .call(call.arguments.clone(), context.cancellation_token())
-                            .await
-                    }
-                    None => Err(Error::new("unknown_tool", "The tool does not exist.")),
-                };
-                let mut content = match result {
-                    Ok(content) => content,
-                    Err(error) if error.code == "cancelled" => return Err(error),
-                    Err(error) => format!("Error {}: {}", error.code, error.message),
-                };
-                if content.len() > MAX_TOOL_RESULT_BYTES {
-                    let mut end = MAX_TOOL_RESULT_BYTES;
-                    while !content.is_char_boundary(end) {
-                        end -= 1;
-                    }
-                    content.truncate(end);
-                }
-                context.report_tool(call, Some(&content))?;
-                turn.results.push(ToolResult {
-                    call_id: call.id.clone(),
-                    content,
-                });
+                turn.results.push(context.call_tool(call).await?);
             }
-            agent.continuation.push(turn);
+            continuation.push(turn);
         }
     }
 }

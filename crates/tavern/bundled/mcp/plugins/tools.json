@@ -1,0 +1,16 @@
+{
+  "id": "org.rustytavern.tools.mcp",
+  "version": "0.1.0",
+  "host_protocol": "1",
+  "provides": [
+    "tools.mcp/1"
+  ],
+  "requested_capabilities": [
+    "mcp.connect"
+  ],
+  "state_schema": 1,
+  "implementation": {
+    "kind": "builtin",
+    "name": "tools.mcp"
+  }
+}

@@ -149,6 +149,7 @@ pub struct Runtime {
     registry: Option<Arc<tokio::sync::Mutex<crate::plugin::PluginRegistry>>>,
     composition: Option<Arc<crate::plugin::CompositionLease>>,
     hooks: Vec<HookBinding>,
+    tools: agent::ToolSet,
     product_composition: Option<Value>,
     effective_lock: Value,
 }
@@ -165,6 +166,7 @@ impl Runtime {
             registry: None,
             composition: None,
             hooks: Vec::new(),
+            tools: Vec::new(),
             product_composition: None,
             effective_lock: Value::Null,
         }
@@ -310,6 +312,7 @@ impl Runtime {
             }
         }
         runtime.hooks = phases::bindings(Some(&lease))?;
+        runtime.tools = agent::tools(&lease)?;
         runtime.composition = Some(Arc::new(lease));
         runtime.effective_lock = runtime.composition_record()?;
         Ok(runtime)
@@ -743,7 +746,10 @@ impl Runtime {
         )?;
         self.profile.select_context(&mut plan, &session.options)?;
         loop {
-            let prepared = self.provider.prepare(&plan, &session.model, config)?;
+            let mut prepared = self.provider.prepare(&plan, &session.model, config)?;
+            if let Some(agent) = self.agent_request(Vec::new()) {
+                prepared = self.provider.prepare_agent(prepared, &agent)?;
+            }
             let units = serde_json::to_vec(&prepared.body)?.len();
             if units <= 8 * 1024 * 1024
                 && units
@@ -835,6 +841,14 @@ impl Runtime {
                 "driver_failure",
                 "The driver worker failed.",
             ))?
+    }
+
+    /// The method returns the composed tools for a tool driver.
+    fn agent_request(&self, continuation: Vec<provider::AgentTurn>) -> Option<AgentRequest> {
+        (self.driver.uses_tools() && !self.tools.is_empty()).then(|| AgentRequest {
+            tools: self.tools.iter().map(|tool| tool.definition()).collect(),
+            continuation,
+        })
     }
 
     async fn dispatch(

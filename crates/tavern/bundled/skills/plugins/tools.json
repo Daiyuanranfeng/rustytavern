@@ -1,0 +1,20 @@
+{
+  "id": "org.rustytavern.tools.skills",
+  "version": "0.1.0",
+  "host_protocol": "1",
+  "provides": [
+    "tools.skills/1"
+  ],
+  "requested_capabilities": [
+    "skills.read",
+    "prompt.contribute:before_history"
+  ],
+  "allowed_slots": [
+    "before_history"
+  ],
+  "state_schema": 1,
+  "implementation": {
+    "kind": "builtin",
+    "name": "tools.skills"
+  }
+}

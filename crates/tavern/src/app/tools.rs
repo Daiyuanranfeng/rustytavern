@@ -1,5 +1,5 @@
-//! The agent extension supplies web fetch, Agent Skills, and MCP tools.
-//! Each tool requires an explicit grant.
+//! The tool plugins register `tools.NAME/1` services for the agent driver.
+//! Each plugin requires its own grant.
 
 use std::{collections::BTreeMap, path::Path, process::Stdio, sync::Arc, time::Duration};
 
@@ -16,41 +16,64 @@ use tokio_util::sync::CancellationToken;
 
 use super::{checked_file, valid_id};
 use crate::{
-    Error, Result, agent::AgentTool, plugin::PluginContext, provider::ToolDefinition,
+    Error, Result,
+    agent::{AgentTool, ToolSet},
+    plugin::PluginContext,
+    prompt::{Contribution, Retention},
+    provider::ToolDefinition,
     source::PublicFetcher,
 };
-use rustytavern_core::bounded_read;
+use rustytavern_core::{Role, bounded_read};
 
 const MAX_SKILLS: usize = 128;
 const MAX_SKILL_BYTES: usize = 256 * 1024;
 const MAX_DESCRIPTION_BYTES: usize = 16_384;
 
-/// The method builds every tool that the plugin grants permit.
-pub(super) async fn tools(
-    context: &mut PluginContext,
-    data_dir: &Path,
-) -> Result<Vec<Arc<dyn AgentTool>>> {
-    let mut tools: Vec<Arc<dyn AgentTool>> = Vec::new();
+/// The `tools.web` plugin registers `web_fetch` for its granted HTTPS hosts.
+pub(super) fn web(context: &mut PluginContext) -> Result<()> {
     let hosts = context
         .grants()
         .iter()
         .filter_map(|g| g.strip_prefix("network:https:").map(str::to_owned))
         .collect::<Vec<_>>();
-    if !hosts.is_empty() {
-        let mut fetcher = PublicFetcher::new(hosts);
-        fetcher.max_bytes = 2 * 1024 * 1024;
-        tools.push(Arc::new(WebFetch(fetcher)));
+    if hosts.is_empty() {
+        return Err(Error::new(
+            "capability_denied",
+            "The web tools require a network:https grant.",
+        ));
     }
-    if context.grants().contains("skills.read") {
-        let skills = Skills::load(&data_dir.join("skills"))?;
-        if !skills.0.is_empty() {
-            tools.push(Arc::new(skills));
-        }
+    let mut fetcher = PublicFetcher::new(hosts);
+    fetcher.max_bytes = 2 * 1024 * 1024;
+    let tools: ToolSet = vec![Arc::new(WebFetch(fetcher))];
+    context.register("tools.web/1", Arc::new(tools))
+}
+
+/// The `tools.skills` plugin registers `skill` and adds the skill catalog to the prompt.
+pub(super) fn skills(context: &mut PluginContext, data_dir: &Path) -> Result<()> {
+    context.authorize("skills.read")?;
+    let skills = Skills::load(&data_dir.join("skills"))?;
+    let mut tools: ToolSet = Vec::new();
+    if !skills.0.is_empty() {
+        context.contribute(Contribution {
+            plugin_id: String::new(),
+            section_id: "skills".into(),
+            slot: "before_history".into(),
+            priority: 0,
+            role: Role::System,
+            text: skills.catalog(),
+            provenance: Value::Null,
+            retention: Retention::Optional,
+        })?;
+        tools.push(Arc::new(skills));
     }
-    if context.grants().contains("mcp.connect") {
-        tools.extend(connect(context, &data_dir.join("mcp.json")).await?);
-    }
-    Ok(tools)
+    context.register("tools.skills/1", Arc::new(tools))
+}
+
+/// The `tools.mcp` plugin registers the tools of each server in `mcp.json`.
+pub(super) async fn mcp(context: &mut PluginContext, data_dir: &Path) -> Result<()> {
+    context.authorize("mcp.connect")?;
+    let tools = connect(context, &data_dir.join("mcp.json")).await?;
+    context.register("tools.mcp/1", Arc::new(tools))
 }
 
 fn definition(name: &str, description: &str, parameters: Value) -> ToolDefinition {
@@ -159,20 +182,25 @@ impl Skills {
         Ok(Self(skills))
     }
 }
-#[async_trait]
-impl AgentTool for Skills {
-    fn definition(&self) -> ToolDefinition {
+impl Skills {
+    fn catalog(&self) -> String {
         let list = self
             .0
             .iter()
             .map(|(name, (description, _))| format!("- {name}: {description}"))
             .collect::<Vec<_>>()
             .join("\n");
+        format!(
+            "Skill catalog. A skill is a reusable procedure. Call the skill tool to read a skill before you do a task that it covers.\n{list}"
+        )
+    }
+}
+#[async_trait]
+impl AgentTool for Skills {
+    fn definition(&self) -> ToolDefinition {
         definition(
             "skill",
-            &format!(
-                "Read a skill before you do a task that it covers. A skill is a reusable procedure.\n{list}"
-            ),
+            "Read one skill from the skill catalog.",
             json!({"type":"object","properties":{"name":{"type":"string","enum":self.0.keys().collect::<Vec<_>>()},"path":{"type":"string","description":"A file inside the skill directory. Omit it to read SKILL.md."}},"required":["name"],"additionalProperties":false}),
         )
     }
@@ -205,8 +233,8 @@ struct McpServer {
     disabled: bool,
 }
 
-async fn connect(context: &mut PluginContext, path: &Path) -> Result<Vec<Arc<dyn AgentTool>>> {
-    let mut tools: Vec<Arc<dyn AgentTool>> = Vec::new();
+async fn connect(context: &mut PluginContext, path: &Path) -> Result<ToolSet> {
+    let mut tools: ToolSet = Vec::new();
     if !path.is_file() {
         return Ok(tools);
     }

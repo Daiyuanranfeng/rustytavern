@@ -70,8 +70,8 @@ fn serve(answers: Vec<String>) -> (String, thread::JoinHandle<Vec<Value>>) {
     (endpoint, task)
 }
 
-/// The function prepares a data directory with the agent extension and one session.
-fn session(directory: &Path, endpoint: &str, grants: &[&str]) -> String {
+/// The function prepares a data directory with the agent, its tool extensions, and one session.
+fn session(directory: &Path, endpoint: &str, tools: &[(&str, &[&str])]) -> String {
     cli(
         directory,
         &[
@@ -110,19 +110,20 @@ fn session(directory: &Path, endpoint: &str, grants: &[&str]) -> String {
             "Alex reads maps.",
         ],
     );
-    cli(directory, &["extension", "install", "--builtin", "agent"]);
-    let mut enable = vec!["extension", "enable", "org.rustytavern.extension.agent"];
-    for grant in [
+    let driver: &[&str] = &[
         "session.read:current",
         "session.write:current",
         "provider.generate",
-    ]
-    .iter()
-    .chain(grants)
-    {
-        enable.extend(["--grant", grant]);
+    ];
+    for (name, grants) in [("agent", driver)].iter().chain(tools) {
+        cli(directory, &["extension", "install", "--builtin", name]);
+        let id = format!("org.rustytavern.extension.{name}");
+        let mut enable = vec!["extension", "enable", &id];
+        for grant in *grants {
+            enable.extend(["--grant", grant]);
+        }
+        cli(directory, &enable);
     }
-    cli(directory, &enable);
     let session = cli(
         directory,
         &[
@@ -164,18 +165,34 @@ fn the_agent_reads_a_skill_and_returns_the_result_to_the_model() {
         sse(call, Value::Null) + &sse(json!({}), json!("tool_calls")),
         sse(json!({"content":"Bonjour."}), json!("stop")),
     ]);
-    let id = session(directory.path(), &endpoint, &["skills.read"]);
+    let grants: &[&str] = &["skills.read", "prompt.contribute:before_history"];
+    let id = session(directory.path(), &endpoint, &[("skills", grants)]);
+    let inspected = cli(
+        directory.path(),
+        &[
+            "prompt",
+            "inspect",
+            &id,
+            "--message",
+            "Greet me.",
+            "--request",
+        ],
+    );
+    assert_eq!(
+        inspected["prepared"]["body"]["tools"][0]["function"]["name"],
+        "skill"
+    );
     let events = chat(directory.path(), &id);
     let bodies = server.join().unwrap();
 
-    let tools = bodies[0]["tools"].as_array().unwrap();
-    assert_eq!(tools.len(), 1);
-    assert!(
-        tools[0]["function"]["description"]
-            .as_str()
-            .unwrap()
-            .contains("- greet: Greet a traveler.")
-    );
+    assert_eq!(bodies[0]["tools"].as_array().unwrap().len(), 1);
+    assert!(bodies[0]["messages"].as_array().unwrap().iter().any(|m| {
+        m["role"] == "system"
+            && m["content"]
+                .as_str()
+                .unwrap()
+                .contains("- greet: Greet a traveler.")
+    }));
     let messages = bodies[1]["messages"].as_array().unwrap();
     let result = messages.last().unwrap();
     assert_eq!(result["role"], "tool");
@@ -196,7 +213,7 @@ fn the_agent_reads_a_skill_and_returns_the_result_to_the_model() {
 }
 
 #[test]
-fn the_agent_without_tool_grants_sends_a_plain_request() {
+fn the_agent_without_tool_extensions_sends_a_plain_request() {
     let directory = tempfile::tempdir().unwrap();
     let (endpoint, server) = serve(vec![sse(json!({"content":"Hello."}), json!("stop"))]);
     let id = session(directory.path(), &endpoint, &[]);
@@ -223,7 +240,8 @@ fn the_agent_calls_an_mcp_tool_with_a_reduced_schema() {
         sse(call, Value::Null) + &sse(json!({}), json!("tool_calls")),
         sse(json!({"content":"Done."}), json!("stop")),
     ]);
-    let id = session(directory.path(), &endpoint, &["mcp.connect"]);
+    let grants: &[&str] = &["mcp.connect"];
+    let id = session(directory.path(), &endpoint, &[("mcp", grants)]);
     let events = chat(directory.path(), &id);
     let bodies = provider.join().unwrap();
 

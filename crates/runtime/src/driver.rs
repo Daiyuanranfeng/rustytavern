@@ -8,13 +8,16 @@ use tokio_util::sync::CancellationToken;
 use crate::{
     Error, EventSink, Result, Runtime, RuntimeEvent,
     provider::{
-        AgentProviderEvent, AgentProviderStream, AgentRequest, PreparedRequest, ProviderEvent,
+        AgentProviderEvent, AgentProviderStream, AgentRequest, AgentTurn, PreparedRequest,
+        ProviderEvent, ToolCall, ToolResult,
     },
     session::Generation,
     store::now_ms,
 };
 
 pub const MAX_DRIVER_EVENTS: usize = 65_536;
+/// The host truncates each tool result to this byte count.
+pub const MAX_TOOL_RESULT_BYTES: usize = 65_536;
 pub const DRIVER_CAPABILITIES: [&str; 3] = [
     "session.read:current",
     "session.write:current",
@@ -24,6 +27,10 @@ pub const DRIVER_CAPABILITIES: [&str; 3] = [
 #[async_trait]
 pub trait ConversationDriver: Send + Sync {
     fn id(&self) -> &str;
+    /// A tool driver receives the composed tools in its saved request.
+    fn uses_tools(&self) -> bool {
+        false
+    }
     async fn run(&self, context: &mut DriverContext) -> Result<()>;
 }
 
@@ -134,9 +141,11 @@ impl DriverContext {
             .map(AgentProviderEvent::into_text)
             .transpose()
     }
-    /// The method dispatches one agent step after the previous step completes.
-    pub async fn open_agent_step(&mut self, agent: &AgentRequest) -> Result<()> {
-        let result = self.open(Some(agent)).await;
+    /// The method dispatches one step with the composed tools and the continuation.
+    /// Without composed tools, the method dispatches the saved text request.
+    pub async fn open_agent_step(&mut self, continuation: &[AgentTurn]) -> Result<()> {
+        let agent = self.runtime.agent_request(continuation.to_vec());
+        let result = self.open(agent.as_ref()).await;
         if let Err(error) = &result {
             self.failure = Some(error.clone());
         }
@@ -243,16 +252,43 @@ impl DriverContext {
         Ok(())
     }
     /// The method emits `tool_call` without a result and `tool_result` with a result.
-    pub fn report_tool(
-        &self,
-        call: &crate::provider::ToolCall,
-        result: Option<&str>,
-    ) -> Result<()> {
-        self.active()?;
-        let (kind, text) = match result {
-            None => ("tool_call", format!("{} {}", call.name, call.arguments)),
-            Some(content) => ("tool_result", content.to_owned()),
+    /// The host runs one tool call and emits `tool_call` and `tool_result` events.
+    /// A failed tool returns its error text to the model.
+    pub async fn call_tool(&mut self, call: &ToolCall) -> Result<ToolResult> {
+        self.emit_tool("tool_call", format!("{} {}", call.name, call.arguments))?;
+        let tool = self
+            .runtime
+            .tools
+            .iter()
+            .find(|tool| tool.definition().name == call.name)
+            .cloned();
+        let result = match tool {
+            Some(tool) => {
+                tool.call(call.arguments.clone(), self.cancellation.clone())
+                    .await
+            }
+            None => Err(Error::new("unknown_tool", "The tool does not exist.")),
         };
+        let mut content = match result {
+            Ok(content) => content,
+            Err(error) if error.code == "cancelled" => return Err(error),
+            Err(error) => format!("Error {}: {}", error.code, error.message),
+        };
+        if content.len() > MAX_TOOL_RESULT_BYTES {
+            let mut end = MAX_TOOL_RESULT_BYTES;
+            while !content.is_char_boundary(end) {
+                end -= 1;
+            }
+            content.truncate(end);
+        }
+        self.emit_tool("tool_result", content.clone())?;
+        Ok(ToolResult {
+            call_id: call.id.clone(),
+            content,
+        })
+    }
+    fn emit_tool(&self, kind: &str, text: String) -> Result<()> {
+        self.active()?;
         let mut event = RuntimeEvent::new(kind, &self.generation.id);
         event.text = Some(text);
         self.sink.emit(event);

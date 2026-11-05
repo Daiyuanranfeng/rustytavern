@@ -8,10 +8,7 @@
   "requested_capabilities": [
     "session.read:current",
     "session.write:current",
-    "provider.generate",
-    "network:https:*",
-    "skills.read",
-    "mcp.connect"
+    "provider.generate"
   ],
   "state_schema": 1,
   "implementation": {

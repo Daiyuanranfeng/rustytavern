@@ -1,4 +1,4 @@
-mod agent;
+mod tools;
 
 pub use crate::config;
 use crate::{
@@ -837,16 +837,23 @@ impl RuntimePlugin for BuiltinPlugin {
                 for capability in DRIVER_CAPABILITIES {
                     context.authorize(capability)?;
                 }
+                let steps = configuration["max_steps"].as_u64().unwrap_or(8) as usize;
+                let driver: Arc<dyn ConversationDriver> = Arc::new(AgentDriver::new(steps));
+                context.register("driver/1", Arc::new(driver))?;
+            }
+            "tools.web" => tools::web(context)?,
+            "tools.skills" | "tools.mcp" => {
                 let data_dir = self.data_dir.as_deref().ok_or_else(|| {
                     Error::new(
                         "invalid_plugin_factory",
-                        "The agent requires a data directory.",
+                        "The tool plugin requires a data directory.",
                     )
                 })?;
-                let tools = agent::tools(context, data_dir).await?;
-                let steps = configuration["max_steps"].as_u64().unwrap_or(8) as usize;
-                let driver: Arc<dyn ConversationDriver> = Arc::new(AgentDriver::new(tools, steps));
-                context.register("driver/1", Arc::new(driver))?;
+                if name == "tools.skills" {
+                    tools::skills(context, data_dir)?;
+                } else {
+                    tools::mcp(context, data_dir).await?;
+                }
             }
             "profile.core-v1" => {
                 let profile: Arc<dyn PromptProfile> = Arc::new(CoreProfile);
@@ -1288,6 +1295,27 @@ impl ExtensionManager {
                     include_bytes!("../../bundled/agent/plugins/driver.json"),
                     include_bytes!("../../bundled/agent/README.md"),
                     include_bytes!("../../bundled/agent/plugins/README.md"),
+                ),
+                "web" => (
+                    "plugins/tools.json",
+                    include_bytes!("../../bundled/web/extension.json"),
+                    include_bytes!("../../bundled/web/plugins/tools.json"),
+                    include_bytes!("../../bundled/web/README.md"),
+                    include_bytes!("../../bundled/web/plugins/README.md"),
+                ),
+                "skills" => (
+                    "plugins/tools.json",
+                    include_bytes!("../../bundled/skills/extension.json"),
+                    include_bytes!("../../bundled/skills/plugins/tools.json"),
+                    include_bytes!("../../bundled/skills/README.md"),
+                    include_bytes!("../../bundled/skills/plugins/README.md"),
+                ),
+                "mcp" => (
+                    "plugins/tools.json",
+                    include_bytes!("../../bundled/mcp/extension.json"),
+                    include_bytes!("../../bundled/mcp/plugins/tools.json"),
+                    include_bytes!("../../bundled/mcp/README.md"),
+                    include_bytes!("../../bundled/mcp/plugins/README.md"),
                 ),
                 "chub" => (
                     "plugins/source.json",
