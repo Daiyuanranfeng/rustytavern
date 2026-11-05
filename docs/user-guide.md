@@ -10,29 +10,66 @@ The existing command surface remains available for scripts.
 
 | Command | Task |
 | --- | --- |
-| `/setup` | The user configures a model provider. |
-| `/model` | The user selects or edits a provider profile. |
-| `/character` | The user selects or imports a character. |
-| `/worldbook` | The user imports, exports, or binds worldbooks. |
+| `/provider` | The user connects a provider with an API key or replaces its key. Several providers can stay connected. |
+| `/model` | The user selects a model from the combined catalogs of all connected providers. The model selects its provider. |
+| `/character` | The user selects a character or adds one from a file or web address. |
 | `/persona` | The user selects or creates a persona. |
-| `/new` | The user starts a conversation with the selected records. |
-| `/sessions` | The user resumes a saved conversation. |
-| `/config` | The user inspects product configuration. |
-| `/plugins` | The user inspects plugins and binds services. |
-| `/extensions` | The user installs, enables, disables, or removes packages. |
-| `/prompt` | The user inspects the complete request for a proposed message. |
-| `/adopt` | The user explicitly adopts changed configuration. |
-| `/retry` | The user retries or regenerates the current turn. |
-| `/branch` | The user selects a conversation head. |
-| `/export` | The user exports the active conversation. |
+| `/new` | The user starts a chat and selects the first greeting. |
+| `/chats` | The user resumes a saved chat. |
+| `/retry` | The user regenerates the last reply. |
+| `/settings` | The user opens lorebooks, branches, export, request inspection, configuration adoption, advanced provider settings, extensions, plugins, and the configuration view. |
 | `/help` | The user reads the command and key reference. |
 | `/quit` | The user closes the terminal. |
 
-The composer sends ordinary text to the active conversation. The command palette completes slash commands.
+The names `/setup`, `/sessions`, and `/models` remain aliases. The `/settings` items also accept direct names: `/worldbook`, `/branch`, `/export`, `/prompt`, `/adopt`, `/profile`, `/extensions`, `/plugins`, and `/config`.
+
+The composer sends ordinary text to the active conversation. A command popup opens when the composer starts with `/`.
+Up and Down select a command in the popup. Tab completes the selected command. Enter or a click runs it.
 Enter submits text or a form. Alt+Enter inserts a newline.
-Tab changes the active form field. Escape closes a dialog.
+Tab changes the active form field. Escape closes a dialog. Typing in a menu filters its items.
 Page Up and Page Down scroll the transcript. Ctrl+C cancels active generation.
 Ctrl+D closes an idle terminal. An exit during generation requests cancellation and waits for durable completion.
+
+The mouse wheel scrolls the transcript, menus, and documents. A pointer over a menu item selects it. A click activates it.
+A click on a form field moves the focus to it. The `[ Apply ]`, `[ Cancel ]`, and `[×]` targets accept clicks.
+The terminal captures the mouse. Hold Shift (Option in some macOS terminals) for native terminal selection.
+
+The transcript shows your messages on the right side. The transcript renders Markdown in all messages.
+Each message has a rounded bubble. Your message appears at once. The reply bubble shows animated dots until the first text arrives.
+The reply then streams with a cursor at its end. A failed reply shows its error in a red bubble.
+The header shows the character, the persona, the model, and the provider of the open chat. Without a chat, it shows the model for new chats.
+
+Steps before a reply have their own small gray bubbles: `✻` thinking, `↗` web calls, `⧉` MCP tools (`mcp__` names), and `⚙` other tools.
+A step shows a spinner while it runs and `✓` after its result. A click on a step header expands or collapses it. Ctrl+O toggles all steps.
+The terminal builds steps from the `reasoning_delta`, `tool_call`, and `tool_result` runtime events. The event `text` holds the delta, the call name with its arguments, or the result.
+
+A drag over the transcript selects text. The release copies the text through OSC 52 and, on macOS, `pbcopy`.
+
+A chat pins its provider settings and extensions. A changed setup stops the next reply. The terminal then offers `/adopt` and keeps the unsent message in the composer.
+
+### First setup
+
+The terminal opens the provider menu when no provider profile exists. The menu lists OpenRouter, Anthropic, Google Gemini, OpenAI, and a local or custom server.
+The menu shows the connection status of each vendor and marks each default key variable that is exported. The key form for a vendor accepts one of these inputs:
+
+- An API key. The form rejects a key whose prefix belongs to another vendor: `sk-or-` (OpenRouter), `sk-ant-` (Anthropic), `AIza` (Gemini), or `sk-` (OpenAI).
+- An environment variable name, for example `OPENROUTER_API_KEY`.
+- No value. The form uses the default variable from the [provider table](compatibility.md#provider-contracts).
+
+The custom server form requires a server URL. The key is optional for that kind.
+The form saves a profile named after the vendor. The terminal then loads the model catalog of that provider.
+The `/model` list loads all connected catalogs at the same time. Each row starts with its provider name. A failed catalog does not hide the other catalogs.
+The list sorts models from the newest release to the oldest and shows each release date. A tab bar shows `★ Recommended`, `All`, and one tab for each provider.
+Left and Right change the tab. A click on a tab also changes it.
+A model selection while a chat is open offers `/adopt` for that chat.
+The model list shows recommended roleplay models first, with context length and price. Typing filters the list.
+
+### Characters
+
+The `/character` menu adds a character from one input. The input accepts a PNG, JSON, or CHARX file path.
+A dropped file path can contain quotes, shell escapes, or a leading `~/`. The terminal removes them.
+The input also accepts a `chub.ai` or `realm.risuai.net` address. The terminal selects the source from the address.
+The first download from a site asks once for its network grant. The terminal then installs and enables the bundled source.
 
 ### Ownership
 
@@ -40,7 +77,8 @@ The CLI owns rendering, input, forms, and selection preferences in `terminal.jso
 Slash commands call typed operations without shell conversion. The database remains the history authority.
 The display uses a bounded transcript window and marks truncated text. Exports retain full history.
 The request form can write the complete request to a file. The terminal permits one active operation and retains runtime leases.
-The terminal never grants capabilities automatically. The setup form stores a credential variable name only.
+The terminal grants a source capability only after an explicit confirmation.
+The setup form saves a pasted key in `credentials.json` with owner-only permissions. The profile stores the reference `stored:VENDOR`.
 
 ## CLI reference
 
@@ -372,6 +410,7 @@ The store creates schema 5 and upgrades versions 1 through 4 atomically. The upg
 Decoder defaults supply absent enrichment and acceptance fields. Legacy sessions require explicit configuration before generation.
 A failed upgrade rolls back. A future marker blocks writes.
 Profiles and snapshots store credential references only. The provider resolves credential values during dispatch.
+A `stored:NAME` reference reads `credentials.json` in the data directory. Other references name environment variables.
 The [export tests](../crates/tavern/tests/native_exports.rs) check credential exclusion in both trace modes.
 
 ### Plugin schema markers
@@ -393,6 +432,6 @@ rustytavern model discover PROVIDER --endpoint URL
 rustytavern model select PROVIDER MODEL
 ```
 
-Each discovery filter is optional. The `/models` command opens a provider chooser, a discovery form, and a model chooser.
+Each discovery filter is optional. The `/model` command loads the catalogs of all connected providers and opens one model chooser.
 Selection updates the provider profile. An existing session still requires explicit configuration adoption.
 The [catalog contract](compatibility.md#model-catalog) distinguishes advertised capabilities from verified behavior. The integrated CLI and terminal gate remains pending.

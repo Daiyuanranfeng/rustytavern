@@ -964,6 +964,9 @@ pub async fn runtime(manager: &ExtensionManager) -> Result<Runtime> {
         .as_ref()
         .clone();
     Ok(Runtime::new(store)
+        .with_credentials(Arc::new(crate::config::StoredCredentials::new(
+            &manager.data_dir,
+        )))
         .with_plugins(manager.registry.clone())
         .with_product_composition(manager.composition().await?))
 }

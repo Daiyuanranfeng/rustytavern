@@ -74,6 +74,7 @@ impl ConversationDriver for AgentDriver {
                 ));
             }
             for call in &turn.calls {
+                context.report_tool(call, None)?;
                 let index = agent.tools.iter().position(|t| t.name == call.name);
                 let result = match index {
                     Some(index) => {
@@ -95,7 +96,7 @@ impl ConversationDriver for AgentDriver {
                     }
                     content.truncate(end);
                 }
-                context.report_tool(call, &content)?;
+                context.report_tool(call, Some(&content))?;
                 turn.results.push(ToolResult {
                     call_id: call.id.clone(),
                     content,

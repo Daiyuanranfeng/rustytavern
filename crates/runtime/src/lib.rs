@@ -53,8 +53,6 @@ pub struct RuntimeEvent {
     pub error: Option<Error>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub missed_events: Option<usize>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub tool: Option<Value>,
 }
 
 impl RuntimeEvent {
@@ -66,7 +64,6 @@ impl RuntimeEvent {
             usage: None,
             error: None,
             missed_events: None,
-            tool: None,
         }
     }
 }

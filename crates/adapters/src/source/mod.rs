@@ -58,13 +58,13 @@ impl PublicFetcher {
                 "The source has no grant for this HTTPS target.",
             ));
         }
-        if let Ok(address) = host.trim_matches(['[', ']']).parse::<IpAddr>() {
-            if !public_address(address) {
-                return Err(Error::new(
-                    "source_target_denied",
-                    "The card source resolves to a restricted address.",
-                ));
-            }
+        if let Ok(address) = host.trim_matches(['[', ']']).parse::<IpAddr>()
+            && !public_address(address)
+        {
+            return Err(Error::new(
+                "source_target_denied",
+                "The card source resolves to a restricted address.",
+            ));
         }
         Ok(url)
     }

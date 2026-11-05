@@ -133,7 +133,7 @@ async fn execute(
                     .fetch(
                         &config,
                         endpoint.as_deref(),
-                        &rustytavern::provider::EnvironmentCredentials,
+                        &rustytavern::config::StoredCredentials::new(&app.data_dir),
                         cancellation,
                     )
                     .await?;

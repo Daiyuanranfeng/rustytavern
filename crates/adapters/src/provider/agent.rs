@@ -120,10 +120,10 @@ fn schema_valid(schema: &Value, depth: usize) -> bool {
     {
         return false;
     }
-    if let Some(items) = object.get("items") {
-        if schema["type"] != "array" || !schema_valid(items, depth + 1) {
-            return false;
-        }
+    if let Some(items) = object.get("items")
+        && (schema["type"] != "array" || !schema_valid(items, depth + 1))
+    {
+        return false;
     }
     if object
         .get("enum")

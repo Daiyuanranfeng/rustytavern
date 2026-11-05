@@ -6,15 +6,15 @@ mod view;
 use crate::*;
 use crossterm::{
     event::{
-        DisableBracketedPaste, EnableBracketedPaste, Event, EventStream, KeyCode, KeyEventKind,
-        KeyModifiers,
+        DisableBracketedPaste, DisableMouseCapture, EnableBracketedPaste, EnableMouseCapture,
+        Event, EventStream, KeyCode, KeyEventKind, KeyModifiers,
     },
     execute,
 };
 use futures_util::StreamExt;
 use rustytavern::{
     app::{ExtensionManager, default_registry},
-    config::{Application, default_data_dir},
+    config::{Application, StoredCredentials, default_data_dir},
     runtime::RuntimeEvent,
     session::Generation,
 };
@@ -35,8 +35,26 @@ impl Drop for TerminalGuard {
         restore();
     }
 }
+/// The function sends text to the clipboard through OSC 52 and, on macOS, through pbcopy.
+fn copy(text: &str) {
+    use base64::Engine;
+    use std::io::Write;
+    let encoded = base64::engine::general_purpose::STANDARD.encode(text);
+    let _ = write!(stdout(), "\x1b]52;c;{encoded}\x07");
+    let _ = stdout().flush();
+    #[cfg(target_os = "macos")]
+    if let Ok(mut child) = std::process::Command::new("pbcopy")
+        .stdin(std::process::Stdio::piped())
+        .spawn()
+    {
+        if let Some(mut input) = child.stdin.take() {
+            let _ = input.write_all(text.as_bytes());
+        }
+        let _ = child.wait();
+    }
+}
 fn restore() {
-    let _ = execute!(stdout(), DisableBracketedPaste);
+    let _ = execute!(stdout(), DisableBracketedPaste, DisableMouseCapture);
     ratatui::restore();
 }
 
@@ -49,6 +67,9 @@ pub(super) async fn run(path: Option<PathBuf>) -> Result<()> {
     }
     let path = path.map(Ok).unwrap_or_else(default_data_dir)?;
     let mut ui = Ui::open(path)?;
+    if Application::open(&ui.path)?.config.providers.is_empty() {
+        ui.slash("/provider")?;
+    }
     let previous = std::panic::take_hook();
     std::panic::set_hook(Box::new(move |info| {
         restore();
@@ -56,7 +77,7 @@ pub(super) async fn run(path: Option<PathBuf>) -> Result<()> {
     }));
     let _guard = TerminalGuard;
     let mut terminal = ratatui::try_init()?;
-    execute!(stdout(), EnableBracketedPaste)?;
+    execute!(stdout(), EnableBracketedPaste, EnableMouseCapture)?;
     let (sender, mut updates) = mpsc::channel(64);
     let mut events = EventStream::new();
     let mut tick = tokio::time::interval(std::time::Duration::from_millis(80));
@@ -65,6 +86,10 @@ pub(super) async fn run(path: Option<PathBuf>) -> Result<()> {
     let result: Result<()> = async {
         while !ui.exit || ui.busy {
             terminal.draw(|frame| view::draw(frame, &mut ui))?;
+            if let Some(text) = ui.copied.take() {
+                copy(&text);
+                ui.notice = format!("Copied {} characters.", text.chars().count());
+            }
             tokio::select! {
                 _ = tick.tick() => { ui.tick = ui.tick.wrapping_add(1); }
                 signal = tokio::signal::ctrl_c() => { signal?; if ui.busy { cancellation.cancel(); } else { ui.exit=true; } }
@@ -79,7 +104,7 @@ pub(super) async fn run(path: Option<PathBuf>) -> Result<()> {
                         Some(Update::Finished(result)) => { ui.finish(result); ui.busy = false; }
                         None => return Err(Error::new("terminal_task", "The terminal operation ended without a result.")),
                     }
-                    if !ui.busy { if let Some(task) = job.take() { let _ = task.await; } }
+                    if !ui.busy && let Some(task) = job.take() { let _ = task.await; }
                 }
                 event = events.next() => {
                     let event = event.ok_or_else(|| Error::new("terminal_input", "The terminal input stream closed."))??;
@@ -91,9 +116,10 @@ pub(super) async fn run(path: Option<PathBuf>) -> Result<()> {
                                     if key.code == KeyCode::Char('d') { ui.exit = true; }
                                 } else if key.code == KeyCode::Char('d') { ui.exit = true; }
                                 else { ui.clear_input(); }
-                            } else if !ui.busy { ui.key(key)?; }
+                            } else if !ui.busy || (key.modifiers.contains(KeyModifiers::CONTROL) && key.code == KeyCode::Char('o')) { ui.key(key)?; }
                         }
                         Event::Paste(text) if !ui.busy => ui.paste(&text),
+                        Event::Mouse(mouse) => ui.mouse(mouse)?,
                         _ => {}
                     }
                 }
@@ -107,6 +133,17 @@ pub(super) async fn run(path: Option<PathBuf>) -> Result<()> {
                 job = Some(tokio::spawn(async move {
                     match request {
                         state::Job::Command(command, after) => { let result = batch::collect(path, command, token).await; let _ = sender.send(Update::Command(result, after)).await; }
+                        state::Job::Catalogs(providers) => {
+                            let results = futures_util::future::join_all(providers.iter().map(|provider| {
+                                let command = Command::Model { command: ModelCommand::Discover { provider: provider.clone(), endpoint: None, input: None, output: None, parameter: None } };
+                                batch::collect(path.clone(), command, token.clone())
+                            })).await;
+                            let values = results.into_iter().map(|result| match result {
+                                Ok(mut values) => values.pop().unwrap_or(Value::Null),
+                                Err(error) => serde_json::json!({ "error": error.message }),
+                            }).collect();
+                            let _ = sender.send(Update::Command(Ok(values), state::After::Models(providers))).await;
+                        }
                         state::Job::Generate { session, message, retry } => { let result = generate(path, session, message, retry, token, &sender).await; let _ = sender.send(Update::Finished(result)).await; }
                     }
                 }));

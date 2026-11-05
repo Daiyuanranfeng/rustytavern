@@ -242,13 +242,19 @@ impl DriverContext {
         self.sink.emit(event);
         Ok(())
     }
-    /// The method reports one finished tool call to the event consumer.
-    pub fn report_tool(&self, call: &crate::provider::ToolCall, content: &str) -> Result<()> {
+    /// The method emits `tool_call` without a result and `tool_result` with a result.
+    pub fn report_tool(
+        &self,
+        call: &crate::provider::ToolCall,
+        result: Option<&str>,
+    ) -> Result<()> {
         self.active()?;
-        let mut event = RuntimeEvent::new("tool_result", &self.generation.id);
-        event.tool = Some(
-            serde_json::json!({"id":call.id,"name":call.name,"arguments":call.arguments,"content":content}),
-        );
+        let (kind, text) = match result {
+            None => ("tool_call", format!("{} {}", call.name, call.arguments)),
+            Some(content) => ("tool_result", content.to_owned()),
+        };
+        let mut event = RuntimeEvent::new(kind, &self.generation.id);
+        event.text = Some(text);
         self.sink.emit(event);
         Ok(())
     }

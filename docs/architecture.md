@@ -127,6 +127,7 @@ The project reuses libraries for general infrastructure. The project keeps its r
 | CLI | `clap` | The CLI maps commands to library operations. |
 | Terminal rendering | `ratatui`, `crossterm` | The CLI owns event handling, restoration, and conversation views. |
 | Text editing | `tui-textarea` | The CLI owns form validation, slash routing, and input bounds. |
+| Markdown | `pulldown-cmark`, `unicode-width` | The CLI converts messages into styled and wrapped transcript lines. |
 | Versions | `semver` | The plugin registry checks declared dependencies. |
 | Binary metadata | `base64`, `crc32fast` | The card importer applies envelope precedence and byte limits. |
 | CHARX archives | `zip` | The card importer checks metadata, paths, CRC values, and expansion limits. |

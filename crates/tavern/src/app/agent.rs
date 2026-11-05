@@ -321,10 +321,10 @@ fn sanitize(schema: &Value, depth: usize) -> Option<Value> {
         out.insert("properties".into(), Value::Object(properties));
         out.insert("required".into(), json!(required));
     }
-    if let Some(items) = object.get("items").filter(|_| kind == "array") {
-        if let Some(items) = sanitize(items, depth + 1) {
-            out.insert("items".into(), items);
-        }
+    if let Some(items) = object.get("items").filter(|_| kind == "array")
+        && let Some(items) = sanitize(items, depth + 1)
+    {
+        out.insert("items".into(), items);
     }
     Some(Value::Object(out))
 }
@@ -358,10 +358,10 @@ impl AgentTool for McpTool {
                 None => text.push(format!("[The tool omits {} content.]", block["type"])),
             }
         }
-        if text.is_empty() {
-            if let Some(value) = &result.structured_content {
-                text.push(value.to_string());
-            }
+        if text.is_empty()
+            && let Some(value) = &result.structured_content
+        {
+            text.push(value.to_string());
         }
         if result.is_error == Some(true) {
             return Err(Error::new("mcp_tool_error", text.join("\n")));

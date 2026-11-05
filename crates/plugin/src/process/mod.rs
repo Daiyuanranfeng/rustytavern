@@ -204,11 +204,11 @@ impl RpcClient {
             _ = cancellation.cancelled() => Err(Error::new("cancelled", "The caller cancelled the plugin invocation.")),
             result = tokio::time::timeout_at(deadline, self.exchange(process, method, params, &cancellation)) => result.unwrap_or_else(|_| Err(Error::new("plugin_timeout", "The plugin invocation exceeded its deadline."))),
         };
-        if let Err(error) = &result {
-            if let Some(process) = guard.take() {
-                drop(guard);
-                process.stop(Some((id, &error.code))).await;
-            }
+        if let Err(error) = &result
+            && let Some(process) = guard.take()
+        {
+            drop(guard);
+            process.stop(Some((id, &error.code))).await;
         }
         result
     }
