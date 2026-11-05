@@ -35,11 +35,11 @@ impl ProviderKind {
     pub fn capabilities(self) -> ProviderCapabilities {
         ProviderCapabilities {
             contract_id: match self {
-                Self::OpenRouter => "openrouter.chat_completions.text-v1",
-                Self::OpenAi => "openai.responses.text-v1",
-                Self::Anthropic => "anthropic.messages.text-v1",
-                Self::Gemini => "gemini.generate_content.text-v1",
-                Self::Custom => "custom.chat_completions.text-v1",
+                Self::OpenRouter => "openrouter.chat_completions.agent-v1",
+                Self::OpenAi => "openai.responses.agent-v1",
+                Self::Anthropic => "anthropic.messages.agent-v1",
+                Self::Gemini => "gemini.generate_content.agent-v1",
+                Self::Custom => "custom.chat_completions.agent-v1",
             },
             protocol: self,
             roles: vec![Role::System, Role::User, Role::Assistant],

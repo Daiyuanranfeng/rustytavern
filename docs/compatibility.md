@@ -149,25 +149,25 @@ The project keeps these gaps open before it claims comprehensive format support.
 
 ## Provider contracts
 
-RustyTavern supplies five text adapters. Each prepared request records its `contract_id`.
+RustyTavern supplies five adapters. Each prepared request records its `contract_id`.
 The contract identifies the implemented adapter subset. The contract does not identify every capability of the remote service.
 
 ```sh
 cargo run --locked -- --home ./home config capabilities
 ```
 
-The command reports roles, text input and output, streaming, parameters, system placement, and token-count mode. The text contracts expose no multimodal input or reasoning controls.
-The separate [agent contract](#provider-tool-transport) adds selected tool-call transport. The counter uses conservative UTF-8 byte estimates.
+The command reports roles, text input and output, streaming, parameters, system placement, and token-count mode. The contracts expose no multimodal input or reasoning controls.
+Each contract carries text, thinking text, and [tool calls](#provider-tool-transport). The counter uses conservative UTF-8 byte estimates.
 The counter does not report an exact vendor tokenizer result. The provider validates restrictions for the selected model.
 An explicit model ID does not require catalog discovery.
 
 | CLI kind | Contract ID | Wire API |
 | --- | --- | --- |
-| `openrouter` | `openrouter.chat_completions.text-v1` | The adapter uses Chat Completions SSE. |
-| `openai` | `openai.responses.text-v1` | The adapter uses Responses SSE. |
-| `anthropic` | `anthropic.messages.text-v1` | The adapter uses Messages SSE. |
-| `gemini` | `gemini.generate_content.text-v1` | The adapter uses native `streamGenerateContent` SSE. |
-| `custom` | `custom.chat_completions.text-v1` | The adapter uses a declared Chat Completions subset. |
+| `openrouter` | `openrouter.chat_completions.agent-v1` | The adapter uses Chat Completions SSE. |
+| `openai` | `openai.responses.agent-v1` | The adapter uses Responses SSE. |
+| `anthropic` | `anthropic.messages.agent-v1` | The adapter uses Messages SSE. |
+| `gemini` | `gemini.generate_content.agent-v1` | The adapter uses native `streamGenerateContent` SSE. |
+| `custom` | `custom.chat_completions.agent-v1` | The adapter uses a declared Chat Completions subset. |
 
 The serialized protocol names are `openrouter` and `openai`.
 The request stores a credential reference, `config:NAME`. The adapter resolves its value from `config.toml` only during dispatch. A custom provider can omit the key.
@@ -229,7 +229,7 @@ The stream must contain a terminal success signal before the runtime commits an 
 The runtime saves usage before it emits a usage event. The runtime retains that usage after cancellation or stream failure.
 The adapter never treats premature connection closure as success.
 The [`genai`](https://crates.io/crates/genai) library parses each wire protocol. The library ignores malformed content values and malformed tool items.
-The library excludes recognized reasoning content from the character reply. The adapter reports usage in one shape for every protocol.
+The adapter streams recognized reasoning content as `ProviderEvent::Reasoning`. The reasoning content never enters the character reply. The adapter reports usage in one shape for every protocol.
 
 ### Error classification
 
@@ -307,7 +307,7 @@ The [provider module](../crates/adapters/src/provider/mod.rs) has three parts:
 - [`tools.rs`](../crates/adapters/src/provider/tools.rs) checks tool definitions, continuation turns, and returned calls.
 - [`client.rs`](../crates/adapters/src/provider/client.rs) sends the body through the `genai` library and maps its events and errors.
 
-`ProviderAdapter::prepare_agent` adds definitions and continuation turns. `ProviderAdapter::open_agent_stream` returns text, tool calls, usage, and terminal events.
+`ProviderAdapter::prepare_agent` adds definitions and continuation turns. `ProviderAdapter::open_stream` returns text, thinking text, tool calls, usage, and terminal events.
 The [typed records](../crates/conversation/src/provider.rs) define `ToolDefinition`, `ToolCall`, `ToolResult`, `AgentTurn`, and `AgentRequest`.
 The library maps tools and continuation turns to each protocol. A call without arguments receives an empty object.
 

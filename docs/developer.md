@@ -155,7 +155,7 @@ The provider adapter owns vendor stream decoding.
 | `PromptProfile::select_context` | The method selects complete groups after authorized edits. |
 | `PromptProfile::compile` | The default method combines drafting and selection for direct callers. |
 | `ProviderAdapter::prepare` | The pure method returns a `PreparedRequest` without network I/O. |
-| `ProviderAdapter::open_stream` | The method dispatches with a credential resolver and cancellation token. The stream emits normalized `ProviderEvent` values. |
+| `ProviderAdapter::open_stream` | The method dispatches with a credential resolver and cancellation token. The stream emits normalized `ProviderEvent` values: text, thinking text, tool calls, usage, failure, and completion. |
 | `ProviderAdapter::id` | The method identifies the native implementation. |
 | `ProviderAdapter::validate_config` | The pure method checks settings before configuration persistence. |
 | `StoreBackend` | The backend preserves atomic transitions, writer leases, fencing, namespace snapshots, checked writes, and migrations. |
@@ -230,9 +230,9 @@ The registered type is an outer `Arc` around `Arc<dyn ConversationDriver>`. The 
 | `ConversationDriver::run` | The asynchronous method coordinates one reply through host commands. |
 | `DriverContext::snapshot` | The method returns the immutable conversation view. |
 | `DriverContext::request` | The method returns the sanitized saved request. |
-| `DriverContext::next_event` | The method dispatches once and obtains normalized provider events. |
-| `DriverContext::open_agent_step` | The method adds the composed tools and a continuation to the saved request and dispatches one step. |
-| `DriverContext::next_agent_event` | The method obtains normalized events, including tool calls. |
+| `DriverContext::open_step` | The method adds the composed tools and a continuation to the saved request and dispatches one step. |
+| `DriverContext::next_event` | The method obtains the normalized events of the open step, including thinking text and tool calls. |
+| `DriverContext::append_reasoning` | The method emits a `reasoning_delta` event. The draft does not keep the thinking text. |
 | `DriverContext::call_tool` | The host runs one composed tool and emits `tool_call` and `tool_result` events. |
 | `DriverContext::append_text` | The method persists text before the host emits its delta event. |
 | `DriverContext::cancellation_token` | The method supplies the current phase cancellation token. |
@@ -243,10 +243,10 @@ The host rejects a selected driver with missing grants before session use. A dir
 
 The conversation view excludes provider configuration, composition history, and plugin state. The saved request contains credential references only.
 The driver receives no credential resolver or database handle. The driver cannot append text before dispatch.
-The first `next_event` call dispatches the already saved request. Later calls read the same request's stream.
+A driver must call `open_step` before `next_event`. Each step uses the same saved request.
 The `agent::AgentDriver` opens a new step after each completed step with tool calls. `ProviderAdapter::prepare_agent` extends the saved request for that step.
 A tool plugin registers `agent::ToolSet` as a `tools.NAME/1` service. The runtime collects every composed tool set, like the `prompt.hook.` services.
-For a driver whose `uses_tools` method returns true, the saved request contains the tool schemas.
+The saved request always contains the composed tool schemas. The list can be empty.
 The host records usage before it exposes an accounting event to the driver.
 
 The driver can transform, buffer, or reject reply text. The host permits successful completion only after an actual provider completion event.

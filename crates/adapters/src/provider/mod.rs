@@ -12,15 +12,13 @@ pub use request::{ChatBody, ChatMessage};
 use std::pin::Pin;
 
 use async_trait::async_trait;
-use futures_util::{Stream, StreamExt};
+use futures_util::Stream;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use tokio_util::sync::CancellationToken;
 
 use rustytavern_conversation::prompt::PromptPlan;
 use rustytavern_core::{Error, Result, Role};
-
-pub type ProviderStream = Pin<Box<dyn Stream<Item = Result<ProviderEvent>> + Send>>;
 
 pub use rustytavern_conversation::provider::{
     AgentRequest, AgentTurn, OpenRouterRouting, ProviderCapabilities, ProviderConfig, ProviderKind,
@@ -40,48 +38,28 @@ pub struct PreparedRequest {
     pub transformations: Vec<String>,
 }
 
+pub type ProviderStream = Pin<Box<dyn Stream<Item = Result<ProviderEvent>> + Send>>;
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(tag = "type", rename_all = "snake_case")]
 pub enum ProviderEvent {
-    Text { text: String },
-    Usage { usage: Value },
-    Failure { error: Error },
+    Text {
+        text: String,
+    },
+    /// The model streams its thinking text. The driver does not add it to the reply.
+    Reasoning {
+        text: String,
+    },
+    Usage {
+        usage: Value,
+    },
+    ToolCalls {
+        calls: Vec<ToolCall>,
+    },
+    Failure {
+        error: Error,
+    },
     Complete,
-}
-
-pub type AgentProviderStream = Pin<Box<dyn Stream<Item = Result<AgentProviderEvent>> + Send>>;
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-#[serde(tag = "type", rename_all = "snake_case")]
-pub enum AgentProviderEvent {
-    Text { text: String },
-    Usage { usage: Value },
-    ToolCalls { calls: Vec<ToolCall> },
-    Failure { error: Error },
-    Complete,
-}
-impl AgentProviderEvent {
-    pub fn into_text(self) -> Result<ProviderEvent> {
-        Ok(match self {
-            Self::Text { text } => ProviderEvent::Text { text },
-            Self::Usage { usage } => ProviderEvent::Usage { usage },
-            Self::Failure { error } => ProviderEvent::Failure { error },
-            Self::Complete => ProviderEvent::Complete,
-            Self::ToolCalls { .. } => {
-                return Err(tools::invalid("The text contract rejects tool calls."));
-            }
-        })
-    }
-}
-impl From<ProviderEvent> for AgentProviderEvent {
-    fn from(event: ProviderEvent) -> Self {
-        match event {
-            ProviderEvent::Text { text } => Self::Text { text },
-            ProviderEvent::Usage { usage } => Self::Usage { usage },
-            ProviderEvent::Failure { error } => Self::Failure { error },
-            ProviderEvent::Complete => Self::Complete,
-        }
-    }
 }
 pub trait CredentialResolver: Send + Sync {
     fn resolve(&self, reference: &str) -> Result<String>;
@@ -114,27 +92,13 @@ pub trait ProviderAdapter: Send + Sync {
         model: &str,
         config: &ProviderConfig,
     ) -> Result<PreparedRequest>;
-    /// The pure method adds tools and a continuation to a prepared text request.
+    /// The pure method adds the tools and the continuation to a prepared request.
     fn prepare_agent(
         &self,
-        _request: PreparedRequest,
-        _agent: &AgentRequest,
+        request: PreparedRequest,
+        agent: &AgentRequest,
     ) -> Result<PreparedRequest> {
-        Err(Error::new(
-            "unsupported_provider_tools",
-            "This adapter does not support tool calls.",
-        ))
-    }
-    async fn open_agent_stream(
-        &self,
-        _request: PreparedRequest,
-        _credentials: &dyn CredentialResolver,
-        _cancellation: CancellationToken,
-    ) -> Result<AgentProviderStream> {
-        Err(Error::new(
-            "unsupported_provider_tools",
-            "This adapter does not support tool calls.",
-        ))
+        tools::attach(request, agent)
     }
     async fn open_stream(
         &self,
@@ -158,30 +122,12 @@ impl ProviderAdapter for HttpProvider {
         request::prepare(plan, model, config)
     }
 
-    fn prepare_agent(
-        &self,
-        request: PreparedRequest,
-        agent: &AgentRequest,
-    ) -> Result<PreparedRequest> {
-        tools::attach(request, agent)
-    }
-    async fn open_agent_stream(
-        &self,
-        request: PreparedRequest,
-        credentials: &dyn CredentialResolver,
-        cancellation: CancellationToken,
-    ) -> Result<AgentProviderStream> {
-        client::open(request, credentials, cancellation, true).await
-    }
     async fn open_stream(
         &self,
         request: PreparedRequest,
         credentials: &dyn CredentialResolver,
         cancellation: CancellationToken,
     ) -> Result<ProviderStream> {
-        let stream = client::open(request, credentials, cancellation, false).await?;
-        Ok(Box::pin(stream.map(|event| {
-            event.and_then(AgentProviderEvent::into_text)
-        })))
+        client::open(request, credentials, cancellation).await
     }
 }

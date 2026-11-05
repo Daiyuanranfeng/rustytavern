@@ -144,7 +144,7 @@ pub(super) fn attach(
     mut request: PreparedRequest,
     agent: &AgentRequest,
 ) -> Result<PreparedRequest> {
-    if agent.tools.is_empty() || agent.tools.len() > 64 || agent.continuation.len() > 64 {
+    if agent.tools.len() > 64 || agent.continuation.len() > 64 {
         return Err(invalid("The tool request exceeds its count bounds."));
     }
     serde_json::to_writer(Budget(8 * 1048576), agent)
@@ -209,11 +209,6 @@ pub(super) fn attach(
     if serde_json::to_writer(Budget(8 * 1048576), &request.body).is_err() {
         return Err(invalid("The tool request exceeds its byte limit."));
     }
-    request.contract_id = request
-        .protocol
-        .capabilities()
-        .contract_id
-        .replace("text-v1", "agent-v1");
     Ok(request)
 }
 

@@ -12,7 +12,7 @@ use crate::{
     Error, Result,
     driver::{ConversationDriver, DriverContext},
     plugin::CompositionLease,
-    provider::{AgentProviderEvent, AgentTurn, ToolDefinition},
+    provider::{AgentTurn, ProviderEvent, ToolDefinition},
 };
 
 #[async_trait]
@@ -71,23 +71,21 @@ impl ConversationDriver for AgentDriver {
     fn id(&self) -> &str {
         "agent/1"
     }
-    fn uses_tools(&self) -> bool {
-        true
-    }
     async fn run(&self, context: &mut DriverContext) -> Result<()> {
         let mut continuation: Vec<AgentTurn> = Vec::new();
         loop {
-            context.open_agent_step(&continuation).await?;
+            context.open_step(&continuation).await?;
             let mut turn = AgentTurn::default();
-            while let Some(event) = context.next_agent_event().await? {
+            while let Some(event) = context.next_event().await? {
                 match event {
-                    AgentProviderEvent::Text { text } => {
+                    ProviderEvent::Text { text } => {
                         context.append_text(&text).await?;
                         turn.text.push_str(&text);
                     }
-                    AgentProviderEvent::ToolCalls { calls } => turn.calls = calls,
-                    AgentProviderEvent::Failure { error } => return Err(error),
-                    AgentProviderEvent::Usage { .. } | AgentProviderEvent::Complete => {}
+                    ProviderEvent::Reasoning { text } => context.append_reasoning(&text)?,
+                    ProviderEvent::ToolCalls { calls } => turn.calls = calls,
+                    ProviderEvent::Failure { error } => return Err(error),
+                    ProviderEvent::Usage { .. } | ProviderEvent::Complete => {}
                 }
             }
             if turn.calls.is_empty() {

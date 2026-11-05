@@ -173,6 +173,7 @@ impl ConversationDriver for TestDriver {
         if matches!(self.0, Mode::BeforeDispatch) {
             return context.append_text("illegal").await;
         }
+        let _ = context.open_step(&[]).await;
         loop {
             match context.next_event().await {
                 Ok(Some(ProviderEvent::Text { text })) if matches!(self.0, Mode::Uppercase) => {
@@ -559,6 +560,7 @@ impl ConversationDriver for BlockingDriver {
         "blocking/1"
     }
     async fn run(&self, context: &mut DriverContext) -> Result<()> {
+        context.open_step(&[]).await?;
         context.next_event().await?;
         self.entered.store(true, Ordering::SeqCst);
         let _ = self
