@@ -31,7 +31,17 @@ The host runs each tool call and emits `tool_call` and `tool_result` events.
 The host truncates each tool result to 64 KiB. A failed tool call returns its error text to the model.
 
 The `[plugins.agent]` table has `max_steps`. It limits tool steps. The default is 8 and the maximum is 64.
-The OpenRouter and custom protocols support tool calls. Other protocols receive the text request.
+Every built-in protocol supports tool calls. The adapter maps the provider terms to `ToolCall` and `ToolResult`:
+
+| Protocol | Tool definition | Call | Result |
+| --- | --- | --- | --- |
+| OpenRouter, custom | `tools[].function` | `tool_calls` | `role: "tool"` message |
+| OpenAI Responses | `tools[]` with `strict: false` | `function_call` item | `function_call_output` item |
+| Anthropic Messages | `tools[].input_schema` | `tool_use` block | `tool_result` block |
+| Gemini | `functionDeclarations[].parametersJsonSchema` | `functionCall` part | `functionResponse` part |
+
+Gemini can omit a call ID. The adapter then makes a `gemini_N` ID. The continuation returns the Gemini `thoughtSignature` of each call.
+A provider adapter without tool support fails with `unsupported_provider_tools`. The runtime does not send a request without tools.
 
 The web fetcher checks destination addresses and redirects. The tool removes HTML scripts, styles, and tags.
 

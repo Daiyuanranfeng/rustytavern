@@ -316,7 +316,7 @@ fn adapter_capabilities_and_parameter_types_match_the_wire_contract() {
     ] {
         let capabilities = kind.capabilities();
         assert_eq!(capabilities.input_types, ["text"]);
-        assert!(!capabilities.tools && !capabilities.reasoning_controls);
+        assert!(capabilities.tools && !capabilities.reasoning_controls);
         for (key, value) in [
             ("temperature", json!("warm")),
             ("temperature", json!(-0.1)),

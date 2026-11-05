@@ -370,9 +370,6 @@ impl HttpProvider {
         cancellation: CancellationToken,
         agent_mode: bool,
     ) -> Result<AgentProviderStream> {
-        if agent_mode {
-            agent::check_protocol(request.protocol)?;
-        }
         let client = reqwest::Client::builder()
             .redirect(reqwest::redirect::Policy::none())
             .connect_timeout(Duration::from_secs(15))
@@ -644,7 +641,7 @@ impl StreamNormalizer {
                             {
                                 return Err(Error::new(
                                     "unsupported_provider_output",
-                                    "The default driver accepts text only.",
+                                    "The text request accepts text only.",
                                 ));
                             }
                             if !choice["delta"]["content"].is_null()
@@ -682,7 +679,7 @@ impl StreamNormalizer {
                             Some(_) => {
                                 return Err(Error::new(
                                     "unsupported_provider_output",
-                                    "The default driver accepts text only.",
+                                    "The text request accepts text only.",
                                 ));
                             }
                             None => {
@@ -750,7 +747,7 @@ impl StreamNormalizer {
                             Some(_) => {
                                 return Err(Error::new(
                                     "unsupported_provider_output",
-                                    "The default driver accepts text blocks only.",
+                                    "The text request accepts text blocks only.",
                                 ));
                             }
                             None => {
@@ -812,7 +809,7 @@ impl StreamNormalizer {
                                         .ok_or_else(|| {
                                             Error::new(
                                                 "unsupported_provider_output",
-                                                "The default driver accepts text parts only.",
+                                                "The text request accepts text parts only.",
                                             )
                                         })?
                                         .to_owned(),

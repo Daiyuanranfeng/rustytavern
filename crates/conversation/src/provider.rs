@@ -46,7 +46,7 @@ impl ProviderKind {
             input_types: vec!["text"],
             output_types: vec!["text"],
             streaming: true,
-            tools: false,
+            tools: true,
             reasoning_controls: false,
             token_count: "estimated_utf8_bytes",
             system_placement: match self {
@@ -135,6 +135,9 @@ pub struct ToolCall {
     pub id: String,
     pub name: String,
     pub arguments: Value,
+    /// Gemini returns a thought signature with a call. The continuation must send it back.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub signature: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

@@ -190,35 +190,158 @@ fn normalizer_holds_calls_until_done_and_rejects_bad_calls() {
     n.frame(&chunk(json!({}), json!("stop"))).unwrap();
     assert!(n.frame(&frames()[0]).is_err());
 }
-#[test]
-fn native_protocols_and_duplicate_results_fail() {
-    for kind in [
-        ProviderKind::OpenAi,
-        ProviderKind::Anthropic,
-        ProviderKind::Gemini,
-    ] {
-        let mut config = config("http://127.0.0.1:1".into());
-        config.kind = kind;
-        assert_eq!(
-            prepare_agent(&config, &agent()).unwrap_err().code,
-            "unsupported_provider_tools"
-        );
-    }
-    let mut agent = agent();
-    agent.continuation.push(AgentTurn {
+fn turn(result_id: &str) -> AgentTurn {
+    AgentTurn {
         text: String::new(),
         calls: vec![ToolCall {
             id: "a".into(),
             name: "lookup".into(),
             arguments: json!({"key":"x"}),
+            signature: Some("sig".into()),
         }],
         results: vec![ToolResult {
-            call_id: "b".into(),
+            call_id: result_id.into(),
             content: "found".into(),
         }],
-    });
+    }
+}
+#[test]
+fn native_protocols_encode_tools_and_continuations() {
+    let mut request = agent();
+    request.continuation.push(turn("a"));
+    for (kind, contract) in [
+        (ProviderKind::OpenAi, "openai.responses.agent-v1"),
+        (ProviderKind::Anthropic, "anthropic.messages.agent-v1"),
+        (ProviderKind::Gemini, "gemini.generate_content.agent-v1"),
+    ] {
+        let mut config = config("http://127.0.0.1:1".into());
+        config.kind = kind;
+        let request = prepare_agent(&config, &request).unwrap();
+        assert_eq!(request.contract_id, contract);
+        let body = &request.body;
+        match kind {
+            ProviderKind::OpenAi => {
+                assert_eq!(body["tools"][0]["name"], "lookup");
+                assert_eq!(body["tools"][0]["strict"], false);
+                let input = body["input"].as_array().unwrap();
+                assert_eq!(input[input.len() - 2]["type"], "function_call");
+                assert_eq!(input[input.len() - 1]["call_id"], "a");
+                assert_eq!(input[input.len() - 1]["output"], "found");
+            }
+            ProviderKind::Anthropic => {
+                assert!(body["tools"][0]["input_schema"].is_object());
+                let messages = body["messages"].as_array().unwrap();
+                let call = &messages[messages.len() - 2]["content"][0];
+                assert_eq!(call["type"], "tool_use");
+                assert_eq!(call["input"], json!({"key":"x"}));
+                let result = &messages[messages.len() - 1]["content"][0];
+                assert_eq!(result["tool_use_id"], "a");
+            }
+            _ => {
+                assert_eq!(
+                    body["tools"][0]["functionDeclarations"][0]["name"],
+                    "lookup"
+                );
+                let contents = body["contents"].as_array().unwrap();
+                let call = &contents[contents.len() - 2]["parts"][0];
+                assert_eq!(call["functionCall"]["args"], json!({"key":"x"}));
+                assert_eq!(call["thoughtSignature"], "sig");
+                let result = &contents[contents.len() - 1]["parts"][0]["functionResponse"];
+                assert_eq!(result["name"], "lookup");
+                assert_eq!(result["response"]["result"], "found");
+            }
+        }
+    }
+    let mut agent = agent();
+    agent.continuation.push(turn("b"));
     let config = config("http://127.0.0.1:1".into());
     assert!(prepare_agent(&config, &agent).is_err());
+}
+fn native_frames(kind: ProviderKind) -> Vec<Value> {
+    match kind {
+        ProviderKind::OpenAi => vec![
+            json!({"type":"response.output_item.added","output_index":0,"item":{"type":"function_call","call_id":"call_1","name":"lookup","arguments":""}}),
+            json!({"type":"response.function_call_arguments.delta","output_index":0,"delta":"{\"key\":"}),
+            json!({"type":"response.function_call_arguments.delta","output_index":0,"delta":"\"a\"}"}),
+            json!({"type":"response.completed","response":{"status":"completed","usage":{"total_tokens":3}}}),
+        ],
+        ProviderKind::Anthropic => vec![
+            json!({"type":"message_start","message":{"usage":{"input_tokens":3}}}),
+            json!({"type":"content_block_start","index":0,"content_block":{"type":"text","text":"Look."}}),
+            json!({"type":"content_block_start","index":1,"content_block":{"type":"tool_use","id":"call_1","name":"lookup","input":{}}}),
+            json!({"type":"content_block_delta","index":1,"delta":{"type":"input_json_delta","partial_json":"{\"key\":\"a\"}"}}),
+            json!({"type":"content_block_stop","index":1}),
+            json!({"type":"message_delta","delta":{"stop_reason":"tool_use"}}),
+            json!({"type":"message_stop"}),
+        ],
+        _ => vec![
+            json!({"candidates":[{"content":{"role":"model","parts":[{"functionCall":{"name":"lookup","args":{"key":"a"}},"thoughtSignature":"sig"}]}}]}),
+            json!({"candidates":[{"content":{"role":"model","parts":[]},"finishReason":"STOP"}],"usageMetadata":{"totalTokenCount":3}}),
+        ],
+    }
+}
+#[tokio::test]
+async fn http_native_streams_emit_tool_calls() {
+    for kind in [
+        ProviderKind::OpenAi,
+        ProviderKind::Anthropic,
+        ProviderKind::Gemini,
+    ] {
+        let body = native_frames(kind)
+            .iter()
+            .map(|f| format!("data: {f}\n\n"))
+            .collect();
+        let (endpoint, received, server) = mock(body, "200 OK");
+        let mut config = config(endpoint);
+        config.kind = kind;
+        config.api_key_env = Some("KEY".into());
+        let request = prepare_agent(&config, &agent()).unwrap();
+        let mut stream = HttpProvider
+            .open_agent_stream(request, &TestCredentials, CancellationToken::new())
+            .await
+            .unwrap();
+        let mut events = vec![];
+        while let Some(event) = stream.next().await {
+            events.push(event.unwrap());
+        }
+        let [
+            ..,
+            AgentProviderEvent::ToolCalls { calls },
+            AgentProviderEvent::Complete,
+        ] = &events[..]
+        else {
+            panic!("The {kind:?} stream must end with calls: {events:?}");
+        };
+        assert_eq!(calls.len(), 1);
+        assert_eq!(calls[0].name, "lookup");
+        assert_eq!(calls[0].arguments, json!({"key":"a"}));
+        if kind == ProviderKind::Gemini {
+            assert!(calls[0].id.starts_with("gemini_"));
+            assert_eq!(calls[0].signature.as_deref(), Some("sig"));
+        } else {
+            assert_eq!(calls[0].id, "call_1");
+        }
+        received.recv().unwrap();
+        server.join().unwrap();
+    }
+}
+#[test]
+fn native_streams_reject_bad_calls() {
+    let mut n = AgentStreamNormalizer::new(ProviderKind::Anthropic, true);
+    let stop = json!({"type":"message_delta","delta":{"stop_reason":"tool_use"}});
+    assert!(n.frame(&stop.to_string()).is_err());
+    let mut n = AgentStreamNormalizer::new(ProviderKind::Anthropic, true);
+    let frames = native_frames(ProviderKind::Anthropic);
+    n.frame(&frames[2].to_string()).unwrap();
+    let end = json!({"type":"message_delta","delta":{"stop_reason":"end_turn"}});
+    assert!(n.frame(&end.to_string()).is_err());
+    let mut n = AgentStreamNormalizer::new(ProviderKind::OpenAi, true);
+    let delta = native_frames(ProviderKind::OpenAi)[1].to_string();
+    assert!(n.frame(&delta).is_err());
+    let mut n = AgentStreamNormalizer::new(ProviderKind::OpenAi, true);
+    let added = native_frames(ProviderKind::OpenAi)[0].to_string();
+    n.frame(&added).unwrap();
+    assert!(n.frame(&added).is_err());
 }
 #[tokio::test]
 async fn http_missing_terminal_error_and_cancellation_fail() {
@@ -369,6 +492,7 @@ fn continuation_budget_precedes_request_cloning() {
                 id: index.to_string(),
                 name: "lookup".into(),
                 arguments: json!({"key":"x"}),
+                signature: None,
             }],
             results: vec![ToolResult {
                 call_id: index.to_string(),
