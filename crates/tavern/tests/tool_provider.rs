@@ -329,6 +329,34 @@ fn normalizer_ignores_provider_metadata_in_text_deltas() {
     ));
 }
 
+#[test]
+fn normalizer_accepts_the_openrouter_usage_chunk_after_the_finish_reason() {
+    for (delta, reason) in [
+        (json!({"content":"Hi"}), "stop"),
+        (
+            json!({"tool_calls":[{"index":0,"id":"a","function":{"name":"lookup","arguments":"{}"}}]}),
+            "tool_calls",
+        ),
+    ] {
+        let mut n = AgentStreamNormalizer::new(ProviderKind::OpenRouter, true);
+        n.frame(&chunk(delta, Value::Null)).unwrap();
+        let end = json!({"content":"","role":"assistant","reasoning":null});
+        n.frame(&chunk(end.clone(), json!(reason))).unwrap();
+        let usage = json!({"choices":[{"index":0,"delta":end,"finish_reason":reason}],"usage":{"total_tokens":9}});
+        assert!(matches!(
+            n.frame(&usage.to_string()).unwrap()[..],
+            [AgentProviderEvent::Usage { .. }]
+        ));
+        assert!(matches!(
+            n.frame("[DONE]").unwrap().last(),
+            Some(AgentProviderEvent::Complete)
+        ));
+    }
+    let mut n = AgentStreamNormalizer::new(ProviderKind::OpenRouter, true);
+    n.frame(&chunk(json!({}), json!("stop"))).unwrap();
+    assert!(n.frame(&chunk(json!({}), json!("length"))).is_err());
+}
+
 #[tokio::test]
 async fn http_cancellation_discards_pending_calls() {
     for read_text in [false, true] {

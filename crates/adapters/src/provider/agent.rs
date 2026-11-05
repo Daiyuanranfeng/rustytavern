@@ -368,10 +368,15 @@ impl AgentStreamNormalizer {
                 {
                     return Err(invalid("The stream contains unsupported output."));
                 }
-                let has_delta = choice["delta"]
-                    .as_object()
-                    .is_some_and(|d| d.values().any(|v| !v.is_null() && v != ""));
-                if self.finish.is_some() && (has_delta || !choice["finish_reason"].is_null()) {
+                // OpenRouter repeats the finish reason and the role in its usage chunk.
+                let has_delta = ["content", "tool_calls"]
+                    .map(|k| &choice["delta"][k])
+                    .iter()
+                    .any(|v| !v.is_null() && *v != "" && *v != &json!([]));
+                let other = choice["finish_reason"]
+                    .as_str()
+                    .is_some_and(|r| Some(r) != self.finish.as_deref());
+                if self.finish.is_some() && (has_delta || other) {
                     return Err(invalid("The stream has output after its finish reason."));
                 }
                 if let Some(deltas) = choice["delta"].get("tool_calls").cloned() {
