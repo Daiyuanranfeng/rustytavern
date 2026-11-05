@@ -82,6 +82,10 @@
           "type": "integer",
           "minimum": 0
         },
+        "history_limit": {
+          "type": "integer",
+          "minimum": 0
+        },
         "main_instruction": {
           "type": "string"
         },

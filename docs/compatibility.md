@@ -11,7 +11,7 @@
 | Providers | Five adapters stream text. OpenRouter has local and authorized live evidence. | Other direct vendor endpoints need live validation. |
 | Model discovery | The library fetches and filters advertised model capabilities. CLI and terminal selectors exist. | Integrated checks remain pending. Advertisements do not prove model behavior. |
 | Tools, MCP, and skills | The essential [agent driver](../crates/plugins/README.md#agent-and-tools) runs a bounded tool loop on OpenRouter and custom adapters. Separate tool plugins connect stdio and HTTP MCP servers through `rmcp` and add Agent Skills. | Durable tool records, saved continuations for each tool step, and per-character skill selection remain pending. |
-| Web search and fetch | The essential `web_fetch` tool reads public HTTPS pages through the scoped host fetcher. | Web search remains pending. |
+| Web search and fetch | The provider runs its native web search tool. The essential `web_fetch` tool reads public HTTPS pages through the scoped host fetcher. | A custom endpoint has no web search. |
 | Voice and image input | The provider contract accepts text only. | Typed media inputs, storage, permissions, and adapters remain pending. |
 | Speech and realtime audio | The runtime has no audio operation. | Recognition, synthesis, and realtime sessions remain pending. |
 | Image generation | The runtime has no image generation operation. | Typed generation operations and artifact storage remain pending. |
