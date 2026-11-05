@@ -400,6 +400,10 @@ fn character_input_accepts_dropped_paths_and_detects_the_website() {
     let mut ui = Ui::open(directory.path().into()).unwrap();
     ui.submit(&FormKind::Import, &[format!(" '{}' ", card.display())])
         .unwrap();
+    assert!(matches!(ui.overlay, Some(Overlay::Preview { .. })));
+    assert!(ui.pending.is_none());
+    ui.key(KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE))
+        .unwrap();
     assert!(matches!(
         ui.pending.take(),
         Some(Job::Command(
@@ -418,9 +422,9 @@ fn character_input_accepts_dropped_paths_and_detects_the_website() {
         ui.pending.take(),
         Some(Job::Command(
             Command::Card {
-                command: CardCommand::Fetch { ref source, .. }
+                command: CardCommand::Fetch { ref source, preview: true, .. }
             },
-            After::Card
+            After::Preview(..)
         )) if source == "chub"
     ));
     assert_eq!(
@@ -444,7 +448,7 @@ fn menus_filter_by_typing_and_activate_on_click() {
     let rows = screen(&mut ui);
     let row = rows
         .iter()
-        .position(|row| row.contains("Add a character from a file or web address"))
+        .position(|row| row.contains("Add a character from a web address"))
         .unwrap();
     assert!(rows.iter().any(|row| row.contains("filter: web")));
     ui.mouse(MouseEvent {
@@ -739,4 +743,118 @@ fn thinking_and_tool_steps_render_as_collapsible_bubbles_before_the_reply() {
         .position(|row| row.contains("It is sunny."))
         .unwrap();
     assert!(thinking < reply && !history.iter().any(|row| row.contains("Sunny, 21")));
+}
+
+/// The function returns a 4x2 PNG with a `chara` text chunk.
+fn png_card(json: &[u8]) -> Vec<u8> {
+    use base64::Engine;
+    let mut png = Vec::new();
+    image::RgbImage::from_pixel(4, 2, image::Rgb([200, 40, 90]))
+        .write_to(&mut std::io::Cursor::new(&mut png), image::ImageFormat::Png)
+        .unwrap();
+    let mut data = b"chara\0".to_vec();
+    data.extend(
+        base64::engine::general_purpose::STANDARD
+            .encode(json)
+            .bytes(),
+    );
+    let mut chunk = (data.len() as u32).to_be_bytes().to_vec();
+    let body = [&b"tEXt"[..], &data].concat();
+    chunk.extend(&body);
+    chunk.extend(crc32fast::hash(&body).to_be_bytes());
+    png.splice(33..33, chunk);
+    png
+}
+
+#[test]
+fn the_file_browser_lists_folders_and_cards_and_previews_before_import() {
+    let directory = tempfile::tempdir().unwrap();
+    let home = directory.path().join("home");
+    std::fs::create_dir_all(home.join("Cards")).unwrap();
+    std::fs::create_dir_all(home.join(".hidden")).unwrap();
+    std::fs::write(home.join("notes.txt"), "text").unwrap();
+    let json = std::fs::read("../card/tests/fixtures/full-v3.json").unwrap();
+    std::fs::write(home.join("Cards/Alice.PNG"), png_card(&json)).unwrap();
+    std::fs::write(home.join("broken.json"), "{").unwrap();
+    let mut ui = Ui::open(directory.path().join("data")).unwrap();
+    ui.folder = home.clone();
+    key(&mut ui, "/character");
+    key(&mut ui, "from a file");
+    let Some(Overlay::Menu {
+        ref title,
+        ref items,
+        ..
+    }) = ui.overlay
+    else {
+        panic!("The browser is not open.");
+    };
+    assert!(title.ends_with(&*home.to_string_lossy()));
+    let labels: Vec<&str> = items.iter().map(|(label, _)| label.as_str()).collect();
+    assert_eq!(labels, ["↰ ..", "▸ Cards/", "  broken.json"]);
+    key(&mut ui, "broken");
+    assert!(matches!(ui.overlay, Some(Overlay::Menu { .. })));
+    assert!(ui.notice.starts_with("invalid_card_json"));
+    key(&mut ui, "cards");
+    key(&mut ui, "alice");
+    let Some(Overlay::Preview { ref image, .. }) = ui.overlay else {
+        panic!("The preview is not open.");
+    };
+    assert!(image.is_some());
+    assert!(ui.pending.is_none());
+    let rows = screen(&mut ui).join("\n");
+    assert!(rows.contains("Overview"));
+    assert!(rows.contains("Lorebook (1)"));
+    assert!(rows.contains("[ Add character ]"));
+    ui.key(KeyEvent::new(KeyCode::Right, KeyModifiers::NONE))
+        .unwrap();
+    assert!(screen(&mut ui).join("\n").contains("1 · First message"));
+    ui.key(KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE))
+        .unwrap();
+    assert!(matches!(
+        ui.pending.take(),
+        Some(Job::Command(
+            Command::Card {
+                command: CardCommand::Import { ref path, .. }
+            },
+            After::Card
+        )) if path.ends_with("Cards/Alice.PNG")
+    ));
+}
+
+#[test]
+fn downloaded_previews_fetch_the_card_again_on_enter() {
+    let directory = tempfile::tempdir().unwrap();
+    let mut ui = Ui::open(directory.path().into()).unwrap();
+    let json = std::fs::read("../card/tests/fixtures/full-v3.json").unwrap();
+    let card = rustytavern::card::Card::import(&json).unwrap();
+    ui.complete(
+        Ok(vec![serde_json::to_value(&card).unwrap()]),
+        After::Preview(Box::new([
+            "https://chub.ai/characters/a/b".into(),
+            "chub".into(),
+        ])),
+    );
+    assert!(matches!(
+        ui.overlay,
+        Some(Overlay::Preview { image: None, .. })
+    ));
+    ui.key(KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE))
+        .unwrap();
+    assert!(matches!(
+        ui.pending.take(),
+        Some(Job::Command(
+            Command::Card {
+                command: CardCommand::Fetch { ref url, preview: false, .. }
+            },
+            After::Card
+        )) if url == "https://chub.ai/characters/a/b"
+    ));
+    assert!(
+        Application::open(directory.path())
+            .unwrap()
+            .store
+            .list("card")
+            .unwrap()
+            .is_empty()
+    );
 }

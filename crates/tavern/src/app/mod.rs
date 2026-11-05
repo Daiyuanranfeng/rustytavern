@@ -309,14 +309,16 @@ impl PluginManager {
         Ok(commands)
     }
 
+    /// The method downloads and decodes a card. It saves the card only when `save` is true.
     pub async fn fetch_card(
         &self,
         url: &str,
         source: &str,
+        save: bool,
         cancellation: CancellationToken,
     ) -> Result<Card> {
         let service = format!("card.source.{source}/1");
-        self.fetch_service(url, &service, cancellation).await
+        self.fetch_service(url, &service, save, cancellation).await
     }
 
     pub async fn run_command(
@@ -342,7 +344,7 @@ impl PluginManager {
                     )
                 })?;
                 let artifact = source.fetch(url, cancellation).await?;
-                let card = self.accept_artifact(lease, decoder, artifact).await?;
+                let card = self.accept_artifact(lease, decoder, artifact, true).await?;
                 let mut result = serde_json::to_value(card)?;
                 result.as_object_mut().map(|value| value.remove("original"));
                 Ok(result)
@@ -365,13 +367,14 @@ impl PluginManager {
         &self,
         url: &str,
         service: &str,
+        save: bool,
         cancellation: CancellationToken,
     ) -> Result<Card> {
         let lease = self.registry.lock().await.freeze()?;
         let decoder = lease.service::<Arc<dyn CardDecoder>>("card.decoder/1")?;
         let source = lease.service::<Arc<dyn CardSource>>(service)?;
         let artifact = source.fetch(url, cancellation).await?;
-        self.accept_artifact(lease, decoder, artifact).await
+        self.accept_artifact(lease, decoder, artifact, save).await
     }
 
     async fn accept_artifact(
@@ -379,13 +382,16 @@ impl PluginManager {
         lease: CompositionLease,
         decoder: Arc<Arc<dyn CardDecoder>>,
         artifact: Artifact,
+        save: bool,
     ) -> Result<Card> {
         let store = self.store.clone();
         tokio::task::spawn_blocking(move || {
             let _lease = lease;
             let card = Card::import_with(&artifact.bytes, decoder.as_ref().as_ref())?
                 .with_provenance(&artifact.provenance)?;
-            store.save_card(&card)?;
+            if save {
+                store.save_card(&card)?;
+            }
             Ok(card)
         })
         .await

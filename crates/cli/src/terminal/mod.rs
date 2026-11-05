@@ -153,6 +153,10 @@ pub(super) async fn run(path: Option<PathBuf>) -> Result<()> {
     }));
     let _guard = TerminalGuard;
     enable_raw_mode()?;
+    // The query reads standard input, so it runs before the input thread starts.
+    if let Ok(picker) = ratatui_image::picker::Picker::from_query_stdio() {
+        ui.picker = picker;
+    }
     execute!(stdout(), EnableBracketedPaste)?;
     let mut terminal = inline(1)?;
     let mut screen: Option<DefaultTerminal> = None;
@@ -161,8 +165,20 @@ pub(super) async fn run(path: Option<PathBuf>) -> Result<()> {
     let mut tick = tokio::time::interval(std::time::Duration::from_millis(80));
     let mut job: Option<tokio::task::JoinHandle<()>> = None;
     let mut cancellation = CancellationToken::new();
+    let mut picture = false;
     let result: Result<()> = async {
         while !ui.exit || ui.busy {
+            // Graphics protocols draw outside the cell buffer. A full redraw removes a hidden picture.
+            let shown = matches!(
+                ui.overlay,
+                Some(state::Overlay::Preview { image: Some(_), tab: 0, .. })
+            );
+            if std::mem::replace(&mut picture, shown)
+                && !shown
+                && let Some(full) = screen.as_mut()
+            {
+                full.clear()?;
+            }
             present(&mut ui, &mut terminal, &mut screen)?;
             tokio::select! {
                 _ = tick.tick() => { ui.tick = ui.tick.wrapping_add(1); }

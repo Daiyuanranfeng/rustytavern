@@ -142,6 +142,9 @@ enum CardCommand {
         source: String,
         #[arg(long)]
         json: bool,
+        /// The command prints the complete card and does not save it.
+        #[arg(long)]
+        preview: bool,
     },
     Export {
         character: String,
