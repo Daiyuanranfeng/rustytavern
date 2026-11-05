@@ -39,7 +39,10 @@ pub(super) async fn collect(
         command,
         Command::Chat { .. }
             | Command::Session {
-                command: SessionCommand::Retry { .. } | SessionCommand::Regenerate { .. }
+                command: SessionCommand::Retry { .. }
+                    | SessionCommand::Regenerate { .. }
+                    | SessionCommand::Continue { .. }
+                    | SessionCommand::Impersonate { .. }
             }
     ) {
         return Err(Error::new(
@@ -101,6 +104,8 @@ async fn execute(
             command:
                 SessionCommand::Regenerate { session, .. }
                 | SessionCommand::Retry { session, .. }
+                | SessionCommand::Continue { session, .. }
+                | SessionCommand::Impersonate { session, .. }
                 | SessionCommand::Configure { session, .. },
         } => Some(session.as_str()),
         _ => None,
@@ -126,6 +131,8 @@ async fn execute(
                 command: SessionCommand::New { .. }
                     | SessionCommand::Regenerate { .. }
                     | SessionCommand::Retry { .. }
+                    | SessionCommand::Continue { .. }
+                    | SessionCommand::Impersonate { .. }
                     | SessionCommand::Configure { .. }
             }
             | Command::Preset {
@@ -516,6 +523,8 @@ async fn execute(
                         ..Default::default()
                     },
                     composition: json!({}),
+                    title: None,
+                    hidden: Vec::new(),
                 };
                 output.write(
                     &runtime
@@ -552,6 +561,27 @@ async fn execute(
                     events,
                 )
                 .await?;
+            }
+            SessionCommand::Continue { session, events } => {
+                let config = runtime.provider_config(&session).await?;
+                render(runtime.continue_reply(&session, config).await?, events).await?;
+            }
+            SessionCommand::Impersonate { session, events } => {
+                let config = runtime.provider_config(&session).await?;
+                render(runtime.impersonate(&session, config).await?, events).await?;
+            }
+            SessionCommand::Fork { session, at } => {
+                output.write(&app.store.fork_session(&session, &at)?)?
+            }
+            SessionCommand::Rename { session, title } => {
+                output.write(&app.store.rename_session(&session, &title)?)?
+            }
+            SessionCommand::Delete { session } => {
+                app.store.delete_session(&session)?;
+                output.write(&json!({ "deleted": session }))?
+            }
+            SessionCommand::Hide { session, at, show } => {
+                output.write(&app.store.hide_message(&session, &at, !show)?)?
             }
             SessionCommand::Branch { session, at } => {
                 output.write(&app.store.select_head(&session, &at)?)?

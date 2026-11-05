@@ -82,6 +82,8 @@ fn target(store: &dyn StoreBackend) -> Session {
         accept_reduced: false,
         options: PromptOptions::default(),
         composition: json!({}),
+        title: None,
+        hidden: Vec::new(),
     }
 }
 async fn setup() -> (Runtime, Arc<SqliteStore>, Session) {

@@ -68,6 +68,8 @@ fn target(store: &dyn StoreBackend, ids: Vec<String>) -> Session {
         accept_reduced: false,
         options: PromptOptions::default(),
         composition: json!({}),
+        title: None,
+        hidden: Vec::new(),
     }
 }
 #[test]
@@ -251,6 +253,7 @@ async fn invalid_selections_leave_the_session_and_generation_list_unchanged() {
             text: "The harbor.",
             idempotency_key: None,
             retry_user: None,
+            mode: Default::default(),
             snapshot: json!({}),
             now: rustytavern::store::now_ms(),
             lease_ms: 30_000,

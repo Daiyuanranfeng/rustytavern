@@ -289,3 +289,71 @@ fn session_settings_keep_the_essential_plugins_on() {
         json!({})
     );
 }
+
+#[test]
+fn chat_management_commands_continue_impersonate_hide_fork_and_delete() {
+    let directory = tempfile::tempdir().unwrap();
+    let text = |value: &str| sse(json!({"content":value}), json!("stop"));
+    let (endpoint, server) = serve(vec![
+        text("The harbor is calm."),
+        text("The gulls rest."),
+        text("Tell me more."),
+        text("Another answer."),
+    ]);
+    let id = session(directory.path(), &endpoint, "");
+    run(directory.path(), &["chat", &id, "--message", "Greet me."]);
+    let continued = run(directory.path(), &["session", "continue", &id]);
+    assert_eq!(continued, "The gulls rest.\n");
+    let shown = cli(directory.path(), &["session", "show", &id, "--json"]);
+    let history = shown["history"].as_array().unwrap();
+    assert_eq!(
+        history.last().unwrap()["text"],
+        "The harbor is calm. The gulls rest."
+    );
+    let user = history[history.len() - 2]["id"]
+        .as_str()
+        .unwrap()
+        .to_owned();
+    let written = run(directory.path(), &["session", "impersonate", &id]);
+    assert_eq!(written, "Tell me more.\n");
+    let after = cli(directory.path(), &["session", "show", &id, "--json"]);
+    assert_eq!(after["messages"], shown["messages"]);
+    cli(directory.path(), &["session", "hide", &id, "--at", &user]);
+    run(directory.path(), &["chat", &id, "--message", "Again."]);
+    let bodies = server.join().unwrap();
+    let last =
+        |body: &Value| body["messages"].as_array().unwrap().last().unwrap()["content"].clone();
+    assert!(
+        last(&bodies[1])
+            .as_str()
+            .unwrap()
+            .contains("Continue your last message")
+    );
+    assert!(
+        last(&bodies[2])
+            .as_str()
+            .unwrap()
+            .contains("next message of Alex")
+    );
+    let contents = bodies[3]["messages"].to_string();
+    assert!(!contents.contains("Greet me.") && contents.contains("Again."));
+
+    let head = cli(directory.path(), &["session", "show", &id, "--json"])["session"]["head"]
+        .as_str()
+        .unwrap()
+        .to_owned();
+    let fork = cli(directory.path(), &["session", "fork", &id, "--at", &head]);
+    let fork = fork["id"].as_str().unwrap();
+    let renamed = cli(directory.path(), &["session", "rename", fork, "Harbor"]);
+    assert_eq!(renamed["title"], "Harbor");
+    assert_eq!(
+        cli(directory.path(), &["session", "list", "--json"])
+            .as_array()
+            .unwrap()
+            .len(),
+        2
+    );
+    cli(directory.path(), &["session", "delete", fork]);
+    let sessions = cli(directory.path(), &["session", "list", "--json"]);
+    assert_eq!(sessions.as_array().unwrap().len(), 1);
+}

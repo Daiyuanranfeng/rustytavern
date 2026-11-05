@@ -19,10 +19,10 @@ use tokio_util::sync::CancellationToken;
 fn session(store: &dyn StoreBackend, card: &Card, persona: &Persona) -> Session {
     store.save_card(card).unwrap();
     store.save_persona(persona).unwrap();
-    store.create_session(&Session { id: String::new(), character_id: card.id.clone(), persona_id: persona.id.clone(), worldbook_ids: Vec::new(), provider: "fixture".into(), model: "fixture".into(), head: None, version: 0, accept_reduced: true, options: PromptOptions::default(), composition: json!({"plugins":[{"manifest":{"id":"org.example.future","state_schema":7,"unknown":{"keep":42}}}]}) }, Some("A greeting.")).unwrap()
+    store.create_session(&Session { id: String::new(), character_id: card.id.clone(), persona_id: persona.id.clone(), worldbook_ids: Vec::new(), provider: "fixture".into(), model: "fixture".into(), head: None, version: 0, accept_reduced: true, options: PromptOptions::default(), composition: json!({"plugins":[{"manifest":{"id":"org.example.future","state_schema":7,"unknown":{"keep":42}}}]}), title: None, hidden: Vec::new() }, Some("A greeting.")).unwrap()
 }
 fn submit(store: &dyn StoreBackend, session: &Session) -> rustytavern::store::Preparation {
-    store.prepare(Submit { session_id: &session.id, expected_version: session.version, text: "A question.", idempotency_key: None, retry_user: None, snapshot: json!({"character_id":session.character_id,"persona":store.persona(&session.persona_id).unwrap(),"plugin_composition":session.composition}), now: now_ms(), lease_ms: 30_000 }).unwrap()
+    store.prepare(Submit { session_id: &session.id, expected_version: session.version, text: "A question.", idempotency_key: None, retry_user: None, mode: Default::default(), snapshot: json!({"character_id":session.character_id,"persona":store.persona(&session.persona_id).unwrap(),"plugin_composition":session.composition}), now: now_ms(), lease_ms: 30_000 }).unwrap()
 }
 fn draft(
     store: &dyn StoreBackend,

@@ -2,7 +2,8 @@
 mod sqlite;
 use rustytavern_card::{Card, WorldBook};
 use rustytavern_conversation::{
-    Generation, GenerationStatus, Message, Persona, Session, SessionConfiguration, SessionExport,
+    Generation, GenerationMode, GenerationStatus, Message, Persona, Session, SessionConfiguration,
+    SessionExport,
 };
 use rustytavern_core::{Error, Result};
 pub use rustytavern_core::{new_id, now_ms};
@@ -24,6 +25,8 @@ pub struct Submit<'a> {
     pub text: &'a str,
     pub idempotency_key: Option<&'a str>,
     pub retry_user: Option<&'a str>,
+    /// A continuation or an impersonation adds no user node. It starts at the session head.
+    pub mode: GenerationMode,
     pub snapshot: Value,
     pub now: i64,
     pub lease_ms: i64,
@@ -144,6 +147,14 @@ pub trait StoreBackend: Send + Sync {
     fn recover(&self, session: &str, now: i64) -> Result<usize>;
     fn select_head(&self, session: &str, node: &str) -> Result<Session>;
     fn edit(&self, session: &str, node: &str, text: &str) -> Result<Message>;
+    /// The method copies the branch that ends at `node` into a new session.
+    fn fork_session(&self, session: &str, node: &str) -> Result<Session>;
+    /// The method sets the chat name. An empty name removes it.
+    fn rename_session(&self, session: &str, title: &str) -> Result<Session>;
+    /// The method deletes the session, its messages, and its generations.
+    fn delete_session(&self, session: &str) -> Result<()>;
+    /// The method omits a message from the prompt, or includes it again.
+    fn hide_message(&self, session: &str, node: &str, hidden: bool) -> Result<Session>;
     fn rebind(
         &self,
         session: &str,

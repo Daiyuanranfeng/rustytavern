@@ -222,6 +222,8 @@ fn target(store: &dyn StoreBackend, card: &Card) -> Session {
         accept_reduced: false,
         options: PromptOptions::default(),
         composition: json!({}),
+        title: None,
+        hidden: Vec::new(),
     }
 }
 async fn setup(

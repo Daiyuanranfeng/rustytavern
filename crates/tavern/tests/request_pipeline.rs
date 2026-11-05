@@ -77,6 +77,8 @@ async fn setup(
                 accept_reduced: false,
                 options: PromptOptions::default(),
                 composition: json!({}),
+                title: None,
+                hidden: Vec::new(),
             },
             None,
         )

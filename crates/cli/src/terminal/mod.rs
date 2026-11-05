@@ -25,7 +25,7 @@ use rustytavern::{
     app::PluginManager,
     config::{Application, default_home},
     runtime::RuntimeEvent,
-    session::Generation,
+    session::{Generation, GenerationMode},
 };
 use state::{After, Ui};
 use std::io::{IsTerminal, stdout};
@@ -234,7 +234,7 @@ pub(super) async fn run(path: Option<PathBuf>) -> Result<()> {
                             }).collect();
                             let _ = sender.send(Update::Command(Ok(values), state::After::Models(providers))).await;
                         }
-                        state::Job::Generate { session, message, retry } => { let result = generate(path, session, message, retry, token, &sender).await; let _ = sender.send(Update::Finished(result)).await; }
+                        state::Job::Generate { session, message, retry, mode } => { let result = generate(path, session, message, retry, mode, token, &sender).await; let _ = sender.send(Update::Finished(result)).await; }
                     }
                 }));
             }
@@ -260,16 +260,18 @@ async fn generate(
     session: String,
     message: String,
     retry: bool,
+    mode: GenerationMode,
     cancellation: CancellationToken,
     sender: &mpsc::Sender<Update>,
 ) -> Result<Generation> {
     let app = Application::open(path)?;
     let runtime = rustytavern::app::session_runtime(&app, &session).await?;
     let provider = runtime.provider_config(&session).await?;
-    let mut handle = if retry {
-        runtime.regenerate(&session, provider).await?
-    } else {
-        runtime.start(&session, &message, None, provider).await?
+    let mut handle = match mode {
+        GenerationMode::Continue => runtime.continue_reply(&session, provider).await?,
+        GenerationMode::Impersonate => runtime.impersonate(&session, provider).await?,
+        GenerationMode::Reply if retry => runtime.regenerate(&session, provider).await?,
+        GenerationMode::Reply => runtime.start(&session, &message, None, provider).await?,
     };
     loop {
         tokio::select! {
