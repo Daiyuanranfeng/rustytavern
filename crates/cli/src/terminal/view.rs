@@ -1,4 +1,4 @@
-use super::state::{Hit, Message, Overlay, Step, Ui, slash_matches, text, visible};
+use super::state::{Hit, Message, Overlay, PREVIEW_TABS, Step, Ui, slash_matches, text, visible};
 use pulldown_cmark::{CodeBlockKind, Event, Options, Parser, Tag, TagEnd};
 use ratatui::{
     Frame,
@@ -185,6 +185,214 @@ pub(super) fn markdown(source: &str) -> Vec<Line<'static>> {
         }
     }
     md.lines
+}
+
+/// The function appends a titled block of Markdown text. An empty body adds nothing.
+fn section(lines: &mut Vec<Line<'static>>, title: String, body: &str) {
+    let body = text(body.trim());
+    if body.is_empty() {
+        return;
+    }
+    if !lines.is_empty() {
+        lines.push(Line::default());
+    }
+    lines.push(Line::styled(
+        title,
+        Style::default()
+            .fg(Color::Cyan)
+            .add_modifier(Modifier::BOLD),
+    ));
+    lines.extend(markdown(&body));
+}
+
+/// The function returns the number of items in each preview tab.
+fn preview_counts(data: &serde_json::Value) -> [usize; 4] {
+    let count = |value: &serde_json::Value| value.as_array().map_or(0, Vec::len);
+    [
+        0,
+        1 + count(&data["alternate_greetings"]),
+        count(&data["character_book"]["entries"]),
+        0,
+    ]
+}
+
+/// The function renders one tab of the character preview.
+fn profile(card: &rustytavern::card::Card, tab: usize) -> Vec<Line<'static>> {
+    let data = card.data();
+    let field = |key: &str| data[key].as_str().unwrap_or_default();
+    let dim = Style::default().fg(Color::DarkGray);
+    let mut lines = Vec::new();
+    match tab {
+        0 => {
+            lines.push(Line::styled(
+                text(card.name()),
+                Style::default()
+                    .fg(Color::Cyan)
+                    .add_modifier(Modifier::BOLD),
+            ));
+            if !field("nickname").is_empty() {
+                lines.push(Line::styled(format!("“{}”", text(field("nickname"))), dim));
+            }
+            let mut facts = Vec::new();
+            if !field("creator").is_empty() {
+                facts.push(format!("by {}", text(field("creator"))));
+            }
+            if !field("character_version").is_empty() {
+                facts.push(format!("version {}", text(field("character_version"))));
+            }
+            let [_, greetings, entries, _] = preview_counts(data);
+            facts.push(format!("{greetings} greetings"));
+            facts.push(format!("{entries} lorebook entries"));
+            facts.push(format!(
+                "{} · {}",
+                card.format.to_uppercase(),
+                text(card.document["spec"].as_str().unwrap_or("legacy"))
+            ));
+            lines.push(Line::styled(facts.join(" · "), dim));
+            let tags: Vec<Span<'static>> = data["tags"]
+                .as_array()
+                .into_iter()
+                .flatten()
+                .filter_map(|tag| tag.as_str())
+                .flat_map(|tag| {
+                    [
+                        Span::styled(
+                            format!(" {} ", text(tag).replace('\n', " ")),
+                            Style::default().fg(Color::Black).bg(Color::Gray),
+                        ),
+                        Span::raw(" "),
+                    ]
+                })
+                .collect();
+            if !tags.is_empty() {
+                lines.push(Line::default());
+                lines.push(Line::from(tags));
+            }
+            if card.ensure_compatible(false).is_err() {
+                lines.push(Line::default());
+                lines.push(Line::styled(
+                    "⚠ RustyTavern does not support some features of this card. Chats ignore them.",
+                    Style::default().fg(Color::Yellow),
+                ));
+            }
+            for (title, key) in [
+                ("Creator notes", "creator_notes"),
+                ("Description", "description"),
+                ("Personality", "personality"),
+                ("Scenario", "scenario"),
+            ] {
+                section(&mut lines, title.into(), field(key));
+            }
+        }
+        1 => {
+            section(&mut lines, "1 · First message".into(), field("first_mes"));
+            let alternates = data["alternate_greetings"].as_array().into_iter().flatten();
+            for (index, greeting) in alternates.enumerate() {
+                section(
+                    &mut lines,
+                    format!("{} · Alternate greeting", index + 2),
+                    greeting.as_str().unwrap_or_default(),
+                );
+            }
+            let group = data["group_only_greetings"].as_array().map_or(0, Vec::len);
+            if group > 0 {
+                lines.push(Line::default());
+                lines.push(Line::styled(
+                    format!("{group} greetings are for group chats only."),
+                    dim,
+                ));
+            }
+        }
+        2 => {
+            let book = &data["character_book"];
+            let entries = book["entries"].as_array().map_or(&[][..], Vec::as_slice);
+            if entries.is_empty() {
+                lines.push(Line::styled("This card has no lorebook.", dim));
+            }
+            let name = book["name"].as_str().unwrap_or("Lorebook");
+            section(
+                &mut lines,
+                text(name),
+                book["description"].as_str().unwrap_or_default(),
+            );
+            for (index, entry) in entries.iter().enumerate() {
+                let name = ["comment", "name"]
+                    .iter()
+                    .find_map(|key| entry[key].as_str().filter(|value| !value.is_empty()))
+                    .unwrap_or("Entry");
+                let mut title = format!("{} · {}", index + 1, text(name));
+                if entry["enabled"] == false {
+                    title.push_str(" · disabled");
+                }
+                if entry["constant"] == true {
+                    title.push_str(" · always active");
+                }
+                let keys: Vec<&str> = entry["keys"]
+                    .as_array()
+                    .into_iter()
+                    .flatten()
+                    .filter_map(|key| key.as_str())
+                    .collect();
+                section(&mut lines, title, entry["content"].as_str().unwrap_or(" "));
+                if !keys.is_empty() {
+                    lines.push(Line::styled(
+                        format!("Keys: {}", text(&keys.join(", "))),
+                        dim,
+                    ));
+                }
+            }
+        }
+        _ => {
+            for (title, key) in [
+                ("System prompt", "system_prompt"),
+                ("Post-history instructions", "post_history_instructions"),
+                ("Example messages", "mes_example"),
+            ] {
+                section(&mut lines, title.into(), field(key));
+            }
+            let assets: Vec<String> = data["assets"]
+                .as_array()
+                .into_iter()
+                .flatten()
+                .map(|asset| {
+                    format!(
+                        "- {} · {} · {}",
+                        asset["type"].as_str().unwrap_or("asset"),
+                        asset["name"].as_str().unwrap_or_default(),
+                        asset["uri"].as_str().unwrap_or_default()
+                    )
+                })
+                .collect();
+            section(&mut lines, "Assets".into(), &assets.join("\n"));
+            let extensions: Vec<&str> = data["extensions"]
+                .as_object()
+                .into_iter()
+                .flatten()
+                .map(|(key, _)| key.as_str())
+                .collect();
+            section(&mut lines, "Extensions".into(), &extensions.join(", "));
+            let diagnostics: Vec<String> = card
+                .diagnostics
+                .iter()
+                .map(|item| format!("- {} · {} · {:?}", item.field, item.code, item.severity))
+                .collect();
+            section(&mut lines, "Compatibility".into(), &diagnostics.join("\n"));
+            if let Some(source) = &card.provenance {
+                let mut facts = vec![format!("- Address: {}", source.requested_url)];
+                facts.extend(
+                    source
+                        .license
+                        .as_ref()
+                        .map(|value| format!("- License: {value}")),
+                );
+                section(&mut lines, "Source".into(), &facts.join("\n"));
+            }
+            if lines.is_empty() {
+                lines.push(Line::styled("This card has no prompt overrides.", dim));
+            }
+        }
+    }
+    lines
 }
 
 /// The function wraps styled lines at word boundaries.
@@ -566,7 +774,11 @@ pub(super) fn draw(frame: &mut Frame<'_>, ui: &mut Ui) {
             };
             let block = Block::default()
                 .borders(Borders::ALL)
-                .title(format!(" {} · {hint} ", text(title)));
+                .title(format!(" {} · {hint} ", text(title)))
+                .title_bottom(Line::styled(
+                    format!(" {} ", text(&ui.notice)),
+                    Style::default().fg(Color::Yellow),
+                ));
             let mut inner = block.inner(popup);
             frame.render_widget(block, popup);
             if !tabs.is_empty() && inner.height > 3 {
@@ -629,6 +841,92 @@ pub(super) fn draw(frame: &mut Frame<'_>, ui: &mut Ui) {
                     ),
                 popup,
             );
+        }
+        Overlay::Preview {
+            card,
+            image,
+            tab,
+            scroll,
+            ..
+        } => {
+            let block = Block::default()
+                .borders(Borders::ALL)
+                .title(format!(
+                    " Add {}? · ←→ changes the tab · ↑↓ scrolls ",
+                    text(card.name())
+                ))
+                .title_bottom(Line::styled(
+                    format!(" {} ", text(&ui.notice)),
+                    Style::default().fg(Color::Yellow),
+                ));
+            let inner = block.inner(popup);
+            frame.render_widget(block, popup);
+            if inner.height < 6 {
+                return;
+            }
+            let counts = preview_counts(card.data());
+            let mut x = inner.x;
+            for (index, name) in PREVIEW_TABS.iter().enumerate() {
+                let label = match counts[index] {
+                    0 => format!(" {name} "),
+                    count => format!(" {name} ({count}) "),
+                };
+                let width = (label.width() as u16).min(inner.right().saturating_sub(x));
+                let area = Rect::new(x, inner.y, width, 1);
+                let style = if index == *tab {
+                    Style::default()
+                        .fg(Color::Black)
+                        .bg(Color::Cyan)
+                        .add_modifier(Modifier::BOLD)
+                } else {
+                    Style::default().fg(Color::Gray)
+                };
+                frame.render_widget(Paragraph::new(Span::styled(label, style)), area);
+                ui.hits.push((area, Hit::Tab(index)));
+                x = x.saturating_add(width + 1);
+            }
+            let mut body = Rect::new(inner.x, inner.y + 2, inner.width, inner.height - 4);
+            if let Some(image) = image
+                && *tab == 0
+                && body.width >= 60
+            {
+                let width = (body.width * 2 / 5).min(56);
+                frame.render_stateful_widget(
+                    ratatui_image::StatefulImage::default(),
+                    Rect { width, ..body },
+                    image.as_mut(),
+                );
+                body = Rect::new(
+                    body.x + width + 2,
+                    body.y,
+                    body.width - width - 2,
+                    body.height,
+                );
+            }
+            let paragraph = Paragraph::new(profile(card, *tab)).wrap(Wrap { trim: false });
+            let total = paragraph.line_count(body.width).min(u16::MAX as usize) as u16;
+            *scroll = (*scroll).min(total.saturating_sub(body.height));
+            frame.render_widget(paragraph.scroll((*scroll, 0)), body);
+            let footer = inner.bottom().saturating_sub(1);
+            frame.render_widget(
+                Paragraph::new(Line::from(vec![
+                    Span::styled(
+                        "[ Add character ]",
+                        Style::default().fg(Color::Black).bg(Color::Cyan),
+                    ),
+                    Span::raw("  "),
+                    Span::styled(
+                        "[ Cancel ]",
+                        Style::default().fg(Color::Black).bg(Color::Gray),
+                    ),
+                    Span::raw("  Enter adds and selects · Esc cancels"),
+                ])),
+                Rect::new(inner.x, footer, inner.width, 1),
+            );
+            ui.hits
+                .push((Rect::new(inner.x, footer, 17, 1), Hit::Apply));
+            ui.hits
+                .push((Rect::new(inner.x + 19, footer, 10, 1), Hit::Close));
         }
         Overlay::Form {
             title,

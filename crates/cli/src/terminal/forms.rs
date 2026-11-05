@@ -77,9 +77,9 @@ impl Ui {
                 )
             }
             FormKind::Import => (
-                "Add a character",
+                "Add a character from the web",
                 vec![field(
-                    "PNG, JSON, or CHARX file path, or a chub.ai or realm.risuai.net address",
+                    "Paste a chub.ai or realm.risuai.net address. A file path also works.",
                     "",
                 )],
             ),
@@ -244,18 +244,16 @@ impl Ui {
                     return self.fetch(value);
                 }
                 let path = local_path(value);
+                if path.is_dir() {
+                    return self.browse(path);
+                }
                 if !path.is_file() {
                     return Err(Error::new(
                         "invalid_input",
                         "The file does not exist. Select a PNG, JSON, or CHARX character file.",
                     ));
                 }
-                (
-                    Command::Card {
-                        command: CardCommand::Import { path, json: true },
-                    },
-                    After::Card,
-                )
+                return self.open_card(path);
             }
             FormKind::Persona => (
                 Command::Persona {
@@ -350,11 +348,87 @@ impl Ui {
                 url: url.into(),
                 source: source.into(),
                 json: true,
+                preview: true,
             },
         };
-        self.command(fetch, After::Card);
+        self.command(fetch, After::Preview(Box::new([url.into(), source.into()])));
+        self.notice = "The character is downloading.".into();
         Ok(())
     }
+    /// The method lists the subfolders and the character files of a folder.
+    pub(super) fn browse(&mut self, folder: PathBuf) -> Result<()> {
+        let mut entries: Vec<(bool, String)> = std::fs::read_dir(&folder)?
+            .flatten()
+            .filter_map(|entry| {
+                let name = entry.file_name().into_string().ok()?;
+                let directory = entry.path().is_dir();
+                let card = std::path::Path::new(&name)
+                    .extension()
+                    .and_then(|value| value.to_str())
+                    .is_some_and(|value| {
+                        ["png", "json", "charx"].contains(&&*value.to_ascii_lowercase())
+                    });
+                (!name.starts_with('.') && (directory || card)).then_some((!directory, name))
+            })
+            .collect();
+        entries.sort_by_key(|(file, name)| (*file, name.to_lowercase()));
+        let mut items = Vec::new();
+        if let Some(parent) = folder.parent() {
+            items.push(("↰ ..".into(), Choice::Browse(parent.into())));
+        }
+        for (file, name) in entries {
+            let path = folder.join(&name);
+            items.push(if file {
+                (format!("  {}", text(&name)), Choice::Open(path))
+            } else {
+                (format!("▸ {}/", text(&name)), Choice::Browse(path))
+            });
+        }
+        self.menu(
+            &format!("Add a character · {}", text(&folder.to_string_lossy())),
+            items,
+        );
+        self.folder = folder;
+        self.notice = "Enter opens a folder or a card. Type to filter.".into();
+        Ok(())
+    }
+    /// The method reads a character file and shows it. The store does not change.
+    pub(super) fn open_card(&mut self, path: PathBuf) -> Result<()> {
+        let bytes = crate::read_bytes(&path, rustytavern::card::MAX_INPUT_BYTES)?;
+        let card = rustytavern::card::Card::import(&bytes)?;
+        let import = Command::Card {
+            command: CardCommand::Import { path, json: true },
+        };
+        self.preview(card, import);
+        Ok(())
+    }
+    /// The method shows a character before the import. Enter runs `import`.
+    pub(super) fn preview(&mut self, card: rustytavern::card::Card, import: Command) {
+        let image = portrait(&card).map(|image| Box::new(self.picker.new_resize_protocol(image)));
+        self.notice = "Review the character. Enter adds it.".into();
+        self.overlay = Some(Overlay::Preview {
+            card: Box::new(card),
+            image,
+            import: Box::new(import),
+            tab: 0,
+            scroll: 0,
+        });
+    }
+}
+
+/// The function decodes the card picture. A PNG card is the picture. A CHARX card holds an icon asset.
+fn portrait(card: &rustytavern::card::Card) -> Option<image::DynamicImage> {
+    let bytes = if card.format == "png" {
+        std::borrow::Cow::Borrowed(&card.original[..])
+    } else {
+        let assets = card.data()["assets"].as_array()?;
+        let icons = || assets.iter().filter(|asset| asset["type"] == "icon");
+        let icon = icons()
+            .find(|asset| asset["name"] == "main")
+            .or_else(|| icons().next())?;
+        std::borrow::Cow::Owned(card.embedded_asset(icon["uri"].as_str()?).ok()?)
+    };
+    Some(image::load_from_memory(&bytes).ok()?.thumbnail(1024, 1024))
 }
 
 const DEFAULT_MODELS: &[(&str, &str)] = &[
