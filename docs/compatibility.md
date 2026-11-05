@@ -161,16 +161,16 @@ The separate [agent contract](#provider-tool-transport) adds selected tool-call 
 The counter does not report an exact vendor tokenizer result. The provider validates restrictions for the selected model.
 An explicit model ID does not require catalog discovery.
 
-| CLI kind | Contract ID | Wire API | Default credential reference |
-| --- | --- | --- | --- |
-| `openrouter` | `openrouter.chat_completions.text-v1` | The adapter uses Chat Completions SSE. | `OPENROUTER_API_KEY` |
-| `openai` | `openai.responses.text-v1` | The adapter uses Responses SSE. | `OPENAI_API_KEY` |
-| `anthropic` | `anthropic.messages.text-v1` | The adapter uses Messages SSE. | `ANTHROPIC_API_KEY` |
-| `gemini` | `gemini.generate_content.text-v1` | The adapter uses native `streamGenerateContent` SSE. | `GEMINI_API_KEY` |
-| `custom` | `custom.chat_completions.text-v1` | The adapter uses a declared Chat Completions subset. | The caller can omit a credential. |
+| CLI kind | Contract ID | Wire API |
+| --- | --- | --- |
+| `openrouter` | `openrouter.chat_completions.text-v1` | The adapter uses Chat Completions SSE. |
+| `openai` | `openai.responses.text-v1` | The adapter uses Responses SSE. |
+| `anthropic` | `anthropic.messages.text-v1` | The adapter uses Messages SSE. |
+| `gemini` | `gemini.generate_content.text-v1` | The adapter uses native `streamGenerateContent` SSE. |
+| `custom` | `custom.chat_completions.text-v1` | The adapter uses a declared Chat Completions subset. |
 
 The serialized protocol names are `openrouter` and `openai`.
-The request stores a credential reference. The adapter resolves its value only during dispatch.
+The request stores a credential reference, `config:NAME`. The adapter resolves its value from `config.toml` only during dispatch. A custom provider can omit the key.
 The endpoint must use HTTP or HTTPS without URL credentials, authentication query parameters, or fragments. The adapter disables HTTP redirects.
 
 ### Parameters

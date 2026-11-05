@@ -7,13 +7,10 @@ impl Ui {
             FormKind::Setup(vendor) => {
                 let mut fields = vec![Field {
                     secret: true,
-                    ..field(
-                        "API key, or the name of an environment variable that holds it",
-                        "",
-                    )
+                    ..field("API key", "")
                 }];
                 if vendor == "custom" {
-                    fields[0].name = "API key or environment variable: optional";
+                    fields[0].name = "API key: optional";
                     fields.push(field(
                         "Server URL, for example http://127.0.0.1:8080/v1/chat/completions",
                         "",
@@ -33,7 +30,7 @@ impl Ui {
                 let selected = Application::open(&self.path)
                     .ok()
                     .and_then(|app| app.config.providers.get(name).map(|p| p.settings.clone()));
-                let config = selected.clone().unwrap_or_default();
+                let config = selected.unwrap_or_default();
                 let kind = match config.kind {
                     rustytavern::provider::ProviderKind::OpenRouter => "openrouter",
                     rustytavern::provider::ProviderKind::OpenAi => "openai",
@@ -53,14 +50,6 @@ impl Ui {
                         field(
                             "Endpoint: custom providers require a full URL",
                             config.endpoint.as_deref().unwrap_or_default(),
-                        ),
-                        field(
-                            "Credential environment variable: optional",
-                            if selected.is_some() {
-                                config.api_key_env.as_deref().unwrap_or_default()
-                            } else {
-                                ""
-                            },
                         ),
                         field("Context limit", &config.context_limit.to_string()),
                         field("Output limit", &config.output_limit.to_string()),
@@ -135,12 +124,7 @@ impl Ui {
         if let FormKind::Setup(vendor) = &kind {
             self.notice = VENDORS.iter().find(|v| v.0 == vendor).map_or_else(
                 || "Enter the server URL. A local server often needs no key.".into(),
-                |v| {
-                    format!(
-                        "Paste a key from {}, or leave it empty to use {}.",
-                        v.4, v.1
-                    )
-                },
+                |v| format!("Paste a key from {}.", v.3),
             );
         }
         self.overlay = Some(Overlay::Form {
@@ -191,7 +175,7 @@ impl Ui {
             ),
             FormKind::Setup(vendor) => {
                 let endpoint = values.get(1).map_or("", |value| value.trim());
-                let (kind, reference, key) = connection(vendor, values[0].trim(), endpoint)?;
+                let (kind, key) = connection(vendor, values[0].trim(), endpoint)?;
                 let old = Application::open(&self.path)?
                     .config
                     .providers
@@ -213,7 +197,6 @@ impl Ui {
                                 old.model
                             },
                             endpoint: (!endpoint.is_empty()).then(|| endpoint.into()),
-                            api_key_env: reference,
                             api_key: key.map(str::to_owned),
                             context_limit: old.context_limit,
                             output_limit: old.output_limit,
@@ -244,13 +227,12 @@ impl Ui {
                             kind: values[1].clone(),
                             model: values[2].clone(),
                             endpoint: (!values[3].is_empty()).then(|| values[3].clone()),
-                            api_key_env: (!values[4].is_empty()).then(|| values[4].clone()),
                             api_key: None,
-                            context_limit: number(&values[5])?,
-                            output_limit: number(&values[6])?,
-                            parameters: values[7].clone(),
-                            routing: (!values[8].is_empty()).then(|| values[8].clone()),
-                            merge_system_messages: yes(&values[9])?,
+                            context_limit: number(&values[4])?,
+                            output_limit: number(&values[5])?,
+                            parameters: values[6].clone(),
+                            routing: (!values[7].is_empty()).then(|| values[7].clone()),
+                            merge_system_messages: yes(&values[8])?,
                         },
                     },
                     After::Provider(values[0].clone()),
@@ -381,77 +363,53 @@ const DEFAULT_MODELS: &[(&str, &str)] = &[
     ("anthropic", "claude-sonnet-4-5"),
     ("gemini", "gemini-2.5-flash"),
 ];
-/// Each vendor has an ID, a default environment variable, a key prefix, a label, and a key page.
+/// Each vendor has an ID, a key prefix, a label, and a key page.
 /// The OpenAI prefix comes last because it is the most general.
-pub(super) const VENDORS: &[(&str, &str, &str, &str, &str)] = &[
+pub(super) const VENDORS: &[(&str, &str, &str, &str)] = &[
     (
         "openrouter",
-        "OPENROUTER_API_KEY",
         "sk-or-",
         "OpenRouter · one key for hundreds of models (recommended)",
         "openrouter.ai/keys",
     ),
     (
         "anthropic",
-        "ANTHROPIC_API_KEY",
         "sk-ant-",
         "Anthropic · Claude",
         "console.anthropic.com/settings/keys",
     ),
     (
         "gemini",
-        "GEMINI_API_KEY",
         "AIza",
         "Google Gemini",
         "aistudio.google.com/apikey",
     ),
     (
         "openai",
-        "OPENAI_API_KEY",
         "sk-",
         "OpenAI · GPT",
         "platform.openai.com/api-keys",
     ),
 ];
 
-/// The function returns the vendor, an environment reference, and a pasted key.
-/// An upper-case name is an environment variable. Other input is a key. An empty input uses the default variable.
+/// The function returns the vendor and the pasted key.
+/// A custom server can omit the key.
 pub(super) fn connection<'a>(
     vendor: &str,
-    input: &'a str,
+    key: &'a str,
     endpoint: &str,
-) -> Result<(&'static str, Option<String>, Option<&'a str>)> {
+) -> Result<(&'static str, Option<&'a str>)> {
     let invalid = |message: String| Error::new("invalid_input", message);
-    let variable = !input.is_empty()
-        && input.starts_with(|c: char| c.is_ascii_uppercase())
-        && input
-            .bytes()
-            .all(|b| b.is_ascii_uppercase() || b.is_ascii_digit() || b == b'_');
-    let exported = |name: &str| std::env::var(name).ok().filter(|v| !v.trim().is_empty());
-    let unset = |name: &str| {
-        invalid(format!(
-            "Paste a key, or export {name} and restart RustyTavern."
-        ))
-    };
-    let Some(&(kind, default, ..)) = VENDORS.iter().find(|v| v.0 == vendor) else {
+    let Some(&(kind, _, _, page)) = VENDORS.iter().find(|v| v.0 == vendor) else {
         if endpoint.is_empty() {
             return Err(invalid("Enter the server URL.".into()));
         }
-        return match input {
-            "" => Ok(("custom", None, None)),
-            _ if variable => exported(input)
-                .map(|_| ("custom", Some(input.into()), None))
-                .ok_or_else(|| unset(input)),
-            _ => Ok(("custom", None, Some(input))),
-        };
+        return Ok(("custom", (!key.is_empty()).then_some(key)));
     };
-    let name = if input.is_empty() { default } else { input };
-    let key = if input.is_empty() || variable {
-        exported(name).ok_or_else(|| unset(name))?
-    } else {
-        input.to_owned()
-    };
-    if let Some(other) = VENDORS.iter().find(|v| key.starts_with(v.2))
+    if key.is_empty() {
+        return Err(invalid(format!("Paste a key from {page}.")));
+    }
+    if let Some(other) = VENDORS.iter().find(|v| key.starts_with(v.1))
         && other.0 != kind
     {
         return Err(invalid(format!(
@@ -459,11 +417,7 @@ pub(super) fn connection<'a>(
             other.0, other.0
         )));
     }
-    Ok(if input.is_empty() || variable {
-        (kind, Some(name.into()), None)
-    } else {
-        (kind, None, Some(input))
-    })
+    Ok((kind, Some(key)))
 }
 
 /// The function removes quotes and shell escapes that terminals add when a file is dropped.
