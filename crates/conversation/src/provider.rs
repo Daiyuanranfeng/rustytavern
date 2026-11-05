@@ -110,7 +110,7 @@ impl Default for ProviderConfig {
             kind: ProviderKind::OpenRouter,
             model: String::new(),
             endpoint: None,
-            api_key_env: Some("OPENROUTER_API_KEY".into()),
+            api_key_env: None,
             context_limit: 16384,
             output_limit: 1024,
             parameters: BTreeMap::new(),

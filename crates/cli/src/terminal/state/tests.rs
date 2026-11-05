@@ -328,10 +328,7 @@ fn setup_checks_the_key_against_the_selected_provider() {
         ("AIzaSyabc", "gemini"),
         ("sk-proj-abc", "openai"),
     ] {
-        assert_eq!(
-            connection(vendor, key, "").unwrap(),
-            (vendor, None, Some(key))
-        );
+        assert_eq!(connection(vendor, key, "").unwrap(), (vendor, Some(key)));
     }
     assert!(
         connection("openai", "sk-or-v1-abc", "")
@@ -341,17 +338,17 @@ fn setup_checks_the_key_against_the_selected_provider() {
     );
     assert_eq!(
         connection("custom", "", "http://127.0.0.1:8080/v1/chat/completions").unwrap(),
-        ("custom", None, None)
+        ("custom", None)
     );
     assert_eq!(
         connection("custom", "", "").unwrap_err().code,
         "invalid_input"
     );
     assert!(
-        connection("openrouter", "RUSTYTAVERN_TEST_UNSET_KEY", "")
+        connection("openrouter", "", "")
             .unwrap_err()
             .message
-            .contains("export RUSTYTAVERN_TEST_UNSET_KEY")
+            .contains("openrouter.ai/keys")
     );
 }
 

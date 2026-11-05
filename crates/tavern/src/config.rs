@@ -14,7 +14,7 @@ use serde_json::{Value, json};
 use crate::{
     Error, Result,
     extension::Extension,
-    provider::{CredentialResolver, EnvironmentCredentials, ProviderConfig},
+    provider::{CredentialResolver, ProviderConfig},
     store::StoreBackend,
 };
 
@@ -123,9 +123,7 @@ impl Configuration {
             )
         })?;
         for profile in config.providers.values_mut() {
-            if profile.api_key.is_some() {
-                profile.settings.api_key_env = None;
-            }
+            profile.settings.api_key_env = None;
         }
         Ok(config)
     }
@@ -171,9 +169,7 @@ impl Configuration {
         if api_key.is_some() {
             profile.api_key = api_key;
         }
-        if profile.api_key.is_some() {
-            profile.settings.api_key_env = None;
-        }
+        profile.settings.api_key_env = None;
     }
     /// The method hides each API key and MCP server environment value.
     pub fn redacted(&self) -> Result<Value> {
@@ -392,7 +388,7 @@ impl Application {
     }
 }
 
-/// The resolver reads `config:NAME` references from the provider profiles and other references from the environment.
+/// The resolver reads `config:NAME` references from the provider profiles.
 pub struct ConfigCredentials(BTreeMap<String, String>);
 impl ConfigCredentials {
     pub fn new(config: &Configuration) -> Self {
@@ -407,15 +403,13 @@ impl ConfigCredentials {
 }
 impl CredentialResolver for ConfigCredentials {
     fn resolve(&self, reference: &str) -> Result<String> {
-        match reference.strip_prefix("config:") {
-            Some(name) => self.0.get(name).cloned().ok_or_else(|| {
-                Error::new(
-                    "configuration",
-                    format!("The provider profile {name} has no API key. Use /setup."),
-                )
-            }),
-            None => EnvironmentCredentials.resolve(reference),
-        }
+        let name = reference.strip_prefix("config:").unwrap_or(reference);
+        self.0.get(name).cloned().ok_or_else(|| {
+            Error::new(
+                "configuration",
+                format!("The provider profile {name} has no API key. Use /provider."),
+            )
+        })
     }
 }
 

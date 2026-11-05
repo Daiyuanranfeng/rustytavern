@@ -50,14 +50,14 @@ A chat pins its provider settings and plugins. A changed setup stops the next re
 ### First setup
 
 The terminal opens the provider menu when no provider profile exists. The menu lists OpenRouter, Anthropic, Google Gemini, OpenAI, and a local or custom server.
-The menu shows the connection status of each vendor and marks each default key variable that is exported. The key form for a vendor accepts one of these inputs:
-
-- An API key. The form rejects a key whose prefix belongs to another vendor: `sk-or-` (OpenRouter), `sk-ant-` (Anthropic), `AIza` (Gemini), or `sk-` (OpenAI).
-- An environment variable name, for example `OPENROUTER_API_KEY`.
-- No value. The form uses the default variable from the [provider table](compatibility.md#provider-contracts).
+The menu shows the connection status of each vendor. The key form for a vendor requires a pasted API key.
+The form rejects a key whose prefix belongs to another vendor: `sk-or-` (OpenRouter), `sk-ant-` (Anthropic), `AIza` (Gemini), or `sk-` (OpenAI).
+RustyTavern does not read API keys from environment variables.
 
 The custom server form requires a server URL. The key is optional for that kind.
 The form saves a profile named after the vendor. The terminal then loads the model catalog of that provider.
+The catalog load tests the key. The OpenRouter catalog is public, so the terminal first sends the key to `https://openrouter.ai/api/v1/key`.
+A rejected key shows `The provider rejected the API key.` instead of a model list. Use `/provider` to paste a new key.
 The `/model` list loads all connected catalogs at the same time. Each row starts with its provider name. A failed catalog does not hide the other catalogs.
 The list sorts models from the newest release to the oldest and shows each release date. A tab bar shows `★ Recommended`, `All`, and one tab for each provider.
 Left and Right change the tab. A click on a tab also changes it.
@@ -96,7 +96,7 @@ default_provider = "openrouter"      # the provider for new chats
 [providers.openrouter]
 kind = "openrouter"
 model = "openai/gpt-4.1-mini"
-api_key = "sk-or-..."                # or api_key_env = "OPENROUTER_API_KEY"
+api_key = "sk-or-..."
 context_limit = 16384
 output_limit = 1024
 parameters = { temperature = 0.8 }
@@ -164,7 +164,7 @@ The command validates the asset before it creates the output file.
 ### Provider profiles
 
 The `config provider` command writes one named profile. The `--api-key KEY` option stores the key in `config.toml`.
-The profile stores a provider kind, model ID, endpoint, credential environment-variable name, context limit, and output limit. A custom provider requires an explicit full endpoint URL.
+The profile stores a provider kind, model ID, endpoint, API key, context limit, and output limit. A custom provider requires an explicit full endpoint URL.
 A custom provider can omit credentials for a local model. The native provider kinds are `openrouter`, `openai`, `anthropic`, `gemini`, and `custom`.
 The adapters use Chat Completions, Responses, Messages, or native Gemini SSE as appropriate. The `config capabilities` command prints the supported adapter subset for each kind.
 The `config provider --parameters JSON` option supplies validated sampling settings. The `--routing JSON` option supplies explicit OpenRouter provider preferences.
@@ -485,7 +485,7 @@ The store creates schema 5 and upgrades versions 1 through 4 atomically. The upg
 Decoder defaults supply absent enrichment and acceptance fields. Legacy sessions require explicit configuration before generation.
 A failed upgrade rolls back. A future marker blocks writes.
 Sessions and snapshots store credential references only. The provider resolves credential values during dispatch.
-A `config:NAME` reference reads the `api_key` of that provider profile in `config.toml`. Other references name environment variables.
+A `config:NAME` reference reads the `api_key` of that provider profile in `config.toml`. The application has no other credential source.
 The [export tests](../crates/tavern/tests/native_exports.rs) check credential exclusion in both trace modes.
 
 ### Plugin schema markers

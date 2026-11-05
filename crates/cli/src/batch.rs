@@ -607,7 +607,6 @@ async fn execute(
                 kind,
                 model,
                 endpoint,
-                api_key_env,
                 api_key,
                 context_limit,
                 output_limit,
@@ -615,12 +614,12 @@ async fn execute(
                 routing,
                 merge_system_messages,
             } => {
-                let (kind, default_env) = match kind.as_str() {
-                    "openrouter" => (ProviderKind::OpenRouter, Some("OPENROUTER_API_KEY")),
-                    "openai" => (ProviderKind::OpenAi, Some("OPENAI_API_KEY")),
-                    "anthropic" => (ProviderKind::Anthropic, Some("ANTHROPIC_API_KEY")),
-                    "gemini" => (ProviderKind::Gemini, Some("GEMINI_API_KEY")),
-                    _ => (ProviderKind::Custom, None),
+                let kind = match kind.as_str() {
+                    "openrouter" => ProviderKind::OpenRouter,
+                    "openai" => ProviderKind::OpenAi,
+                    "anthropic" => ProviderKind::Anthropic,
+                    "gemini" => ProviderKind::Gemini,
+                    _ => ProviderKind::Custom,
                 };
                 if name.trim().is_empty()
                     || model.trim().is_empty()
@@ -632,17 +631,10 @@ async fn execute(
                         "The provider name, model, and limits are invalid.",
                     ));
                 }
-                if api_key_env.is_some()
-                    && api_key.is_none()
-                    && let Some(profile) = app.config.providers.get_mut(&name)
-                {
-                    profile.api_key = None;
-                }
                 let config = ProviderConfig {
                     kind,
                     model,
                     endpoint,
-                    api_key_env: api_key_env.or_else(|| default_env.map(str::to_owned)),
                     context_limit,
                     output_limit,
                     parameters: serde_json::from_str(&parameters)?,

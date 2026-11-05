@@ -800,7 +800,7 @@ impl Ui {
                             .into()
                     } else {
                         format!(
-                            "Some catalogs failed. {} Use /settings to type a model ID.",
+                            "Some catalogs failed. {} Use /provider to replace a key, or /settings to type a model ID.",
                             failures.join(" ")
                         )
                     };
