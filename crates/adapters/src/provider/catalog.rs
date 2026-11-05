@@ -125,6 +125,7 @@ impl CatalogClient {
                 "The catalog limits must be positive.",
             ));
         }
+        let check = config.kind == ProviderKind::OpenRouter && endpoint.is_none();
         let default = match config.kind {
             ProviderKind::OpenRouter => "https://openrouter.ai/api/v1/models?output_modalities=all",
             ProviderKind::OpenAi => "https://api.openai.com/v1/models",
@@ -139,7 +140,13 @@ impl CatalogClient {
         };
         let endpoint = endpoint.unwrap_or(default);
         let url = validate_endpoint(endpoint)?;
-        let work = self.fetch_pages(config, url, credentials);
+        let work = async {
+            if check {
+                self.verify_key(config, "https://openrouter.ai/api/v1/key", credentials)
+                    .await?;
+            }
+            self.fetch_pages(config, url, credentials).await
+        };
         tokio::select! {
             biased;
             _ = cancellation.cancelled() => Err(Error::new("cancelled", "The caller cancelled the catalog request.")),
@@ -147,6 +154,34 @@ impl CatalogClient {
                 result.map_err(|_| Error::new("provider_timeout", "The catalog request exceeded its time limit."))?
             }
         }
+    }
+
+    /// The method checks the key at a key endpoint, because the OpenRouter catalog is public.
+    /// A configuration without a key passes.
+    pub async fn verify_key(
+        &self,
+        config: &ProviderConfig,
+        endpoint: &str,
+        credentials: &dyn CredentialResolver,
+    ) -> Result<()> {
+        let Some(reference) = &config.api_key_env else {
+            return Ok(());
+        };
+        let url = validate_endpoint(endpoint)?;
+        let status = reqwest::Client::builder()
+            .redirect(reqwest::redirect::Policy::none())
+            .build()
+            .map_err(|_| Error::new("provider_transport", "The catalog client failed."))?
+            .get(url)
+            .bearer_auth(credentials.resolve(reference)?)
+            .send()
+            .await
+            .map_err(|_| Error::new("provider_transport", "The key check failed."))?
+            .status();
+        if status.is_success() {
+            return Ok(());
+        }
+        Err(http_error(status.as_u16(), "key check"))
     }
 
     async fn fetch_pages(
@@ -210,10 +245,7 @@ impl CatalogClient {
                 .await
                 .map_err(|_| Error::new("provider_transport", "The catalog request failed."))?;
             if !response.status().is_success() {
-                return Err(Error::new(
-                    "provider_http",
-                    format!("The catalog returned HTTP {}.", response.status().as_u16()),
-                ));
+                return Err(http_error(response.status().as_u16(), "catalog"));
             }
             if response
                 .content_length()
@@ -410,6 +442,15 @@ fn invalid_error() -> Error {
         "invalid_model_catalog",
         "The catalog response has an invalid structure.",
     )
+}
+fn http_error(status: u16, request: &str) -> Error {
+    match status {
+        401 | 403 => Error::new("provider_auth", "The provider rejected the API key."),
+        _ => Error::new(
+            "provider_http",
+            format!("The {request} returned HTTP {status}."),
+        ),
+    }
 }
 fn limit_error() -> Error {
     Error::new("catalog_limit", "The catalog response exceeds its limit.")

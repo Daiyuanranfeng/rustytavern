@@ -49,14 +49,13 @@ The [terminal guide](docs/user-guide.md#interactive-terminal) defines commands, 
 
 The default home directory is `~/.rustytavern`. The examples use `./home` instead.
 The home directory holds `config.toml` for every setting and `rustytavern.db` for durable records.
-The OpenRouter adapter reads `OPENROUTER_API_KEY` from the process environment.
-The `--api-key KEY` option stores the key in `config.toml` instead.
+The `--api-key KEY` option stores the key in `config.toml`. RustyTavern does not read keys from environment variables.
 The [configuration guide](docs/user-guide.md#configuration-file) shows the complete file.
 
 ```sh
 cargo run -- --home ./home config provider \
   --name openrouter --kind openrouter \
-  --model openai/gpt-4.1-nano --output-limit 256
+  --model openai/gpt-4.1-nano --output-limit 256 --api-key sk-or-...
 cargo run -- --home ./home card import crates/tavern/examples/lumen.json --json
 cargo run -- --home ./home persona create \
   --name Alex --description "Alex charts the coast."
