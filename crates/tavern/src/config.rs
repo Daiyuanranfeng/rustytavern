@@ -1,7 +1,7 @@
 //! The home directory holds `config.toml` and `rustytavern.db`.
 //! The `config.toml` file holds every setting, including API keys.
 
-use rustytavern_store::SqliteStore;
+use crate::store::SqliteStore;
 use std::{
     collections::{BTreeMap, BTreeSet},
     path::{Path, PathBuf},

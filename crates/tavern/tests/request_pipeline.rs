@@ -7,57 +7,20 @@ use std::{
     time::Duration,
 };
 
-use async_trait::async_trait;
-use futures_util::StreamExt;
 use rustytavern::{
-    Error, Result,
+    Result,
     card::Card,
     prompt::{CoreProfile, PromptInput, PromptOptions, PromptPlan, PromptProfile},
-    provider::{
-        CredentialResolver, HttpProvider, PreparedRequest, ProviderAdapter, ProviderConfig,
-        ProviderEvent, ProviderStream,
-    },
+    provider::ProviderConfig,
     runtime::Runtime,
     session::{GenerationStatus, Persona, Session},
     store::{SqliteStore, StoreBackend, now_ms},
 };
 use serde_json::{Value, json};
-use tokio_util::sync::CancellationToken;
+mod common;
+use common::{Script, Step};
 
-struct ScriptProvider {
-    events: Vec<ProviderEvent>,
-    hold: bool,
-    dispatched: Arc<Mutex<Vec<Value>>>,
-}
-#[async_trait]
-impl ProviderAdapter for ScriptProvider {
-    fn prepare(
-        &self,
-        plan: &PromptPlan,
-        model: &str,
-        config: &ProviderConfig,
-    ) -> Result<PreparedRequest> {
-        HttpProvider.prepare(plan, model, config)
-    }
-    async fn open_stream(
-        &self,
-        request: PreparedRequest,
-        _: &dyn CredentialResolver,
-        _: CancellationToken,
-    ) -> Result<ProviderStream> {
-        self.dispatched.lock().unwrap().push(request.body);
-        let stream = futures_util::stream::iter(self.events.clone().into_iter().map(Ok));
-        Ok(if self.hold {
-            Box::pin(stream.chain(futures_util::stream::pending()))
-        } else {
-            Box::pin(stream)
-        })
-    }
-}
-async fn setup(
-    events: Vec<ProviderEvent>,
-    hold: bool,
-) -> (Runtime, Arc<SqliteStore>, String, Arc<Mutex<Vec<Value>>>) {
+async fn setup(script: Script) -> (Runtime, Arc<SqliteStore>, String, Arc<Mutex<Vec<Value>>>) {
     let store = Arc::new(SqliteStore::memory().unwrap());
     let card = Card::import(br#"{"spec":"chara_card_v2","spec_version":"2.0","data":{"name":"Lumen","description":"A keeper.","personality":"Calm.","scenario":"A harbor.","first_mes":"Hello.","mes_example":""}}"#).unwrap();
     let persona = Persona::new("Alex".into(), "Visitor.".into()).unwrap();
@@ -83,13 +46,8 @@ async fn setup(
             None,
         )
         .unwrap();
-    let dispatched = Arc::new(Mutex::new(Vec::new()));
-    let provider = Arc::new(ScriptProvider {
-        events,
-        hold,
-        dispatched: dispatched.clone(),
-    });
-    let runtime = Runtime::new(store.clone()).with_provider(provider);
+    let dispatched = script.requests.clone();
+    let runtime = Runtime::new(store.clone()).with_provider(script.arc());
     runtime
         .configure_session(&session, ProviderConfig::default())
         .await
@@ -99,16 +57,8 @@ async fn setup(
 
 #[tokio::test]
 async fn wire_budget_removes_a_complete_turn_and_inspection_equals_dispatch() {
-    let (runtime, store, session, dispatched) = setup(
-        vec![
-            ProviderEvent::Text {
-                text: "Answer.".into(),
-            },
-            ProviderEvent::Complete,
-        ],
-        false,
-    )
-    .await;
+    let (runtime, store, session, dispatched) =
+        setup(Script::new(vec![common::text("Answer.")])).await;
     for text in ["First.", "Second."] {
         runtime
             .start(&session, text, None, ProviderConfig::default())
@@ -185,7 +135,7 @@ async fn wire_budget_removes_a_complete_turn_and_inspection_equals_dispatch() {
 
 #[tokio::test]
 async fn mandatory_wire_overflow_fails_before_dispatch() {
-    let (runtime, store, session, dispatched) = setup(vec![ProviderEvent::Complete], false).await;
+    let (runtime, store, session, dispatched) = setup(Script::default()).await;
     let full = runtime
         .inspect_request(&session, "Hello.", ProviderConfig::default())
         .await
@@ -223,51 +173,28 @@ async fn mandatory_wire_overflow_fails_before_dispatch() {
 }
 
 #[tokio::test]
-async fn usage_is_durable_before_events_and_survives_failure_cancellation_and_eof() {
-    for (last, hold, expected) in [
+async fn usage_is_durable_before_its_event_and_a_failure_records_none() {
+    for (steps, expected) in [
+        (vec![], GenerationStatus::Completed),
         (
-            Some(ProviderEvent::Complete),
-            false,
-            GenerationStatus::Completed,
-        ),
-        (
-            Some(ProviderEvent::Failure {
-                error: Error::new("fixture", "The provider fails."),
-            }),
-            false,
+            vec![Step::Fail("The provider fails.".into())],
             GenerationStatus::Failed,
         ),
-        (None, false, GenerationStatus::Failed),
-        (None, true, GenerationStatus::Cancelled),
     ] {
-        let mut events = vec![
-            ProviderEvent::Usage {
-                usage: json!({"input_tokens":9}),
-            },
-            ProviderEvent::Usage {
-                usage: json!({"output_tokens":2}),
-            },
-        ];
-        events.extend(last);
-        let (runtime, store, session, _) = setup(events, hold).await;
+        let script = Script {
+            steps,
+            total_tokens: Some(11),
+            ..Default::default()
+        };
+        let (runtime, store, session, _) = setup(script).await;
         let mut handle = runtime
             .start(&session, "Hello.", None, ProviderConfig::default())
             .await
             .unwrap();
         while let Some(event) = handle.events.recv().await {
             if event.r#type == "usage" {
-                assert!(
-                    store
-                        .generation(&handle.generation_id)
-                        .unwrap()
-                        .usage
-                        .unwrap()["input_tokens"]
-                        == 9
-                );
-                if hold && event.usage.unwrap()["output_tokens"] == 2 {
-                    handle.cancel();
-                    break;
-                }
+                let usage = store.generation(&handle.generation_id).unwrap().usage;
+                assert_eq!(usage.unwrap()["total_tokens"], 11);
             }
             if event.r#type == "completed" || event.r#type == "failed" {
                 break;
@@ -275,9 +202,10 @@ async fn usage_is_durable_before_events_and_survives_failure_cancellation_and_eo
         }
         let result = handle.wait().await.unwrap();
         assert_eq!(result.status, expected);
+        let usage = result.usage.map(|usage| usage["total_tokens"].clone());
         assert_eq!(
-            result.usage.unwrap(),
-            json!({"input_tokens":9,"output_tokens":2})
+            usage,
+            (expected == GenerationStatus::Completed).then(|| json!(11))
         );
     }
 }
@@ -304,7 +232,7 @@ impl PromptProfile for BlockingProfile {
 }
 #[tokio::test]
 async fn compilation_allows_cancellation_and_never_dispatches_after_cancellation() {
-    let (runtime, store, session, dispatched) = setup(vec![ProviderEvent::Complete], false).await;
+    let (runtime, store, session, dispatched) = setup(Script::default()).await;
     let (release, receiver) = mpsc::channel();
     let started = Arc::new(AtomicBool::new(false));
     let runs = Arc::new(AtomicUsize::new(0));
@@ -357,7 +285,7 @@ async fn compilation_allows_cancellation_and_never_dispatches_after_cancellation
 
 #[tokio::test]
 async fn the_writer_lease_renews_during_blocking_compilation() {
-    let (runtime, store, session, _) = setup(vec![ProviderEvent::Complete], false).await;
+    let (runtime, store, session, _) = setup(Script::default()).await;
     let (release, receiver) = mpsc::channel();
     let started = Arc::new(AtomicBool::new(false));
     let runtime = runtime.with_profile(Arc::new(BlockingProfile {

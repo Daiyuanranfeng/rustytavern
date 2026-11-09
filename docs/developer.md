@@ -19,7 +19,7 @@ The [product roadmap](product.md#required-target) identifies required features b
 
 A plugin changes agent behavior or adds content to the agent context. Drivers, providers, tools, MCP servers, skills, card sources, and prompt contributions are plugins.
 A user can [install a third-party plugin](#installed-plugins). An [extension](#extensions) changes only the application appearance.
-The [plugin crate](../crates/plugins/README.md) holds every essential plugin.
+The [plugins module](../crates/tavern/README.md) holds every essential plugin.
 
 The native API remains experimental in version `0.1.0`. The host does not load Rust dynamic libraries.
 An embedded application compiles native plugins into its executable. An external process uses the [stdio protocol](developer.md#external-card-source-protocol).
@@ -41,7 +41,7 @@ Existing sessions require an explicit configuration revision before they use a c
 
 ### Native interface
 
-The [plugin module](../crates/plugin/src/lib.rs) defines these interfaces.
+The [plugin module](../crates/runtime/src/plugin/mod.rs) defines these interfaces.
 
 | Interface | Contract |
 | --- | --- |
@@ -124,7 +124,7 @@ The document must specify purpose, plugin ID, service, Rust type or protocol, in
 
 ## Essential plugins
 
-The [plugin crate](../crates/plugins/README.md) holds every essential plugin. Each plugin family is one module.
+The [plugins module](../crates/tavern/README.md) holds every essential plugin. Each plugin family is one module.
 The standard agent activates the essential plugins through `plugins::registry`. The owner ID is `core-product`.
 The host grants each requested capability of an essential plugin. Every essential plugin is always on.
 The `plugins.enabled` list in `config.toml` selects the installed plugins. Each `[plugins.ID]` table configures one plugin.
@@ -155,7 +155,7 @@ The provider adapter owns vendor stream decoding.
 | `PromptProfile::select_context` | The method selects complete groups after authorized edits. |
 | `PromptProfile::compile` | The default method combines drafting and selection for direct callers. |
 | `ProviderAdapter::prepare` | The pure method returns a `PreparedRequest` without network I/O. |
-| `ProviderAdapter::open_stream` | The method dispatches with a credential resolver and cancellation token. The stream emits normalized `ProviderEvent` values: text, thinking text, tool calls, usage, failure, and completion. |
+| `ProviderAdapter::model` | The method builds the [Rig](https://crates.io/crates/rig-core) completion model for a prepared request with a credential resolver. Rig sends the request and parses the stream. |
 | `ProviderAdapter::id` | The method identifies the native implementation. |
 | `ProviderAdapter::validate_config` | The pure method checks settings before configuration persistence. |
 | `StoreBackend` | The backend preserves atomic transitions, writer leases, fencing, namespace snapshots, checked writes, and migrations. |
@@ -178,10 +178,10 @@ The [lighthouse edit plugin](../crates/tavern/examples/plugins/lighthouse-edits/
 ### Source factories
 
 The `source.chub` factory provides `card.source.chub/1`. The `source.risurealm` factory provides `card.source.risurealm/1`.
-Both services register `Arc<dyn CardSource>` through an outer `Arc`. The [source module](../crates/adapters/src/source/mod.rs) defines `id`, `recognize`, and asynchronous `fetch`.
+Both services register `Arc<dyn CardSource>` through an outer `Arc`. The [source module](../crates/runtime/src/source/mod.rs) defines `id`, `recognize`, and asynchronous `fetch`.
 The `fetch` method returns an `Artifact` with bytes and `Provenance`. The common card importer checks the artifact hash and card format.
 
-The [plugin crate](../crates/plugins/README.md) lists their host grants. The [source tests](../crates/tavern/tests/sources.rs) use recorded or synthetic responses.
+The [plugins module](../crates/tavern/README.md) lists their host grants. The [source tests](../crates/tavern/tests/sources.rs) use recorded or synthetic responses.
 Those tests do not establish continued availability of the public website endpoints.
 
 ## Decoder and driver services
@@ -191,7 +191,7 @@ The [complete example](../crates/tavern/examples/plugins/feature-services.md) re
 
 ### Card decoder
 
-The [card module](../crates/card/src/lib.rs) defines `CardDecoder`, `DecodedCard`, and `DecoderRecord`. The native service name is `card.decoder/1`.
+The [card module](../crates/core/src/card/mod.rs) defines `CardDecoder`, `DecodedCard`, and `DecoderRecord`. The native service name is `card.decoder/1`.
 The registered type is an outer `Arc` around `Arc<dyn CardDecoder>`.
 
 | Method or field | Contract |
@@ -230,10 +230,9 @@ The registered type is an outer `Arc` around `Arc<dyn ConversationDriver>`. The 
 | `ConversationDriver::run` | The asynchronous method coordinates one reply through host commands. |
 | `DriverContext::snapshot` | The method returns the immutable conversation view. |
 | `DriverContext::request` | The method returns the sanitized saved request. |
-| `DriverContext::open_step` | The method adds the composed tools and a continuation to the saved request and dispatches one step. |
-| `DriverContext::next_event` | The method obtains the normalized events of the open step, including thinking text and tool calls. |
+| `DriverContext::open` | The method starts one Rig agent run with the composed tools and an `AgentPolicy`. A number selects the step limit with the default policy. |
+| `DriverContext::next_event` | The method returns the next `AgentEvent`: text, thinking text, or completion. |
 | `DriverContext::append_reasoning` | The method emits a `reasoning_delta` event. The draft does not keep the thinking text. |
-| `DriverContext::call_tool` | The host runs one composed tool and emits `tool_call` and `tool_result` events. |
 | `DriverContext::append_text` | The method persists text before the host emits its delta event. |
 | `DriverContext::cancellation_token` | The method supplies the current phase cancellation token. |
 
@@ -243,8 +242,15 @@ The host rejects a selected driver with missing grants before session use. A dir
 
 The conversation view excludes provider configuration, composition history, and plugin state. The saved request contains credential references only.
 The driver receives no credential resolver or database handle. The driver cannot append text before dispatch.
-A driver must call `open_step` before `next_event`. Each step uses the same saved request.
-The `agent::AgentDriver` opens a new step after each completed step with tool calls. `ProviderAdapter::prepare_agent` extends the saved request for that step.
+A driver must call `open` before `next_event`. A driver can open one run for each reply.
+The Rig agent loop runs the tool steps. Each composed tool emits `tool_call` and `tool_result` events when Rig calls it.
+One Rig hook applies the `AgentPolicy`. It stops the run with `tool_step_limit` before Rig starts a tool round beyond `max_steps`. The tools of that round never run.
+The hook holds each tool in `confirm_tools` until `GenerationHandle::approver` answers its `tool_approval` event. The hook stops the run with `token_budget` when the reply spends `max_tokens`.
+The hook counts a tool round when a model turn with tool calls finishes, so a repeated turn is not a step.
+A second Rig hook ends each model turn and answers invalid tool calls with their reason. It repeats a truncated turn while `retry_truncated` allows it. Otherwise it stops with `output_limit` or `provider_refusal`.
+The host then cuts the draft back to the start of the repeated turn through `StoreBackend::truncate_draft` and emits `draft_reset`.
+A plugin can register a Rig `DynamicTool` as an `AgentTool`. The host renders its output as text.
+The host records the usage of each model call and renews the writer lease after it.
 A tool plugin registers `agent::ToolSet` as a `tools.NAME/1` service. The runtime collects every composed tool set, like the `prompt.hook.` services.
 The saved request always contains the composed tool schemas. The list can be empty.
 The host records usage before it exposes an accounting event to the driver.
@@ -362,7 +368,7 @@ The experimental `PromptProfile` interface now requires `draft`. The method must
 The `select_context` method selects complete groups after contributions and edits. The default `compile` method combines those two operations for direct profile callers.
 An existing profile must move its section construction into `draft`. The profile must preserve the real input options and leave final selection to `select_context`.
 
-The [core profile](../crates/conversation/src/prompt/mod.rs) supplies the reference implementation. The [phase tests](../crates/tavern/tests/prompt_phases.rs) show complete native hook implementations and host registration.
+The [core profile](../crates/session/src/prompt/mod.rs) supplies the reference implementation. The [phase tests](../crates/tavern/tests/prompt_phases.rs) show complete native hook implementations and host registration.
 The tests cover saved state, cancellation, deadlines, denied grants, optional failures, edit conflicts, and nondeterministic replay.
 
 ## Plugin-state schemas and migration
@@ -432,7 +438,7 @@ The registry owns service activation rollback separately. A plugin author must a
 
 ### Storage backend interface
 
-The [store module](../crates/store/src/lib.rs) defines three schema-aware operations.
+The [store module](../crates/session/src/store/mod.rs) defines three schema-aware operations.
 
 | Method | Required behavior |
 | --- | --- |
@@ -574,7 +580,7 @@ The [configuration tests](../crates/tavern/tests/configuration.rs) cover themes 
 
 An external plugin runs as a trusted child process. The process communicates through JSON-RPC 2.0 on standard input and standard output.
 The current host supports the `card.source/1` family only. The host does not support external prompt profiles, providers, or stores yet.
-The [Rust example](../crates/plugin/examples/source_plugin.rs) implements the complete inline-card path.
+The [Rust example](../crates/tavern/examples/plugin/source_plugin.rs) implements the complete inline-card path.
 
 ### Process definition
 

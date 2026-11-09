@@ -1,20 +1,16 @@
-//! RustyTavern supplies the assembled character runtime and product services.
+//! RustyTavern assembles the product: the application, configuration, extensions, and bundled plugins.
+//! The crate re-exports the lower crates under one path.
 pub mod app;
 pub mod config;
 pub mod extension;
-pub use rustytavern_adapters::{provider, source};
-pub use rustytavern_card as card;
-pub use rustytavern_conversation as session;
+pub mod plugins;
+pub use rustytavern_core::card;
 pub use rustytavern_core::{Error, Result, digest, error};
-pub use rustytavern_plugin::process as external;
-pub use rustytavern_plugins as plugins;
-pub use rustytavern_runtime::{self as runtime, agent, driver, phases};
-pub use rustytavern_store as store;
-pub mod plugin {
-    pub use rustytavern_plugin::process as external;
-    pub use rustytavern_plugin::*;
-}
+pub use rustytavern_runtime::{
+    self as runtime, agent, driver, phases, plugin, plugin::process as external, provider, source,
+};
+pub use rustytavern_session::{self as session, store};
 pub mod prompt {
-    pub use rustytavern_conversation::prompt::*;
     pub use rustytavern_runtime::phases;
+    pub use rustytavern_session::prompt::*;
 }

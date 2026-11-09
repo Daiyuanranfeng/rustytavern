@@ -5,57 +5,23 @@ use rustytavern::{
     Result,
     card::Card,
     prompt::PromptOptions,
-    provider::{
-        CredentialResolver, HttpProvider, PreparedRequest, ProviderAdapter, ProviderConfig,
-        ProviderEvent, ProviderStream,
-    },
+    provider::{ProviderAdapter, ProviderConfig},
     runtime::Runtime,
     session::{GenerationMode, GenerationStatus, Persona, Role, Session},
     store::{SqliteStore, StoreBackend},
 };
 use serde_json::json;
-use tokio_util::sync::CancellationToken;
 
-struct MockProvider {
-    delayed: bool,
-    chunks: usize,
-}
-#[async_trait]
-impl ProviderAdapter for MockProvider {
-    fn prepare(
-        &self,
-        plan: &rustytavern::prompt::PromptPlan,
-        model: &str,
-        config: &ProviderConfig,
-    ) -> Result<PreparedRequest> {
-        HttpProvider.prepare(plan, model, config)
+mod common;
+use common::{Script, Step};
+
+/// The provider streams `chunks` text chunks. A delayed provider waits before the second chunk.
+fn provider(delayed: bool, chunks: usize) -> Arc<Script> {
+    let mut steps = vec![Step::Text("x".into()); chunks];
+    if delayed && chunks > 1 {
+        steps.insert(1, Step::Delay(Duration::from_secs(5)));
     }
-    async fn open_stream(
-        &self,
-        _: PreparedRequest,
-        _: &dyn CredentialResolver,
-        _: CancellationToken,
-    ) -> Result<ProviderStream> {
-        let delayed = self.delayed;
-        let total = self.chunks;
-        Ok(Box::pin(futures_util::stream::unfold(
-            0,
-            move |index| async move {
-                if index > total {
-                    return None;
-                }
-                if delayed && index == 1 {
-                    tokio::time::sleep(Duration::from_secs(5)).await;
-                }
-                let event = if index == total {
-                    ProviderEvent::Complete
-                } else {
-                    ProviderEvent::Text { text: "x".into() }
-                };
-                Some((Ok(event), index + 1))
-            },
-        )))
-    }
+    Script::new(steps).arc()
 }
 async fn setup(delayed: bool, chunks: usize) -> (Runtime, Arc<SqliteStore>, String) {
     let store = Arc::new(SqliteStore::memory().unwrap());
@@ -83,8 +49,7 @@ async fn setup(delayed: bool, chunks: usize) -> (Runtime, Arc<SqliteStore>, Stri
             None,
         )
         .unwrap();
-    let runtime =
-        Runtime::new(store.clone()).with_provider(Arc::new(MockProvider { delayed, chunks }));
+    let runtime = Runtime::new(store.clone()).with_provider(provider(delayed, chunks));
     runtime
         .configure_session(&session, ProviderConfig::default())
         .await
@@ -198,10 +163,7 @@ impl rustytavern::plugin::RuntimePlugin for ReplacementPlugin {
         &self.manifest
     }
     async fn activate(&self, context: &mut rustytavern::plugin::PluginContext) -> Result<()> {
-        let provider: Arc<dyn ProviderAdapter> = Arc::new(MockProvider {
-            delayed: false,
-            chunks: 2,
-        });
+        let provider: Arc<dyn ProviderAdapter> = provider(false, 2);
         context.register("provider/1", Arc::new(provider))
     }
 }

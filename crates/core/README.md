@@ -1,23 +1,28 @@
-# Shared values and errors
+# Core values and card formats
 
-The crate defines shared identities, artifact metadata, conversation values, and errors.
+The crate defines shared values, errors, and the character card and worldbook formats.
 
 ## Interface
 
-`Error`, `Result`, `Artifact`, `Provenance`, `Persona`, `Role`, `Message`, `digest`, and clock helpers.
+- The crate root exports `Error`, `Result`, `Artifact`, `Provenance`, `Persona`, `Role`, `Message`, `digest`, and clock helpers.
+- The `card` module exports `Card`, `CardDecoder`, `CcDecoder`, typed character records, typed worldbook records, and format diagnostics.
 
 ## Design
 
-The optional `sqlite` feature supplies the SQLite error conversion. The SQLite adapter selects that feature.
+The card importer keeps the original bytes and unknown JSON values. The decoder enforces envelope precedence and input bounds.
+The CHARX adapter keeps embedded assets and unknown archive files.
+The optional `sqlite` feature supplies the SQLite error conversion.
 
-## Dependencies
+## Formats and example
 
-The crate supports the other component crates.
-The [workspace guide](../../docs/architecture.md#workspace-boundaries) records the complete graph.
+The [format guide](../../docs/compatibility.md#character-cards-and-worldbooks) defines character and worldbook structures.
+The [example](examples/formats.rs) creates a character card with an embedded book.
+
+```sh
+cargo run --locked -p rustytavern-core --example formats
+```
 
 ## Verification
-
-The repository root supports this command.
 
 ```sh
 cargo test --locked -p rustytavern-core

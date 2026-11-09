@@ -9,21 +9,20 @@ rust-version = "1.99"
 publish = false
 
 [workspace.dependencies]
-rustytavern-conversation = { path = "crates/conversation" }
-rustytavern-adapters = { path = "crates/adapters" }
-rustytavern-runtime = { path = "crates/runtime" }
-rustytavern-plugins = { path = "crates/plugins" }
-rustytavern-plugin = { path = "crates/plugin" }
-rustytavern-store = { path = "crates/store" }
 rustytavern = { path = "crates/tavern" }
 rustytavern-core = { path = "crates/core" }
-rustytavern-card = { path = "crates/card" }
+rustytavern-session = { path = "crates/session" }
+rustytavern-runtime = { path = "crates/runtime" }
 async-trait = "0.1.89"
 base64 = "0.22.1"
 clap = { version = "4.6", features = ["derive"] }
 crc32fast = "1.4"
 futures-util = "0.3"
-genai = { version = "0.7.3", default-features = false, features = ["rustls-tls"] }
+rig-core = { version = "0.46.0", default-features = false }
+rig-agent = { version = "0.46.0", default-features = false }
+rig-reqwest = "0.46.0"
+rig-rmcp = "0.46.0"
+rig-cassette = { version = "0.46.0", default-features = false, features = ["http"] }
 reqwest = { version = "0.13.5", default-features = false, features = ["json", "stream", "rustls"] }
 rusqlite = { version = "0.31", features = ["bundled"] }
 semver = "1"

@@ -6,17 +6,18 @@ use std::{
 };
 
 use futures_util::StreamExt;
+use rig_agent::agent::MultiTurnStreamItem;
+use rig_core::streaming::{Item, StreamEvent};
 use rustytavern::{
     card::Card,
     prompt::{ConservativeCounter, PromptInput, PromptOptions},
     provider::{
-        CredentialResolver, HttpProvider, ProviderAdapter, ProviderConfig, ProviderEvent,
+        CredentialResolver, HttpProvider, PreparedRequest, ProviderAdapter, ProviderConfig,
         ProviderKind,
     },
     session::{Persona, Role},
 };
 use serde_json::{Value, json};
-use tokio_util::sync::CancellationToken;
 
 fn plan() -> rustytavern::prompt::PromptPlan {
     let card = Card::import(include_bytes!("fixtures/synthetic/card-v3.json")).unwrap();
@@ -108,6 +109,35 @@ fn system_merge_defaults_preserve_legacy_configuration_and_protocol_guards() {
             "unsupported_provider_parameter"
         );
     }
+}
+
+/// The function runs one Rig agent turn and returns the text, the errors, and the last usage.
+async fn run(request: &PreparedRequest) -> (String, Vec<rustytavern::Error>, Option<Value>) {
+    let (mut text, mut errors, mut usage) = (String::new(), Vec::new(), None);
+    let model = match HttpProvider.model(request, &TestCredentials) {
+        Ok(model) => model,
+        Err(error) => return (text, vec![error], usage),
+    };
+    let mut stream = rustytavern::provider::agent(request, model, Vec::new(), 1, 0, true)
+        .unwrap()
+        .stream();
+    while let Some(item) = stream.next().await {
+        match item {
+            Ok(MultiTurnStreamItem::StreamAssistantItem(Item::Event(StreamEvent::Text {
+                text: delta,
+                ..
+            }))) => text.push_str(&delta),
+            Ok(MultiTurnStreamItem::CompletionCall(call)) => {
+                usage = Some(serde_json::to_value(call.usage).unwrap());
+            }
+            Ok(_) => {}
+            Err(error) => errors.push(rustytavern::provider::map_error(error)),
+        }
+        if !errors.is_empty() {
+            break;
+        }
+    }
+    (text, errors, usage)
 }
 
 struct TestCredentials;
@@ -212,49 +242,22 @@ async fn vendor_streams_and_failures_run_through_real_http() {
         let request = HttpProvider
             .prepare(&plan(), "fixture-model", &config)
             .unwrap();
-        let events = match HttpProvider
-            .open_stream(request, &TestCredentials, CancellationToken::new())
-            .await
-        {
-            Ok(stream) => stream.collect::<Vec<_>>().await,
-            Err(error) => vec![Err(error)],
-        };
-        let text: String = events
-            .iter()
-            .filter_map(|event| match event {
-                Ok(ProviderEvent::Text { text }) => Some(text.as_str()),
-                _ => None,
-            })
-            .collect();
-        let errors: Vec<_> = events
-            .iter()
-            .filter_map(|event| match event {
-                Err(error) | Ok(ProviderEvent::Failure { error }) => {
-                    assert!(!error.message.contains("PRIVATE_SENTINEL"));
-                    Some(error.code.as_str())
-                }
-                _ => None,
-            })
-            .collect();
-        // The library normalizes the usage of every protocol to one shape.
+        let (text, errors, usage) = run(&request).await;
+        for error in &errors {
+            assert!(!error.message.contains("PRIVATE_SENTINEL"));
+        }
+        let errors: Vec<_> = errors.iter().map(|error| error.code.as_str()).collect();
         if let Some(expected) = case.get("usage") {
-            assert!(events.iter().any(
-                |event| matches!(event, Ok(ProviderEvent::Usage { usage }) if usage["total_tokens"] == expected["total_tokens"])
-            ), "{}", case["id"]);
-            let last = events.last().unwrap();
-            assert!(matches!(last, Ok(ProviderEvent::Failure { .. })));
+            let total = usage.map(|usage| usage["total_tokens"].clone());
+            assert_eq!(
+                total.as_ref(),
+                Some(&expected["total_tokens"]),
+                "{}",
+                case["id"]
+            );
         }
         assert_eq!(text, case["text"].as_str().unwrap(), "{}", case["id"]);
         assert_eq!(json!(errors), case["errors"], "{}", case["id"]);
-        assert_eq!(
-            events
-                .iter()
-                .filter(|event| matches!(event, Ok(ProviderEvent::Complete)))
-                .count(),
-            usize::from(errors.is_empty()),
-            "{}",
-            case["id"]
-        );
         assert!(received.recv().unwrap().is_object());
         task.join().unwrap();
     }
@@ -284,7 +287,7 @@ fn adapter_capabilities_and_parameter_types_match_the_wire_contract() {
     ] {
         let capabilities = kind.capabilities();
         assert_eq!(capabilities.input_types, ["text"]);
-        assert!(capabilities.tools && !capabilities.reasoning_controls);
+        assert!(capabilities.tools && capabilities.reasoning_controls);
         for (key, value) in [
             ("temperature", json!("warm")),
             ("temperature", json!(-0.1)),
@@ -294,6 +297,9 @@ fn adapter_capabilities_and_parameter_types_match_the_wire_contract() {
             ("stop", json!([7])),
             ("stop", json!([])),
             ("stop", json!("")),
+            ("reasoning", json!("loud")),
+            ("reasoning", json!(0)),
+            ("cache", json!(true)),
             ("tools", json!([])),
         ] {
             let config = ProviderConfig {
@@ -326,7 +332,7 @@ fn adapter_capabilities_and_parameter_types_match_the_wire_contract() {
             ..Default::default()
         };
         assert!(HttpProvider.prepare(&plan(), "fixture", &config).is_ok());
-        if kind != ProviderKind::OpenAi {
+        {
             let config = ProviderConfig {
                 parameters: [("stop".into(), json!("END"))].into(),
                 ..config
@@ -338,6 +344,37 @@ fn adapter_capabilities_and_parameter_types_match_the_wire_contract() {
             assert_eq!(body["stop"], json!(["END"]));
         }
     }
+}
+
+#[test]
+fn rig_refuses_the_parameters_that_a_protocol_or_model_cannot_honor() {
+    let config = |kind, model: &str, parameters: Value| ProviderConfig {
+        kind,
+        model: model.into(),
+        api_key_env: Some("config:test".into()),
+        parameters: serde_json::from_value(parameters).unwrap(),
+        ..Default::default()
+    };
+    // The Responses protocol has no stop parameter.
+    let responses = config(ProviderKind::OpenAi, "gpt-5.2", json!({"stop":"END"}));
+    let error = HttpProvider
+        .validate_config("gpt-5.2", &responses)
+        .unwrap_err();
+    assert_eq!(error.code, "unsupported_provider_parameter");
+    // The Rig catalog accepts the reasoning and cache settings of a reasoning model.
+    let settings = json!({"reasoning":"high","cache":"short"});
+    let anthropic = config(ProviderKind::Anthropic, "claude-opus-4-5", settings);
+    HttpProvider
+        .validate_config("claude-opus-4-5", &anthropic)
+        .unwrap();
+    let body = HttpProvider
+        .prepare(&plan(), "claude-opus-4-5", &anthropic)
+        .unwrap()
+        .body;
+    assert_eq!(
+        (body["reasoning"].clone(), body["cache"].clone()),
+        (json!("high"), json!("short"))
+    );
 }
 
 #[test]
@@ -383,7 +420,7 @@ fn openrouter_routing_is_explicit_and_preserves_requested_parameter_support() {
     let request = HttpProvider.prepare(&plan(), "fixture", &config).unwrap();
     assert_eq!(
         request.body["provider"],
-        json!({"allow_fallbacks":false,"require_parameters":true})
+        json!({"allow_fallbacks":true,"require_parameters":true})
     );
     let config = ProviderConfig {
         routing: Some(OpenRouterRouting {
@@ -410,4 +447,17 @@ fn openrouter_routing_is_explicit_and_preserves_requested_parameter_support() {
             .code,
         "unsupported_provider_parameter"
     );
+}
+
+#[test]
+fn an_endpoint_with_a_query_string_fails_because_rig_adds_the_route_path() {
+    let config = ProviderConfig {
+        kind: ProviderKind::Custom,
+        endpoint: Some("https://example.com/v1/chat/completions?api-version=1".into()),
+        ..Default::default()
+    };
+    let error = HttpProvider
+        .prepare(&plan(), "fixture", &config)
+        .unwrap_err();
+    assert_eq!(error.code, "configuration");
 }

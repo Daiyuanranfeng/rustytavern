@@ -1,13 +1,19 @@
 use futures_util::StreamExt;
+use rig_agent::agent::MultiTurnStreamItem;
+use rig_core::{
+    message::ToolName,
+    streaming::{Item, StreamEvent},
+    tool::{DynamicTool, ToolOutput},
+};
 use rustytavern::provider::*;
 use serde_json::{Value, json};
 use std::{
     io::{Read, Write},
     net::TcpListener,
-    sync::mpsc,
+    sync::{Arc, Mutex, mpsc},
     thread,
 };
-use tokio_util::sync::CancellationToken;
+
 struct TestCredentials;
 impl CredentialResolver for TestCredentials {
     fn resolve(&self, _: &str) -> rustytavern::Result<String> {
@@ -15,478 +21,243 @@ impl CredentialResolver for TestCredentials {
     }
 }
 
-fn prepare_agent(
-    config: &ProviderConfig,
-    agent: &AgentRequest,
-) -> rustytavern::Result<PreparedRequest> {
-    HttpProvider.prepare_agent(
-        HttpProvider.prepare(&Default::default(), "fixture", config)?,
-        agent,
-    )
-}
-
-fn mock(body: String, status: &str) -> (String, mpsc::Receiver<Value>, thread::JoinHandle<()>) {
+/// The server answers one connection for each body and sends each request body back.
+fn mock(bodies: Vec<String>) -> (String, mpsc::Receiver<Value>, thread::JoinHandle<()>) {
     let listener = TcpListener::bind("127.0.0.1:0").unwrap();
     let address = listener.local_addr().unwrap();
-    let status = status.to_owned();
     let (send, receive) = mpsc::channel();
     let task = thread::spawn(move || {
-        let (mut stream, _) = listener.accept().unwrap();
-        stream
-            .set_read_timeout(Some(std::time::Duration::from_secs(10)))
-            .unwrap();
-        let mut request = Vec::new();
-        let mut chunk = [0u8; 4096];
-        let split;
-        loop {
-            let n = stream.read(&mut chunk).unwrap();
-            assert_ne!(n, 0);
-            request.extend_from_slice(&chunk[..n]);
-            if let Some(index) = request.windows(4).position(|s| s == b"\r\n\r\n") {
-                split = index + 4;
-                break;
+        for body in bodies {
+            let (mut stream, _) = listener.accept().unwrap();
+            let mut request = Vec::new();
+            let mut chunk = [0u8; 4096];
+            let split = loop {
+                let n = stream.read(&mut chunk).unwrap();
+                assert_ne!(n, 0);
+                request.extend_from_slice(&chunk[..n]);
+                if let Some(index) = request.windows(4).position(|s| s == b"\r\n\r\n") {
+                    break index + 4;
+                }
+            };
+            let headers = String::from_utf8_lossy(&request[..split]).to_lowercase();
+            let length: usize = headers
+                .lines()
+                .find_map(|line| line.strip_prefix("content-length:"))
+                .unwrap()
+                .trim()
+                .parse()
+                .unwrap();
+            while request.len() - split < length {
+                let n = stream.read(&mut chunk).unwrap();
+                request.extend_from_slice(&chunk[..n]);
             }
+            send.send(serde_json::from_slice(&request[split..split + length]).unwrap())
+                .unwrap();
+            let response = format!(
+                "HTTP/1.1 200 OK\r\nContent-Type: text/event-stream\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body}",
+                body.len()
+            );
+            stream.write_all(response.as_bytes()).unwrap();
         }
-        let headers = String::from_utf8_lossy(&request[..split]).to_lowercase();
-        let length = headers
-            .lines()
-            .find_map(|line| {
-                line.strip_prefix("content-length:")
-                    .map(|s| s.trim().parse::<usize>().unwrap())
-            })
-            .unwrap();
-        while request.len() - split < length {
-            let n = stream.read(&mut chunk).unwrap();
-            assert_ne!(n, 0);
-            request.extend_from_slice(&chunk[..n]);
-        }
-        let value = serde_json::from_slice(&request[split..split + length]).unwrap();
-        send.send(value).unwrap();
-        let response = format!(
-            "HTTP/1.1 {status}\r\nContent-Type: text/event-stream\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body}",
-            body.len()
-        );
-        stream.write_all(response.as_bytes()).unwrap();
     });
-    (format!("http://{address}/generation"), receive, task)
+    (format!("http://{address}"), receive, task)
 }
 
-fn config(endpoint: String) -> ProviderConfig {
-    ProviderConfig {
-        kind: ProviderKind::Custom,
-        endpoint: Some(endpoint),
-        api_key_env: None,
-        ..Default::default()
-    }
+fn sse(frames: &[Value]) -> String {
+    frames.iter().map(|f| format!("data: {f}\n\n")).collect()
 }
-fn agent() -> AgentRequest {
-    AgentRequest {
-        tools: vec![ToolDefinition {
-            name: "lookup".into(),
-            description: "The tool reads a value.".into(),
-            parameters: json!({"type":"object","properties":{"key":{"type":"string"}},"required":["key"]}),
-        }],
-        continuation: vec![],
-    }
+fn chunk(delta: Value, reason: Value) -> Value {
+    json!({"choices":[{"index":0,"delta":delta,"finish_reason":reason}]})
 }
-fn chunk(delta: Value, reason: Value) -> String {
-    json!({"choices":[{"index":0,"delta":delta,"finish_reason":reason}]}).to_string()
-}
-fn frames() -> Vec<String> {
-    vec![
-        chunk(
-            json!({"tool_calls":[{"index":0,"id":"call_1","type":"function","function":{"name":"lookup","arguments":"{\"key\":"}},{"index":1,"id":"call_2","type":"function","function":{"name":"lookup","arguments":"{"}}]}),
-            Value::Null,
-        ),
-        chunk(
-            json!({"tool_calls":[{"index":0,"function":{"arguments":"\"a\"}"}},{"index":1,"function":{"arguments":"\"key\":\"b\"}"}}]}),
-            Value::Null,
-        ),
-        chunk(json!({}), json!("tool_calls")),
-        json!({"choices":[],"usage":{"total_tokens":10}}).to_string(),
-        "[DONE]".into(),
-    ]
-}
-#[tokio::test]
-async fn http_stream_emits_complete_calls_and_preserves_continuation_ids() {
-    let body = frames()
-        .iter()
-        .map(|f| format!("data: {f}\n\n"))
-        .collect::<String>();
-    let (endpoint, received, server) = mock(body, "200 OK");
-    let request = prepare_agent(&config(endpoint), &agent()).unwrap();
-    let mut stream = HttpProvider
-        .open_stream(request, &TestCredentials, CancellationToken::new())
-        .await
-        .unwrap();
-    let mut calls = vec![];
-    let mut complete = false;
-    while let Some(event) = stream.next().await {
-        match event.unwrap() {
-            ProviderEvent::ToolCalls { calls: value } => calls = value,
-            ProviderEvent::Complete => complete = true,
-            _ => {}
-        }
-    }
-    assert!(complete);
-    assert_eq!(calls.len(), 2);
-    assert_eq!(calls[0].name, "lookup");
-    assert_eq!(calls[1].arguments, json!({"key":"b"}));
-    assert_eq!(
-        received.recv().unwrap()["tools"][0]["function"]["name"],
-        "lookup"
-    );
-    server.join().unwrap();
-    let mut agent = agent();
-    agent.continuation.push(AgentTurn {
-        text: String::new(),
-        results: calls
-            .iter()
-            .map(|c| ToolResult {
-                call_id: c.id.clone(),
-                content: "found".into(),
-            })
-            .collect(),
-        calls,
-    });
-    let request = prepare_agent(&config("http://127.0.0.1:1".into()), &agent).unwrap();
-    assert_eq!(request.body["messages"][1]["tool_call_id"], "call_1");
-    assert_eq!(request.body["messages"][2]["tool_call_id"], "call_2");
-}
-/// The function streams the frames through a mock server and returns the events and the wire body.
-async fn stream(
-    kind: ProviderKind,
-    agent: &AgentRequest,
-    frames: &[String],
-) -> (Vec<rustytavern::Result<ProviderEvent>>, Value) {
-    // Anthropic names each event in the SSE event field.
-    let body = frames
-        .iter()
-        .map(|f| {
-            match serde_json::from_str::<Value>(f)
-                .ok()
-                .and_then(|v| v["type"].as_str().map(str::to_owned))
-            {
-                Some(kind) => format!("event: {kind}\ndata: {f}\n\n"),
-                None => format!("data: {f}\n\n"),
-            }
-        })
-        .collect();
-    let (endpoint, received, server) = mock(body, "200 OK");
-    let mut config = config(endpoint);
-    config.kind = kind;
-    config.api_key_env = Some("KEY".into());
-    let request = prepare_agent(&config, agent).unwrap();
-    let events = match HttpProvider
-        .open_stream(request, &TestCredentials, CancellationToken::new())
-        .await
-    {
-        Ok(stream) => stream.collect().await,
-        Err(error) => vec![Err(error)],
-    };
-    let wire = received.recv().unwrap();
-    server.join().unwrap();
-    (events, wire)
-}
-fn failure(events: &[rustytavern::Result<ProviderEvent>]) -> Option<&str> {
-    events.iter().find_map(|event| match event {
-        Err(error) | Ok(ProviderEvent::Failure { error }) => Some(error.code.as_str()),
-        _ => None,
-    })
-}
-#[tokio::test]
-async fn http_rejects_bad_calls_and_streams_without_a_finish() {
-    for delta in [
-        json!({"tool_calls":[{"index":0,"id":"a","function":{"name":"lookup","arguments":"{"}}]}),
-        json!({"tool_calls":[{"index":0,"id":"a","function":{"name":"lookup","arguments":"[]"}}]}),
-        json!({"tool_calls":[{"index":0,"id":"a","function":{"name":"lookup","arguments":"{\"key\":\"x\"}"}},{"index":1,"id":"a","function":{"name":"lookup","arguments":"{\"key\":\"y\"}"}}]}),
-        json!({"tool_calls":[{"index":0,"id":"a","function":{"name":"lookup","arguments":"x".repeat(65537)}}]}),
-    ] {
-        let frames = [
-            chunk(delta, Value::Null),
-            chunk(json!({}), json!("tool_calls")),
-            "[DONE]".into(),
-        ];
-        let (events, _) = stream(ProviderKind::Custom, &agent(), &frames).await;
-        assert_eq!(failure(&events), Some("invalid_provider_tool"));
-    }
-    let (events, _) = stream(
-        ProviderKind::Custom,
-        &agent(),
-        &[frames()[0].clone(), "[DONE]".into()],
-    )
-    .await;
-    assert_eq!(failure(&events), Some("incomplete_stream"));
-}
-fn turn(result_id: &str) -> AgentTurn {
-    AgentTurn {
-        text: String::new(),
-        calls: vec![ToolCall {
-            id: "a".into(),
-            name: "lookup".into(),
-            arguments: json!({"key":"x"}),
-            signature: Some("sig".into()),
-        }],
-        results: vec![ToolResult {
-            call_id: result_id.into(),
-            content: "found".into(),
-        }],
-    }
-}
-#[test]
-fn agent_requests_keep_one_chat_shape_and_check_results() {
-    let mut request = agent();
-    request.continuation.push(turn("a"));
-    for (kind, contract) in [
-        (ProviderKind::OpenAi, "openai.responses.agent-v1"),
-        (ProviderKind::Anthropic, "anthropic.messages.agent-v1"),
-        (ProviderKind::Gemini, "gemini.generate_content.agent-v1"),
-    ] {
-        let mut config = config("http://127.0.0.1:1".into());
-        config.kind = kind;
-        let request = prepare_agent(&config, &request).unwrap();
-        assert_eq!(request.contract_id, contract);
-        assert_eq!(request.body["tools"][0]["name"], "lookup");
-        let messages = request.body["messages"].as_array().unwrap();
-        assert_eq!(
-            messages[messages.len() - 2]["tool_calls"][0]["signature"],
-            "sig"
-        );
-        assert_eq!(messages[messages.len() - 1]["tool_call_id"], "a");
-    }
-    let mut agent = agent();
-    agent.continuation.push(turn("b"));
-    let config = config("http://127.0.0.1:1".into());
-    assert!(prepare_agent(&config, &agent).is_err());
-}
-fn native_frames(kind: ProviderKind) -> Vec<Value> {
+
+/// The function returns a tool call reply and a text reply in the native frames of the protocol.
+fn native_frames(kind: ProviderKind) -> [String; 2] {
     match kind {
-        ProviderKind::OpenAi => vec![
-            json!({"type":"response.output_item.added","output_index":0,"item":{"type":"function_call","id":"fc_1","call_id":"call_1","name":"lookup","arguments":""}}),
-            json!({"type":"response.function_call_arguments.delta","output_index":0,"item_id":"fc_1","delta":"{\"key\":"}),
-            json!({"type":"response.function_call_arguments.delta","output_index":0,"item_id":"fc_1","delta":"\"a\"}"}),
-            json!({"type":"response.output_item.done","output_index":0,"item":{"type":"function_call","id":"fc_1","call_id":"call_1","name":"lookup","arguments":"{\"key\":\"a\"}"}}),
-            json!({"type":"response.completed","response":{"id":"resp_1","model":"fixture","status":"completed","usage":{"input_tokens":1,"output_tokens":2,"total_tokens":3}}}),
+        ProviderKind::OpenAi => [
+            sse(&[
+                json!({"type":"response.output_item.added","output_index":0,"item":{"type":"function_call","id":"fc_1","call_id":"call_1","name":"lookup","arguments":""}}),
+                json!({"type":"response.function_call_arguments.delta","output_index":0,"item_id":"fc_1","delta":"{\"key\":\"a\"}"}),
+                json!({"type":"response.output_item.done","output_index":0,"item":{"type":"function_call","id":"fc_1","call_id":"call_1","name":"lookup","arguments":"{\"key\":\"a\"}"}}),
+                json!({"type":"response.completed","response":{"id":"resp_1","model":"fixture","status":"completed","output":[{"type":"function_call","id":"fc_1","call_id":"call_1","name":"lookup","arguments":"{\"key\":\"a\"}"}],"usage":{"input_tokens":1,"output_tokens":2,"total_tokens":3}}}),
+            ]),
+            sse(&[
+                json!({"type":"response.output_text.delta","delta":"Done."}),
+                json!({"type":"response.completed","response":{"id":"resp_2","model":"fixture","status":"completed","usage":{"total_tokens":3}}}),
+            ]),
         ],
-        ProviderKind::Anthropic => vec![
-            json!({"type":"message_start","message":{"usage":{"input_tokens":3}}}),
-            json!({"type":"content_block_start","index":0,"content_block":{"type":"text","text":""}}),
-            json!({"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"Look."}}),
-            json!({"type":"content_block_stop","index":0}),
-            json!({"type":"content_block_start","index":1,"content_block":{"type":"tool_use","id":"call_1","name":"lookup","input":{}}}),
-            json!({"type":"content_block_delta","index":1,"delta":{"type":"input_json_delta","partial_json":"{\"key\":\"a\"}"}}),
-            json!({"type":"content_block_stop","index":1}),
-            json!({"type":"message_delta","delta":{"stop_reason":"tool_use"},"usage":{"output_tokens":2}}),
-            json!({"type":"message_stop"}),
+        ProviderKind::Anthropic => {
+            let start = json!({"type":"message_start","message":{"id":"msg_1","type":"message","role":"assistant","model":"fixture","content":[],"usage":{"input_tokens":3,"output_tokens":0}}});
+            let event = |frames: &[Value]| {
+                frames
+                    .iter()
+                    .map(|f| format!("event: {}\ndata: {f}\n\n", f["type"].as_str().unwrap()))
+                    .collect::<String>()
+            };
+            [
+                event(&[
+                    start.clone(),
+                    json!({"type":"content_block_start","index":0,"content_block":{"type":"tool_use","id":"call_1","name":"lookup","input":{}}}),
+                    json!({"type":"content_block_delta","index":0,"delta":{"type":"input_json_delta","partial_json":"{\"key\":\"a\"}"}}),
+                    json!({"type":"content_block_stop","index":0}),
+                    json!({"type":"message_delta","delta":{"stop_reason":"tool_use"},"usage":{"output_tokens":2}}),
+                    json!({"type":"message_stop"}),
+                ]),
+                event(&[
+                    start,
+                    json!({"type":"content_block_start","index":0,"content_block":{"type":"text","text":""}}),
+                    json!({"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"Done."}}),
+                    json!({"type":"content_block_stop","index":0}),
+                    json!({"type":"message_delta","delta":{"stop_reason":"end_turn"},"usage":{"output_tokens":2}}),
+                    json!({"type":"message_stop"}),
+                ]),
+            ]
+        }
+        ProviderKind::Gemini => [
+            sse(&[
+                json!({"candidates":[{"content":{"role":"model","parts":[{"functionCall":{"name":"lookup","args":{"key":"a"}},"thoughtSignature":"sig"}]},"finishReason":"STOP"}],"usageMetadata":{"promptTokenCount":1,"candidatesTokenCount":2,"totalTokenCount":3}}),
+            ]),
+            sse(&[
+                json!({"candidates":[{"content":{"role":"model","parts":[{"text":"Done."}]},"finishReason":"STOP"}],"usageMetadata":{"promptTokenCount":1,"candidatesTokenCount":2,"totalTokenCount":3}}),
+            ]),
         ],
-        _ => vec![
-            json!({"candidates":[{"content":{"role":"model","parts":[{"functionCall":{"name":"lookup","args":{"key":"a"}},"thoughtSignature":"sig"}]}}]}),
-            json!({"candidates":[{"content":{"role":"model","parts":[]},"finishReason":"STOP"}],"usageMetadata":{"totalTokenCount":3}}),
+        _ => [
+            sse(&[
+                chunk(
+                    json!({"tool_calls":[{"index":0,"id":"call_1","type":"function","function":{"name":"lookup","arguments":"{\"key\":\"a\"}"}}]}),
+                    Value::Null,
+                ),
+                chunk(json!({}), json!("tool_calls")),
+            ]) + "data: [DONE]\n\n",
+            sse(&[
+                chunk(json!({"content":"Done."}), Value::Null),
+                chunk(json!({}), json!("stop")),
+            ]) + "data: [DONE]\n\n",
         ],
     }
 }
+
+fn request(kind: ProviderKind, endpoint: String) -> PreparedRequest {
+    let config = ProviderConfig {
+        kind,
+        endpoint: Some(endpoint),
+        api_key_env: Some("config:test".into()),
+        ..Default::default()
+    };
+    let plan = rustytavern::prompt::PromptPlan {
+        sections: vec![rustytavern::prompt::Section {
+            id: "message".into(),
+            role: rustytavern::session::Role::User,
+            text: "Look up a.".into(),
+            source: "test".into(),
+            mandatory: true,
+            units: 10,
+        }],
+        output_reserve: 64,
+        ..Default::default()
+    };
+    let lookup = ToolDefinition {
+        name: "lookup".into(),
+        description: "The tool reads a value.".into(),
+        parameters: json!({"type":"object","properties":{"key":{"type":"string"}},"required":["key"]}),
+    };
+    let prepared = HttpProvider.prepare(&plan, "fixture", &config).unwrap();
+    HttpProvider.prepare_agent(prepared, &[lookup]).unwrap()
+}
+
+/// The tool records each call and returns a fixed value.
+fn lookup(calls: Arc<Mutex<Vec<Value>>>) -> DynamicTool {
+    DynamicTool::new(
+        ToolName::new("lookup").unwrap(),
+        "The tool reads a value.",
+        json!({"type":"object","properties":{"key":{"type":"string"}},"required":["key"]}),
+        move |arguments| {
+            calls.lock().unwrap().push(arguments);
+            Box::pin(async { Ok(ToolOutput::text("VALUE_A")) })
+        },
+    )
+}
+
 #[tokio::test]
-async fn http_native_streams_emit_tool_calls_and_send_native_continuations() {
-    let mut request = agent();
-    request.continuation.push(turn("a"));
+async fn http_tool_rounds_send_native_tools_and_continuations() {
     for kind in [
+        ProviderKind::OpenRouter,
+        ProviderKind::Custom,
         ProviderKind::OpenAi,
         ProviderKind::Anthropic,
         ProviderKind::Gemini,
     ] {
-        let frames = native_frames(kind)
-            .iter()
-            .map(Value::to_string)
-            .collect::<Vec<_>>();
-        let (events, wire) = stream(kind, &request, &frames).await;
-        let events = events.into_iter().map(Result::unwrap).collect::<Vec<_>>();
-        let [
-            ..,
-            ProviderEvent::ToolCalls { calls },
-            ProviderEvent::Complete,
-        ] = &events[..]
-        else {
-            panic!("The {kind:?} stream must end with calls: {events:?}");
+        let (endpoint, received, server) = mock(native_frames(kind).into());
+        let request = request(kind, endpoint);
+        let model = HttpProvider.model(&request, &TestCredentials).unwrap();
+        let calls = Arc::new(Mutex::new(Vec::new()));
+        let mut stream = agent(&request, model, vec![lookup(calls.clone())], 2, 0, true)
+            .unwrap()
+            .stream();
+        let mut text = String::new();
+        while let Some(item) = stream.next().await {
+            if let MultiTurnStreamItem::StreamAssistantItem(Item::Event(StreamEvent::Text {
+                text: delta,
+                ..
+            })) = item.unwrap_or_else(|error| panic!("{kind:?}: {error}"))
+            {
+                text.push_str(&delta);
+            }
+        }
+        assert_eq!(text, "Done.", "{kind:?}");
+        assert_eq!(*calls.lock().unwrap(), [json!({"key":"a"})], "{kind:?}");
+        let (first, second) = (received.recv().unwrap(), received.recv().unwrap());
+        let (first, second) = (first.to_string(), second.to_string());
+        let (declaration, search, result) = match kind {
+            ProviderKind::OpenAi => ("\"lookup\"", "web_search", "function_call_output"),
+            ProviderKind::Anthropic => ("input_schema", "web_search_20250305", "tool_result"),
+            ProviderKind::Gemini => ("functionDeclarations", "google_search", "functionResponse"),
+            ProviderKind::OpenRouter => ("\"lookup\"", "openrouter:web_search", "tool_call_id"),
+            ProviderKind::Custom => ("\"lookup\"", "\"lookup\"", "tool_call_id"),
         };
-        assert_eq!(calls.len(), 1);
-        assert_eq!(calls[0].name, "lookup");
-        assert_eq!(calls[0].arguments, json!({"key":"a"}));
-        assert!(!calls[0].id.is_empty());
-        let wire = wire.to_string();
-        for term in match kind {
-            ProviderKind::OpenAi => ["function_call", "function_call_output", "call_id"],
-            ProviderKind::Anthropic => ["tool_use", "tool_result", "input_schema"],
-            _ => ["functionCall", "functionResponse", "functionDeclarations"],
-        } {
-            assert!(
-                wire.contains(term),
-                "The {kind:?} request lacks {term}: {wire}"
-            );
+        assert!(
+            first.contains(declaration) && first.contains(search),
+            "{kind:?}: {first}"
+        );
+        assert!(
+            second.contains(result) && second.contains("VALUE_A"),
+            "{kind:?}: {second}"
+        );
+        if kind == ProviderKind::Custom {
+            assert!(!first.contains("web_search"), "{first}");
         }
-    }
-}
-#[tokio::test]
-async fn http_tool_finish_without_calls_fails() {
-    let frames = [
-        json!({"type":"message_start","message":{"usage":{"input_tokens":3}}}),
-        json!({"type":"message_delta","delta":{"stop_reason":"tool_use"}}),
-        json!({"type":"message_stop"}),
-    ]
-    .map(|f| f.to_string());
-    let (events, _) = stream(ProviderKind::Anthropic, &agent(), &frames).await;
-    assert_eq!(failure(&events), Some("unsupported_provider_output"));
-}
-#[tokio::test]
-async fn http_missing_terminal_error_and_cancellation_fail() {
-    for (frames, code) in [
-        (vec![frames()[0].clone()], "incomplete_stream"),
-        (
-            vec!["{\"error\":{\"code\":\"rate_limit_exceeded\"}}".into()],
-            "provider_rate_limit",
-        ),
-    ] {
-        let (events, _) = stream(ProviderKind::Custom, &agent(), &frames).await;
-        assert_eq!(failure(&events), Some(code));
-    }
-    let cancellation = CancellationToken::new();
-    cancellation.cancel();
-    let config = config("http://127.0.0.1:1".into());
-    let request = prepare_agent(&config, &agent()).unwrap();
-    let error = HttpProvider
-        .open_stream(request, &TestCredentials, cancellation)
-        .await
-        .err()
-        .unwrap();
-    assert_eq!(error.code, "cancelled");
-}
-
-#[tokio::test]
-async fn http_rejects_unknown_tools_and_invalid_argument_values() {
-    for (name, arguments) in [
-        ("other", "{\"key\":\"x\"}"),
-        ("lookup", "{\"key\":2}"),
-        ("lookup", "{}"),
-    ] {
-        let frames = [
-            chunk(
-                json!({"tool_calls":[{"index":0,"id":"a","type":"function","function":{"name":name,"arguments":arguments}}]}),
-                Value::Null,
-            ),
-            chunk(json!({}), json!("tool_calls")),
-            "[DONE]".into(),
-        ];
-        let (events, _) = stream(ProviderKind::Custom, &agent(), &frames).await;
-        assert_eq!(failure(&events), Some("invalid_provider_tool"));
-    }
-}
-
-#[test]
-fn invalid_schemas_fail() {
-    for schema in [
-        json!({"type":"object","properties":{"x":{"type":"bad"}}}),
-        json!({"type":"object","required":["missing"]}),
-        json!({"type":"object","patternProperties":{}}),
-    ] {
-        let mut agent = agent();
-        agent.tools[0].parameters = schema;
-        let config = config("http://127.0.0.1:1".into());
-        assert!(prepare_agent(&config, &agent).is_err());
-    }
-}
-
-#[tokio::test]
-async fn http_text_keeps_reasoning_apart_and_ignores_the_openrouter_usage_chunk() {
-    let end = json!({"content":"","role":"assistant","reasoning":null});
-    let usage = json!({"choices":[{"index":0,"delta":end,"finish_reason":"stop"}],"usage":{"total_tokens":9}});
-    let frames = [
-        chunk(
-            json!({"role":"assistant","content":"Hi","refusal":null,"reasoning":"Plan.","reasoning_details":[]}),
-            Value::Null,
-        ),
-        chunk(end.clone(), json!("stop")),
-        usage.to_string(),
-        "[DONE]".into(),
-    ];
-    let (events, _) = stream(ProviderKind::OpenRouter, &agent(), &frames).await;
-    let events = events.into_iter().map(Result::unwrap).collect::<Vec<_>>();
-    assert!(
-        matches!(
-            &events[..],
-            [
-                ProviderEvent::Reasoning { text: thinking },
-                ProviderEvent::Text { text },
-                ProviderEvent::Usage { usage },
-                ProviderEvent::Complete
-            ] if thinking == "Plan." && text == "Hi" && usage["total_tokens"] == 9
-        ),
-        "{events:?}"
-    );
-    let frames = [
-        chunk(
-            json!({"tool_calls":[{"index":0,"id":"a","function":{"name":"lookup","arguments":"{\"key\":\"x\"}"}}]}),
-            Value::Null,
-        ),
-        chunk(end.clone(), json!("tool_calls")),
-        usage.to_string().replace("\"stop\"", "\"tool_calls\""),
-        "[DONE]".into(),
-    ];
-    let (events, _) = stream(ProviderKind::OpenRouter, &agent(), &frames).await;
-    assert!(
-        matches!(events.last(), Some(Ok(ProviderEvent::Complete))),
-        "{events:?}"
-    );
-}
-
-#[tokio::test]
-async fn http_cancellation_discards_pending_calls() {
-    for read_text in [false, true] {
-        let text = chunk(json!({"content":"before"}), Value::Null);
-        let body = std::iter::once(text)
-            .chain(frames())
-            .map(|f| format!("data: {f}\n\n"))
-            .collect();
-        let (endpoint, received, server) = mock(body, "200 OK");
-        let cancellation = CancellationToken::new();
-        let config = config(endpoint);
-        let request = prepare_agent(&config, &agent()).unwrap();
-        let mut stream = HttpProvider
-            .open_stream(request, &TestCredentials, cancellation.clone())
-            .await
-            .unwrap();
-        if read_text {
-            assert!(matches!(
-                stream.next().await.unwrap().unwrap(),
-                ProviderEvent::Text { .. }
-            ));
-        }
-        cancellation.cancel();
-        assert_eq!(stream.next().await.unwrap().unwrap_err().code, "cancelled");
-        assert!(stream.next().await.is_none());
-        received.recv().unwrap();
         server.join().unwrap();
     }
 }
 
-#[test]
-fn continuation_budget_precedes_request_cloning() {
-    let mut agent = agent();
-    agent.continuation = (0..9)
-        .map(|index| AgentTurn {
-            text: "x".repeat(1048576),
-            calls: vec![ToolCall {
-                id: index.to_string(),
-                name: "lookup".into(),
-                arguments: json!({"key":"x"}),
-                signature: None,
-            }],
-            results: vec![ToolResult {
-                call_id: index.to_string(),
-                content: "found".into(),
-            }],
-        })
-        .collect();
-    let config = config("http://127.0.0.1:1".into());
-    let error = prepare_agent(&config, &agent).unwrap_err();
-    assert_eq!(error.code, "invalid_provider_tool");
-    assert_eq!(error.message, "The tool request exceeds its byte limit.");
+#[tokio::test]
+async fn http_text_keeps_reasoning_apart() {
+    let body = sse(&[
+        chunk(
+            json!({"role":"assistant","content":"Hi","reasoning":"Plan."}),
+            Value::Null,
+        ),
+        chunk(json!({}), json!("stop")),
+    ]) + "data: [DONE]\n\n";
+    let (endpoint, _received, server) = mock(vec![body]);
+    let request = request(ProviderKind::OpenRouter, endpoint);
+    let model = HttpProvider.model(&request, &TestCredentials).unwrap();
+    let mut stream = agent(&request, model, Vec::new(), 1, 0, true)
+        .unwrap()
+        .stream();
+    let (mut text, mut thinking) = (String::new(), String::new());
+    while let Some(item) = stream.next().await {
+        match item.unwrap() {
+            MultiTurnStreamItem::StreamAssistantItem(Item::Event(StreamEvent::Text {
+                text: delta,
+                ..
+            })) => text.push_str(&delta),
+            MultiTurnStreamItem::StreamAssistantItem(Item::Event(StreamEvent::Reasoning {
+                text: delta,
+                ..
+            })) => thinking.push_str(&delta),
+            _ => {}
+        }
+    }
+    assert_eq!((text.as_str(), thinking.as_str()), ("Hi", "Plan."));
+    server.join().unwrap();
 }

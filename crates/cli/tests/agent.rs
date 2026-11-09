@@ -188,8 +188,7 @@ fn the_agent_reads_a_skill_and_returns_the_result_to_the_model() {
     assert!(bodies[0]["messages"].as_array().unwrap().iter().any(|m| {
         m["role"] == "system"
             && m["content"]
-                .as_str()
-                .unwrap()
+                .to_string()
                 .contains("- greet: Greet a traveler.")
     }));
     let messages = bodies[1]["messages"].as_array().unwrap();
@@ -212,13 +211,13 @@ fn the_agent_reads_a_skill_and_returns_the_result_to_the_model() {
 }
 
 #[test]
-fn the_agent_calls_an_mcp_tool_with_a_reduced_schema() {
+fn the_agent_calls_an_mcp_tool_with_its_full_schema() {
     if Command::new("python3").arg("--version").output().is_err() {
         return;
     }
     let directory = tempfile::tempdir().unwrap();
     let server = concat!(env!("CARGO_MANIFEST_DIR"), "/tests/fixtures/mcp_echo.py");
-    let call = json!({"tool_calls":[{"index":0,"id":"call_1","type":"function","function":{"name":"echo__say","arguments":"{\"text\":\"hi\"}"}}]});
+    let call = json!({"tool_calls":[{"index":0,"id":"call_1","type":"function","function":{"name":"echo__say","arguments":"{\"text\":\"hi\",\"mode\":null}"}}]});
     let (endpoint, provider) = serve(vec![
         sse(call, Value::Null) + &sse(json!({}), json!("tool_calls")),
         sse(json!({"content":"Done."}), json!("stop")),
@@ -234,11 +233,10 @@ fn the_agent_calls_an_mcp_tool_with_a_reduced_schema() {
         .iter()
         .find(|t| t["function"]["name"] == "echo__say")
         .unwrap();
+    // Rig sends the MCP schema as the server declares it.
     let schema = &echo["function"]["parameters"];
-    assert_eq!(
-        schema,
-        &json!({"type":"object","properties":{"text":{"type":"string"}},"required":["text"]})
-    );
+    assert_eq!(schema["required"], json!(["text", "mode"]));
+    assert!(schema["properties"]["mode"]["anyOf"].is_array());
     let result = bodies[1]["messages"].as_array().unwrap().last().unwrap();
     assert_eq!(result["content"], "echo: hi");
     assert_eq!(events.last().unwrap()["text"], "Done.");

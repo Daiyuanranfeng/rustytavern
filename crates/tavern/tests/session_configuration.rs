@@ -1,70 +1,24 @@
-use std::{
-    collections::BTreeMap,
-    sync::{
-        Arc,
-        atomic::{AtomicUsize, Ordering},
-    },
-};
+use std::{collections::BTreeMap, sync::Arc};
 
 use async_trait::async_trait;
-use futures_util::StreamExt;
 use rustytavern::{
     Result,
     card::Card,
     plugin::{PluginContext, PluginManifest, PluginRegistry, RuntimePlugin},
-    prompt::{PromptOptions, PromptPlan},
-    provider::{
-        CredentialResolver, HttpProvider, PreparedRequest, ProviderAdapter, ProviderConfig,
-        ProviderEvent, ProviderStream,
-    },
+    prompt::PromptOptions,
+    provider::{ProviderAdapter, ProviderConfig},
     runtime::Runtime,
     session::{GenerationStatus, Persona, Session, SessionExport},
     store::{SqliteStore, StoreBackend},
 };
 use serde_json::json;
-use tokio_util::sync::CancellationToken;
+mod common;
 
-struct LocalProvider {
-    text: &'static str,
-    hold: bool,
-    calls: Arc<AtomicUsize>,
+fn provider(text: &str, hold: bool) -> Arc<common::Script> {
+    let script = common::Script::new(vec![common::text(text)]);
+    if hold { script.held() } else { script }.arc()
 }
-#[async_trait]
-impl ProviderAdapter for LocalProvider {
-    fn prepare(
-        &self,
-        plan: &PromptPlan,
-        model: &str,
-        config: &ProviderConfig,
-    ) -> Result<PreparedRequest> {
-        HttpProvider.prepare(plan, model, config)
-    }
-    async fn open_stream(
-        &self,
-        _: PreparedRequest,
-        _: &dyn CredentialResolver,
-        _: CancellationToken,
-    ) -> Result<ProviderStream> {
-        self.calls.fetch_add(1, Ordering::SeqCst);
-        let text = futures_util::stream::once(std::future::ready(Ok(ProviderEvent::Text {
-            text: self.text.into(),
-        })));
-        Ok(if self.hold {
-            Box::pin(text.chain(futures_util::stream::pending()))
-        } else {
-            Box::pin(text.chain(futures_util::stream::once(std::future::ready(Ok(
-                ProviderEvent::Complete,
-            )))))
-        })
-    }
-}
-fn provider(text: &'static str, hold: bool) -> Arc<LocalProvider> {
-    Arc::new(LocalProvider {
-        text,
-        hold,
-        calls: Arc::new(AtomicUsize::new(0)),
-    })
-}
+
 fn target(store: &dyn StoreBackend) -> Session {
     let card = Card::import(include_bytes!("fixtures/synthetic/card-v3.json")).unwrap();
     let persona = Persona::new("Alex".into(), "A visitor.".into()).unwrap();

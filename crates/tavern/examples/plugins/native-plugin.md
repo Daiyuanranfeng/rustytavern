@@ -1,7 +1,7 @@
 # Native prompt plugin example
 
 The example injects a Rust prompt plugin and then removes it.
-The [complete source](../../../plugin/examples/native_plugin.rs) builds as a Cargo example.
+The [complete source](../plugin/native_plugin.rs) builds as a Cargo example.
 The example uses a plugin registry and an empty prompt plan.
 The example makes no model request.
 

@@ -1,44 +1,25 @@
 use std::sync::{Arc, Mutex};
 
-use async_trait::async_trait;
 use rustytavern::{
-    Result,
     card::{Card, WorldBook},
     prompt::PromptOptions,
-    provider::{
-        CredentialResolver, HttpProvider, PreparedRequest, ProviderAdapter, ProviderConfig,
-        ProviderEvent, ProviderStream,
-    },
+    provider::ProviderConfig,
     runtime::Runtime,
     session::{GenerationStatus, Persona, Session, SessionExport},
     store::{SqliteStore, StoreBackend},
 };
 use serde_json::{Value, json};
-use tokio_util::sync::CancellationToken;
+mod common;
 
-struct Capture(Arc<Mutex<Vec<Value>>>);
-#[async_trait]
-impl ProviderAdapter for Capture {
-    fn prepare(
-        &self,
-        plan: &rustytavern::prompt::PromptPlan,
-        model: &str,
-        config: &ProviderConfig,
-    ) -> Result<PreparedRequest> {
-        HttpProvider.prepare(plan, model, config)
+/// The provider records each dispatched body and returns an empty reply.
+fn recorder(bodies: &Arc<Mutex<Vec<Value>>>) -> Arc<common::Script> {
+    common::Script {
+        requests: bodies.clone(),
+        ..Default::default()
     }
-    async fn open_stream(
-        &self,
-        request: PreparedRequest,
-        _: &dyn CredentialResolver,
-        _: CancellationToken,
-    ) -> Result<ProviderStream> {
-        self.0.lock().unwrap().push(request.body);
-        Ok(Box::pin(futures_util::stream::iter([Ok(
-            ProviderEvent::Complete,
-        )])))
-    }
+    .arc()
 }
+
 fn book(content: &str) -> WorldBook {
     WorldBook::import(
         &serde_json::to_vec_pretty(&json!({
@@ -102,7 +83,7 @@ async fn revisions_pin_books_in_requests_replay_and_exports_after_restart() {
     store.save_worldbook(&old).unwrap();
     assert_eq!(store.list("worldbook").unwrap().len(), 1);
     let capture = Arc::new(Mutex::new(Vec::new()));
-    let runtime = Runtime::new(store.clone()).with_provider(Arc::new(Capture(capture.clone())));
+    let runtime = Runtime::new(store.clone()).with_provider(recorder(&capture));
     let session = runtime
         .create_session(
             &target(store.as_ref(), vec![old.id().into()]),
@@ -182,7 +163,7 @@ async fn revisions_pin_books_in_requests_replay_and_exports_after_restart() {
         reopened.worldbook(old.id()).unwrap().export_original(),
         old.export_original()
     );
-    let runtime = Runtime::new(reopened.clone()).with_provider(Arc::new(Capture(capture.clone())));
+    let runtime = Runtime::new(reopened.clone()).with_provider(recorder(&capture));
     assert_eq!(
         runtime.replay(&first.id).await.unwrap().prepared.body,
         capture.lock().unwrap()[0]

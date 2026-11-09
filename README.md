@@ -107,7 +107,7 @@ The [native format guide](docs/user-guide.md#native-records-and-exports) defines
 - The [compatibility guide](docs/compatibility.md) defines formats, providers, reference comparisons, and evidence.
 
 Each [component](docs/architecture.md#current-implementation) retains its README.
-The [plugin crate](crates/plugins/README.md) and each [example plugin](crates/tavern/examples/README.md) retain their interface documents.
+The [plugins module](crates/tavern/README.md) and each [example plugin](crates/tavern/examples/README.md) retain their interface documents.
 
 ## License and source use
 

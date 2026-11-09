@@ -16,6 +16,9 @@ struct Cli {
     /// The home directory holds config.toml and rustytavern.db. The default is ~/.rustytavern.
     #[arg(long, global = true)]
     home: Option<PathBuf>,
+    /// The option approves every tool call that `[plugins.agent] confirm_tools` holds. Without it, a script command declines them.
+    #[arg(long, global = true)]
+    approve_tools: bool,
     #[command(subcommand)]
     command: Option<Command>,
 }

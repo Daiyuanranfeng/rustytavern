@@ -22,7 +22,7 @@ use crate::plugins::{self, Builtin, Environment};
 use external::{ExternalSourcePlugin, ProcessDefinition};
 use plugin::{CompositionLease, PluginManifest, PluginRegistry, RuntimePlugin};
 use runtime::Runtime;
-use rustytavern_card::{Card, CardDecoder};
+use rustytavern_core::card::{Card, CardDecoder};
 use source::{Artifact, CardSource};
 use store::{StoreBackend, new_id};
 

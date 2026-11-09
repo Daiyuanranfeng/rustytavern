@@ -74,7 +74,7 @@ fn new_conversations_require_explicit_identity_and_profile_selections() {
     ui.preferences.provider = Some("local".into());
     ui.advance_new().unwrap();
     assert!(matches!(ui.overlay,Some(Overlay::Menu{ref title,..}) if title=="Characters"));
-    let card = std::fs::read("../card/tests/fixtures/full-v3.json").unwrap();
+    let card = std::fs::read("../core/tests/fixtures/full-v3.json").unwrap();
     let card = rustytavern::card::Card::import(&card).unwrap();
     Application::open(directory.path())
         .unwrap()
@@ -396,7 +396,7 @@ fn character_input_accepts_dropped_paths_and_detects_the_website() {
     assert_eq!(local_path("/tmp/a\\ b.png"), PathBuf::from("/tmp/a b.png"));
     let directory = tempfile::tempdir().unwrap();
     let card = directory.path().join("my card.json");
-    std::fs::copy("../card/tests/fixtures/full-v3.json", &card).unwrap();
+    std::fs::copy("../core/tests/fixtures/full-v3.json", &card).unwrap();
     let mut ui = Ui::open(directory.path().into()).unwrap();
     ui.submit(&FormKind::Import, &[format!(" '{}' ", card.display())])
         .unwrap();
@@ -506,23 +506,15 @@ fn conversations_render_markdown_and_right_align_the_user() {
 fn model_lists_have_provider_tabs_and_put_new_models_first() {
     let directory = tempfile::tempdir().unwrap();
     let mut ui = Ui::open(directory.path().into()).unwrap();
-    let model = |id: &str, prompt: &str, created: Value| json!({"id":id,"name":null,"advertised":{"context_length":200000,"pricing":{"prompt":prompt,"completion":prompt}},"raw":created});
-    let catalog = |models: Vec<Value>| json!({"provenance":{"protocol":"openrouter","endpoint":"https://openrouter.ai/api/v1/models","fetched_at_unix_seconds":1,"evidence":"advertised_unverified"},"models":models,"raw_pages":[]});
+    let model = |id: &str, price: f64, created: u64| json!({"id":id,"name":null,"advertised":{"context_length":200000,"pricing":{"input":price,"output":price}},"raw":{"id":id,"created_at":created}});
+    let catalog = |models: Vec<Value>| json!({"provenance":{"protocol":"openrouter","endpoint":"https://openrouter.ai/api/v1","fetched_at_unix_seconds":1,"evidence":"advertised_unverified"},"models":models});
     ui.complete(
         Ok(vec![
             catalog(vec![
-                model("other/model", "0", json!({"created": 1700000000})),
-                model(
-                    "anthropic/claude-sonnet-4.5",
-                    "0.000003",
-                    json!({"created": 1759190400}),
-                ),
+                model("other/model", 0.0, 1700000000),
+                model("anthropic/claude-sonnet-4.5", 3.0, 1759190400),
             ]),
-            catalog(vec![model(
-                "claude-opus-9",
-                "0.00001",
-                json!({"created_at": "2026-02-28T00:00:00Z"}),
-            )]),
+            catalog(vec![model("claude-opus-9", 10.0, 1772236800)]),
         ]),
         After::Models(vec!["openrouter".into(), "anthropic".into()]),
     );
@@ -622,7 +614,7 @@ async fn the_scrollback_receives_each_stored_message_once() {
         None,
     );
     app.save_config().unwrap();
-    let card = std::fs::read("../card/tests/fixtures/full-v3.json").unwrap();
+    let card = std::fs::read("../core/tests/fixtures/full-v3.json").unwrap();
     let card = rustytavern::card::Card::import(&card).unwrap();
     app.store.save_card(&card).unwrap();
     let persona = rustytavern::session::Persona::new("Alex".into(), String::new()).unwrap();
@@ -694,6 +686,7 @@ fn thinking_and_tool_steps_render_as_collapsible_bubbles_before_the_reply() {
         usage: None,
         error: None,
         missed_events: None,
+        call_id: None,
     };
     ui.event(event("reasoning_delta", "The user wants "));
     ui.event(event("reasoning_delta", "the weather."));
@@ -773,7 +766,7 @@ fn the_file_browser_lists_folders_and_cards_and_previews_before_import() {
     std::fs::create_dir_all(home.join("Cards")).unwrap();
     std::fs::create_dir_all(home.join(".hidden")).unwrap();
     std::fs::write(home.join("notes.txt"), "text").unwrap();
-    let json = std::fs::read("../card/tests/fixtures/full-v3.json").unwrap();
+    let json = std::fs::read("../core/tests/fixtures/full-v3.json").unwrap();
     std::fs::write(home.join("Cards/Alice.PNG"), png_card(&json)).unwrap();
     std::fs::write(home.join("broken.json"), "{").unwrap();
     let mut ui = Ui::open(directory.path().join("data")).unwrap();
@@ -825,7 +818,7 @@ fn the_file_browser_lists_folders_and_cards_and_previews_before_import() {
 fn downloaded_previews_fetch_the_card_again_on_enter() {
     let directory = tempfile::tempdir().unwrap();
     let mut ui = Ui::open(directory.path().into()).unwrap();
-    let json = std::fs::read("../card/tests/fixtures/full-v3.json").unwrap();
+    let json = std::fs::read("../core/tests/fixtures/full-v3.json").unwrap();
     let card = rustytavern::card::Card::import(&json).unwrap();
     ui.complete(
         Ok(vec![serde_json::to_value(&card).unwrap()]),
@@ -872,7 +865,7 @@ async fn an_empty_message_box_gives_keys_and_a_message_list_for_the_branch() {
         None,
     );
     app.save_config().unwrap();
-    let card = std::fs::read("../card/tests/fixtures/full-v3.json").unwrap();
+    let card = std::fs::read("../core/tests/fixtures/full-v3.json").unwrap();
     let card = rustytavern::card::Card::import(&card).unwrap();
     app.store.save_card(&card).unwrap();
     let persona = rustytavern::session::Persona::new("Alex".into(), String::new()).unwrap();
@@ -987,4 +980,34 @@ async fn an_empty_message_box_gives_keys_and_a_message_list_for_the_branch() {
             ..
         })
     ));
+}
+
+#[test]
+fn tool_approvals_wait_in_order_and_a_draft_reset_replaces_the_reply() {
+    let directory = tempfile::tempdir().unwrap();
+    let mut ui = Ui::open(directory.path().into()).unwrap();
+    ui.streaming = true;
+    ui.busy = true;
+    let event = |kind: &str, value: &str| RuntimeEvent {
+        r#type: kind.into(),
+        generation_id: "g".into(),
+        text: Some(value.into()),
+        usage: None,
+        error: None,
+        missed_events: None,
+        call_id: Some("call_1".into()),
+    };
+    ui.event(event("text_delta", "Partial"));
+    ui.event(event("draft_reset", ""));
+    assert_eq!(ui.reply, "");
+    // Parallel calls wait together. The terminal asks about each call in order.
+    ui.event(event("tool_approval", "web_fetch {}"));
+    ui.event(event("tool_approval", "read_skill {}"));
+    assert_eq!(ui.approvals.len(), 2);
+    assert!(ui.notice.contains("web_fetch"));
+    ui.key(KeyCode::Char('y').into()).unwrap();
+    assert!(ui.notice.contains("read_skill"));
+    ui.key(KeyCode::Char('n').into()).unwrap();
+    assert!(ui.approvals.is_empty());
+    assert_eq!(ui.notice, "The tool call is declined.");
 }
