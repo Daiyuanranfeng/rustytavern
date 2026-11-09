@@ -11,6 +11,7 @@ use rustytavern_session::{prompt, store};
 
 pub mod agent;
 pub mod driver;
+pub mod memory;
 pub mod phases;
 pub mod policy;
 
@@ -527,14 +528,13 @@ impl Runtime {
         card.ensure_compatible(session.accept_reduced)?;
         let worldbooks = store.worldbooks(&session.worldbook_ids)?;
         let persona = store.persona(&session.persona_id)?;
-        let mut history = store.history(&session.id)?;
+        let mut history = memory::visible(store, session)?;
         if let Some(position) = history
             .iter()
             .position(|m| Some(m.id.as_str()) == retry_user)
         {
             history.truncate(position);
         }
-        history.retain(|m| !session.hidden.contains(&m.id));
         let mut state = serde_json::Map::new();
         if let Some(composition) = &self.composition {
             for plugin in &composition.plugins {
@@ -550,6 +550,12 @@ impl Runtime {
         }
         let composition = &self.effective_lock;
         let mut snapshot = json!({"schema_version":2,"character_id":card.id,"character_document":card.document,"persona":persona,"session":session,"history":history,"submitted_text":message,"profile":self.profile.id(),"plugin_composition":composition,"plugin_state":state,"provider_config":config});
+        if session.options.memory_interval() > 0 {
+            let memory = memory::Memory::load(store, session)?.current(&history);
+            if !memory.is_empty() {
+                snapshot["memory"] = json!(memory);
+            }
+        }
         if !worldbooks.is_empty() {
             snapshot["worldbooks"] = json!(
                 worldbooks
@@ -821,6 +827,10 @@ impl Runtime {
             },
             &worldbooks,
         )?;
+        if let Some(memory) = snapshot.get("memory") {
+            let memory: memory::Memory = serde_json::from_value(memory.clone())?;
+            prompt::apply_contributions(&mut plan, &memory.contributions())?;
+        }
         plan.profile = self.profile.id().into();
         plan.output_reserve = session.options.output_limit;
         plan.protocol_margin = session.options.protocol_margin;
@@ -936,6 +946,81 @@ impl Runtime {
                 }
             }
         }
+    }
+
+    /// The method updates the memory of a session with the session model.
+    /// Without `force`, the method waits for `memory_interval` new messages.
+    /// The result holds `updated`, the memory, and the number of messages that wait for a later update.
+    pub async fn update_memory(
+        &self,
+        session_id: &str,
+        force: bool,
+        cancellation: CancellationToken,
+    ) -> Result<Value> {
+        let runtime = self.composed().await?;
+        let id = session_id.to_owned();
+        let (session, history, current, names) = self
+            .store_call(move |store| {
+                let session = store.session(&id)?;
+                let history = memory::visible(store, &session)?;
+                let current = memory::Memory::load(store, &session)?.current(&history);
+                let card = store.card(&session.character_id)?;
+                let persona = store.persona(&session.persona_id)?;
+                Ok((
+                    session,
+                    history,
+                    current,
+                    [card.name().to_owned(), persona.name],
+                ))
+            })
+            .await?;
+        let interval = session.options.memory_interval();
+        if interval == 0 && force {
+            return Err(Error::new(
+                "memory_off",
+                "The memory of this chat is off. Set a memory interval in /settings.",
+            ));
+        }
+        let pending = current.pending(&history);
+        if pending.is_empty() || interval == 0 || !force && pending.len() < interval {
+            return Ok(json!({"updated":false,"memory":current,"pending":pending.len()}));
+        }
+        let batch = memory::batch(pending);
+        let [instruction, input] = memory::request(&current, batch, &names);
+        let config = session.configuration()?.provider_config;
+        let section = |id: &str, role: Role, text: String| prompt::Section {
+            id: id.into(),
+            role,
+            units: text.len(),
+            text,
+            source: "memory".into(),
+            mandatory: true,
+        };
+        let mut plan = PromptPlan {
+            sections: vec![
+                section("instruction", Role::System, instruction),
+                section("input", Role::User, input),
+            ],
+            output_reserve: session.options.output_limit.min(config.output_limit),
+            ..Default::default()
+        };
+        plan.refresh()?;
+        let request = runtime.provider.prepare(&plan, &session.model, &config)?;
+        let model = runtime
+            .provider
+            .model(&request, runtime.credentials.as_ref())?;
+        let run = provider::agent(&request, model, Vec::new(), 1, 0, false)?;
+        let reply = tokio::select! { biased;
+            _ = cancellation.cancelled() => return Err(Error::new("cancelled", "The caller cancelled the memory update.")),
+            reply = run.into_future() => reply.map_err(provider::map_error)?,
+        };
+        let last = batch.last().map(|m| m.id.as_str()).unwrap_or_default();
+        let next = memory::parse(&reply.output(), &current, last)?;
+        let left = pending.len() - batch.len();
+        let saved = next.clone();
+        self.store_call(move |store| saved.save(store, &session))
+            .await?;
+        Ok(json!({"updated":true,"memory":next,"pending":left}))
     }
 
     /// The method returns the definitions of the composed tools.

@@ -10,6 +10,7 @@ The crate runs durable character generations with the [Rig](https://crates.io/cr
 - The `source` module exports public artifact fetching and the Chub and RisuRealm adapters.
 - The `plugin` module exports `RuntimePlugin`, `PluginContext`, `PluginRegistry`, and prompt hooks. The `plugin::process` module hosts external card sources.
 - The `phases` module defines the prompt hook phases.
+- The `memory` module keeps the chat summary and the facts, and builds their prompt sections.
 
 ## Design
 

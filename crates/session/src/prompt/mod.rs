@@ -24,6 +24,10 @@ pub struct PromptOptions {
     /// A saved session without this field keeps its configuration hash.
     #[serde(skip_serializing_if = "is_zero")]
     pub history_limit: usize,
+    /// The number of new messages between two memory updates. No value selects 20. The value 0 turns the memory off.
+    /// A saved session without this field keeps its configuration hash.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub memory_interval: Option<usize>,
     pub main_instruction: String,
     pub post_history_instruction: String,
     pub note: String,
@@ -38,11 +42,19 @@ impl Default for PromptOptions {
             lore_budget: 32768,
             example_budget: 8192,
             history_limit: 0,
+            memory_interval: None,
             main_instruction: "You act as {{char}}. You keep the character's identity and voice."
                 .into(),
             post_history_instruction: String::new(),
             note: String::new(),
         }
+    }
+}
+
+impl PromptOptions {
+    /// The method returns the memory interval. The value 0 turns the memory off.
+    pub fn memory_interval(&self) -> usize {
+        self.memory_interval.unwrap_or(20)
     }
 }
 
