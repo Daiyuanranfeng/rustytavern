@@ -21,11 +21,44 @@ The existing command surface remains available for scripts.
 | `/messages` | The user selects a message of the open branch, then rewinds, edits, regenerates, branches, hides, or copies it. |
 | `/continue` | The model extends the last reply. |
 | `/impersonate` | The model writes the next user message into the composer. |
-| `/settings` | The user opens lorebooks, branches, export, request inspection, configuration adoption, advanced provider settings, plugins, and the configuration view. |
+| `/memory` | The user reads, edits, or updates the memory of the open chat. |
+| `/export` | The user exports the open chat to a file. |
+| `/prompt` | The user inspects the next model request. |
+| `/settings` | The user changes the model, the providers, the prompt and memory options, the agent options, the plugins, and the lorebooks of the open chat. |
 | `/help` | The user reads the command and key reference. |
 | `/quit` | The user closes the terminal. |
 
-The names `/setup`, `/sessions`, `/models`, and `/branch` remain aliases. The `/settings` items also accept direct names: `/worldbook`, `/export`, `/prompt`, `/adopt`, `/profile`, `/plugins`, and `/config`.
+The names `/setup`, `/sessions`, `/models`, and `/branch` remain aliases. The `/settings` items also accept direct names: `/worldbook`, `/adopt`, `/profile`, `/plugins`, and `/config`.
+
+### Settings
+
+Each `/settings` row shows its current value. The rows are:
+
+- **Model** opens the model list.
+- **Model providers and keys** connects a provider or replaces its key.
+- **Provider options** edits the limits and the sampling parameters of the selected provider.
+- **Prompt and memory** edits the `[prompt]` table: the history limit, the memory interval, the limits, the budgets, the instructions, and the author's note.
+- **Agent and tools** edits the `[plugins.agent]` table: the tool steps, the tools that wait for approval, the repeats of a cut-off reply, and the token budget.
+- **Plugins** shows one row for each installed plugin. Select the row to turn the plugin on or off.
+- **Memory of this chat**, **Lorebooks of this chat**, and **Apply the current settings to this chat** appear while a chat is open.
+- **Show config.toml** shows the file with the keys hidden.
+
+The prompt and agent forms save `config.toml`. Then they apply the settings to the open chat. The chat keeps its provider and model.
+
+### Memory
+
+The memory keeps the important parts of a long chat after the old messages leave the prompt.
+The memory has two parts:
+
+- The **summary** describes the story so far. Each chat has its own summary. A summary of another branch does not apply.
+- The **facts** list lasting facts about the character, your persona, and their relationship. All chats of the same character and persona share the facts.
+
+The model of the chat updates the memory after each `memory_interval` new messages. The default interval is 20. The value 0 turns the memory off.
+An update reads the current memory and at most 48 KiB of new messages. A long chat catches up over several updates.
+The prompt includes the summary and the facts before the history. They have priority over the history in the context budget.
+The status line shows `The memory is updating.` during an update. Ctrl+C cancels the update.
+`/memory` shows the coverage. It edits the summary and the facts, and it updates the memory at once.
+A session export does not include the memory.
 
 The composer sends ordinary text to the active conversation. A command popup opens when the composer starts with `/`.
 Up and Down select a command in the popup. Tab completes the selected command. Enter runs it.
@@ -142,6 +175,7 @@ output_limit = 8192
 lore_budget = 32768
 example_budget = 8192
 history_limit = 0                     # 0 keeps every message that fits the context limit
+memory_interval = 20                  # the new messages between memory updates; 0 turns the memory off
 
 [plugins]
 enabled = ["lighthouse-notes"]       # installed plugins only
@@ -173,12 +207,24 @@ assistant_bubble = "magenta"
 | --- | --- |
 | `default_provider` | The provider profile for new chats. |
 | `providers.NAME` | One provider profile. `api_key` stores the key in this file. The limits are the model limits. |
-| `prompt` | The prompt options for new chats. A chat uses the lower limit of `prompt` and its provider. `/adopt` applies the table to the open chat. |
+| `prompt` | The prompt options for new chats. A chat uses the lower limit of `prompt` and its provider. `/adopt` applies the table to the open chat. `memory_interval` sets the memory updates. |
 | `plugins.enabled` | The enabled installed plugin IDs. The essential plugins are always on. |
 | `plugins.NAME` | The configuration of one plugin. A table with `path` is an installed plugin. |
 | `extensions.NAME` | One enabled extension. |
 
 The `config show` command prints the configuration and hides API keys and MCP environment values.
+
+### Memory commands
+
+```sh
+rustytavern memory show SESSION_ID
+rustytavern memory update SESSION_ID            # update now
+rustytavern memory update SESSION_ID --if-due   # update after the memory interval only
+rustytavern memory edit SESSION_ID --summary TEXT --facts $'Fact one.\nFact two.'
+```
+
+The `memory update` command uses the model and the provider settings of the session. The result holds `updated`, `memory`, and `pending`.
+An empty `--summary` removes the summary. The `--facts` value has one fact on each line.
 
 ### Session settings
 

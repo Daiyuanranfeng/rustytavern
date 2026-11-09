@@ -19,9 +19,12 @@ pub(super) const COMMANDS: &[(&str, &str)] = &[
     ("/messages", "Rewind, edit, branch, or hide a message"),
     ("/continue", "Extend the last reply"),
     ("/impersonate", "Let the model write your next message"),
+    ("/memory", "Show, edit, or update the memory of this chat"),
+    ("/export", "Export this chat"),
+    ("/prompt", "Inspect the next model request"),
     (
         "/settings",
-        "Lorebooks, branches, export, plugins, and more",
+        "Model, prompt, memory, agent, plugins, and lorebooks",
     ),
     ("/verbose", "Show or hide the thinking and tool details"),
     ("/help", "Read commands and keys"),
@@ -75,6 +78,8 @@ pub(super) enum After {
     Request(Option<PathBuf>),
     /// The download shows a preview. The address and the source fetch the card again on Enter.
     Preview(Box<[String; 2]>),
+    /// The notice reports the result of a memory update.
+    Memory,
 }
 #[derive(Clone)]
 pub(super) enum FormKind {
@@ -92,6 +97,12 @@ pub(super) enum FormKind {
     /// The form edits the message with this ID.
     Edit(String),
     Rename,
+    /// The form edits the `[prompt]` table, which includes the memory interval.
+    Options,
+    /// The form edits the `[plugins.agent]` table.
+    Agent,
+    /// The form edits the summary and the facts of the open chat.
+    Memory,
 }
 pub(super) enum Choice {
     Slash(&'static str),
@@ -1059,6 +1070,17 @@ impl Ui {
                     self.document("Complete model request", &value);
                     return Ok(());
                 }
+                After::Memory => {
+                    let left = value["pending"].as_u64().unwrap_or_default();
+                    self.notice = match value["updated"].as_bool() {
+                        Some(true) if left > 0 => format!(
+                            "The memory is updated. {left} newer messages wait for the next update."
+                        ),
+                        Some(true) => "The memory is updated. Use /memory to read it.".into(),
+                        _ => "The memory already covers the recent messages.".into(),
+                    };
+                    return Ok(());
+                }
                 After::Retry => {
                     self.refresh()?;
                     return self.slash("/retry");
@@ -1166,6 +1188,22 @@ impl Ui {
                 } else {
                     "The reply is saved.".into()
                 };
+                let due = |app: Application, session: &str| {
+                    rustytavern::runtime::memory::due(app.store.as_ref(), session)
+                };
+                if let Some(session) = self.preferences.session.clone()
+                    && Application::open(&self.path)
+                        .and_then(|app| due(app, &session))
+                        .unwrap_or(false)
+                {
+                    let update = MemoryCommand::Update {
+                        session,
+                        if_due: true,
+                    };
+                    self.command(Command::Memory { command: update }, After::Memory);
+                    self.notice =
+                        "The reply is saved. The memory is updating. Ctrl+C cancels.".into();
+                }
             }
             Ok(generation) => {
                 self.reply = text(&generation.draft);

@@ -129,17 +129,101 @@ impl Ui {
                         .find(|m| m.id == *id);
                     Ok(message.map(|m| m.text))
                 });
-                let mut field = field("Text · the edit adds a new version", &current);
-                field
-                    .editor
-                    .set_wrap_mode(ratatui_textarea::WrapMode::WordOrGlyph);
-                ("Edit the message", vec![field])
+                (
+                    "Edit the message",
+                    vec![wrapped("Text · the edit adds a new version", &current)],
+                )
             }
             FormKind::Rename => {
                 let current = self.stored(|app, session| Ok(app.store.session(session)?.title));
                 (
                     "Rename this chat",
                     vec![field("Name · empty removes it", &current)],
+                )
+            }
+            FormKind::Options => {
+                let prompt = Application::open(&self.path)
+                    .ok()
+                    .and_then(|app| app.config.prompt)
+                    .unwrap_or_default();
+                let number = |name, value: usize| field(name, &value.to_string());
+                (
+                    "Prompt and memory · new chats and the open chat use these values",
+                    vec![
+                        number(
+                            "History limit: the number of recent messages in the prompt. 0 keeps all that fit.",
+                            prompt.history_limit,
+                        ),
+                        number(
+                            "Memory interval: the new messages between two memory updates. 0 turns the memory off.",
+                            prompt.memory_interval(),
+                        ),
+                        number("Context limit in estimated bytes", prompt.context_limit),
+                        number("Output limit", prompt.output_limit),
+                        number("Lorebook budget in estimated bytes", prompt.lore_budget),
+                        number("Example budget in estimated bytes", prompt.example_budget),
+                        wrapped(
+                            "Main instruction · the system prompt of a card replaces it",
+                            &prompt.main_instruction,
+                        ),
+                        wrapped("Post-history instruction", &prompt.post_history_instruction),
+                        wrapped("Author's note: text after your persona", &prompt.note),
+                    ],
+                )
+            }
+            FormKind::Agent => {
+                let policy = Application::open(&self.path)
+                    .and_then(|app| super::commands::agent_policy(&app.config))
+                    .unwrap_or_default();
+                let tools = policy.confirm_tools.into_iter().collect::<Vec<_>>();
+                (
+                    "Agent and tools · new chats and the open chat use these values",
+                    vec![
+                        field(
+                            "Tool steps: the limit of tool rounds for one reply, from 1 to 64",
+                            &policy.max_steps.to_string(),
+                        ),
+                        field(
+                            "Tools that wait for your approval: one name on each line. * selects every tool.",
+                            &tools.join("\n"),
+                        ),
+                        field(
+                            "Repeats of a cut-off reply: 0 turns them off",
+                            &policy.retry_truncated.to_string(),
+                        ),
+                        field(
+                            "Token budget of one reply: 0 turns it off",
+                            &policy.max_tokens.to_string(),
+                        ),
+                    ],
+                )
+            }
+            FormKind::Memory => {
+                use rustytavern::runtime::memory::{Memory, visible};
+                let memory = self
+                    .preferences
+                    .session
+                    .as_deref()
+                    .and_then(|id| {
+                        let app = Application::open(&self.path).ok()?;
+                        let session = app.store.session(id).ok()?;
+                        let history = visible(app.store.as_ref(), &session).ok()?;
+                        Some(
+                            Memory::load(app.store.as_ref(), &session)
+                                .ok()?
+                                .current(&history),
+                        )
+                    })
+                    .unwrap_or_default();
+                (
+                    "Memory of this chat · the prompt includes it before the history",
+                    vec![
+                        wrapped("Summary of the chat · empty removes it", &memory.summary),
+                        wrapped(
+                            "Facts about the character and you · one on each line · all chats of this pair share them",
+                            &memory.facts.join("\n"),
+                        ),
+                    ],
                 )
             }
         };
@@ -175,6 +259,7 @@ impl Ui {
         };
         let number = |value: &str| {
             value
+                .trim()
                 .parse::<usize>()
                 .map_err(|_| Error::new("invalid_input", "The field requires an unsigned number."))
         };
@@ -345,6 +430,61 @@ impl Ui {
                 },
                 After::Say("The chat has the new name."),
             ),
+            FormKind::Options => {
+                let mut app = Application::open(&self.path)?;
+                let mut prompt = app.config.prompt.clone().unwrap_or_default();
+                prompt.history_limit = number(&values[0])?;
+                prompt.memory_interval = Some(number(&values[1])?);
+                prompt.context_limit = number(&values[2])?;
+                prompt.output_limit = number(&values[3])?;
+                prompt.lore_budget = number(&values[4])?;
+                prompt.example_budget = number(&values[5])?;
+                prompt.main_instruction = values[6].clone();
+                prompt.post_history_instruction = values[7].clone();
+                prompt.note = values[8].clone();
+                if prompt.output_limit == 0 || prompt.context_limit <= prompt.output_limit {
+                    return Err(Error::new(
+                        "invalid_input",
+                        "The context limit must be larger than the output limit.",
+                    ));
+                }
+                app.config.prompt = Some(prompt);
+                app.save_config()?;
+                return self.apply("The prompt and memory settings are saved.");
+            }
+            FormKind::Agent => {
+                let mut app = Application::open(&self.path)?;
+                let mut policy = super::commands::agent_policy(&app.config)?;
+                policy.max_steps = number(&values[0])?;
+                if !(1..=64).contains(&policy.max_steps) {
+                    return Err(Error::new(
+                        "invalid_input",
+                        "The tool steps must be from 1 to 64.",
+                    ));
+                }
+                policy.confirm_tools = values[1]
+                    .lines()
+                    .map(str::trim)
+                    .filter(|line| !line.is_empty())
+                    .map(str::to_owned)
+                    .collect();
+                policy.retry_truncated = number(&values[2])?;
+                policy.max_tokens = number(&values[3])? as u64;
+                let table = serde_json::to_value(policy)?;
+                app.config.plugins.entries.insert("agent".into(), table);
+                app.save_config()?;
+                return self.apply("The agent settings are saved.");
+            }
+            FormKind::Memory => (
+                Command::Memory {
+                    command: MemoryCommand::Edit {
+                        session: self.active()?,
+                        summary: Some(values[0].clone()),
+                        facts: Some(values[1].clone()),
+                    },
+                },
+                After::Say("The memory is saved."),
+            ),
             FormKind::Bind => (
                 Command::Plugin {
                     command: PluginCommand::Bind {
@@ -383,6 +523,24 @@ impl Ui {
             ),
         };
         self.command(command, after);
+        Ok(())
+    }
+    /// The method applies the saved settings to the open chat. The chat keeps its provider and model.
+    fn apply(&mut self, notice: &'static str) -> Result<()> {
+        let (Some(session), Some([model, provider])) = (&self.preferences.session, &self.model)
+        else {
+            self.notice = notice.into();
+            return Ok(());
+        };
+        let command = SessionCommand::Configure {
+            session: session.clone(),
+            provider: Some(provider.clone()),
+            model: Some(model.clone()),
+            context_limit: None,
+            output_limit: None,
+            expected_version: None,
+        };
+        self.command(Command::Session { command }, After::Say(notice));
         Ok(())
     }
     /// The method selects the source plugin from the address.
@@ -469,6 +627,15 @@ impl Ui {
             scroll: 0,
         });
     }
+}
+
+/// The function returns a field that wraps long lines.
+fn wrapped(name: &'static str, value: &str) -> Field {
+    let mut field = field(name, value);
+    field
+        .editor
+        .set_wrap_mode(ratatui_textarea::WrapMode::WordOrGlyph);
+    field
 }
 
 /// The function decodes the card picture. A PNG card is the picture. A CHARX card holds an icon asset.

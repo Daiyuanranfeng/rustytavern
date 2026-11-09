@@ -12,7 +12,10 @@ use rustytavern::{
     config::{Application, default_home},
     prompt::PromptOptions,
     provider::{ProviderConfig, ProviderKind},
-    runtime::GenerationHandle,
+    runtime::{
+        GenerationHandle,
+        memory::{self, Memory},
+    },
     session::{GenerationStatus, Persona, Session},
     store::now_ms,
 };
@@ -112,6 +115,9 @@ async fn execute(
                 | SessionCommand::Continue { session, .. }
                 | SessionCommand::Impersonate { session, .. }
                 | SessionCommand::Configure { session, .. },
+        }
+        | Command::Memory {
+            command: MemoryCommand::Update { session, .. },
         } => Some(session.as_str()),
         _ => None,
     };
@@ -139,6 +145,9 @@ async fn execute(
                     | SessionCommand::Continue { .. }
                     | SessionCommand::Impersonate { .. }
                     | SessionCommand::Configure { .. }
+            }
+            | Command::Memory {
+                command: MemoryCommand::Update { .. }
             }
             | Command::Preset {
                 command: PresetCommand::Inspect { resolved: true, .. }
@@ -638,6 +647,50 @@ async fn execute(
                 output.write(&request.plan)?;
             }
         }
+        Command::Memory { command } => match command {
+            MemoryCommand::Update { session, if_due } => output.write(
+                &runtime
+                    .update_memory(&session, !if_due, cancellation)
+                    .await?,
+            )?,
+            MemoryCommand::Show { session } => {
+                let target = app.store.session(&session)?;
+                let history = memory::visible(app.store.as_ref(), &target)?;
+                let current = Memory::load(app.store.as_ref(), &target)?.current(&history);
+                let pending = current.pending(&history).len();
+                output.write(&json!({"memory":current,"pending":pending,"interval":target.options.memory_interval()}))?;
+            }
+            MemoryCommand::Edit {
+                session,
+                summary,
+                facts,
+            } => {
+                let target = app.store.session(&session)?;
+                let history = memory::visible(app.store.as_ref(), &target)?;
+                let mut current = Memory::load(app.store.as_ref(), &target)?.current(&history);
+                if let Some(summary) = summary {
+                    current.through = (!summary.trim().is_empty())
+                        .then(|| {
+                            current
+                                .through
+                                .clone()
+                                .or(history.last().map(|m| m.id.clone()))
+                        })
+                        .flatten();
+                    current.summary = summary.trim().to_owned();
+                }
+                if let Some(facts) = facts {
+                    current.facts = facts
+                        .lines()
+                        .map(|line| line.trim().trim_start_matches(['-', '*']).trim())
+                        .filter(|line| !line.is_empty())
+                        .map(str::to_owned)
+                        .collect();
+                }
+                current.save(app.store.as_ref(), &target)?;
+                output.write(&json!({"memory":current}))?;
+            }
+        },
         Command::Config { command } => match command {
             ConfigCommand::Show => output.write(&app.config.redacted()?)?,
             ConfigCommand::Capabilities => output.write(

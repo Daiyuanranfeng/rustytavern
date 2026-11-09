@@ -1016,3 +1016,53 @@ fn tool_approvals_wait_in_order_and_a_draft_reset_replaces_the_reply() {
     assert!(ui.approvals.is_empty());
     assert_eq!(ui.notice, "The tool call is declined.");
 }
+
+#[test]
+fn settings_forms_save_the_prompt_memory_and_agent_tables() {
+    let directory = tempfile::tempdir().unwrap();
+    let mut ui = Ui::open(directory.path().into()).unwrap();
+    key(&mut ui, "/settings");
+    let Some(Overlay::Menu { items, .. }) = &ui.overlay else {
+        panic!("The settings menu is not open.");
+    };
+    let labels: Vec<&str> = items.iter().map(|(label, _)| label.as_str()).collect();
+    assert!(
+        labels.contains(
+            &"Prompt and memory · history: all that fit · memory: update after 20 messages"
+        )
+    );
+    assert!(labels.contains(&"Agent and tools · 32 steps · approval: no tool"));
+    assert!(!labels.iter().any(|label| label.contains("Export")));
+    ui.form(FormKind::Options);
+    if let Some(Overlay::Form { fields, .. }) = &mut ui.overlay {
+        fields[0].editor = editor("40");
+        fields[1].editor = editor(" 0 ");
+    }
+    ui.key(KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE))
+        .unwrap();
+    assert_eq!(ui.notice, "The prompt and memory settings are saved.");
+    let prompt = Application::open(directory.path())
+        .unwrap()
+        .config
+        .prompt
+        .unwrap();
+    assert_eq!((prompt.history_limit, prompt.memory_interval()), (40, 0));
+    ui.form(FormKind::Agent);
+    if let Some(Overlay::Form { fields, .. }) = &mut ui.overlay {
+        fields[0].editor = editor("65");
+    }
+    ui.key(KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE))
+        .unwrap();
+    assert!(matches!(ui.overlay, Some(Overlay::Form { .. })));
+    if let Some(Overlay::Form { fields, .. }) = &mut ui.overlay {
+        fields[0].editor = editor("8");
+        fields[1].editor = editor("web_fetch\n");
+    }
+    ui.key(KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE))
+        .unwrap();
+    let config = Application::open(directory.path()).unwrap().config;
+    assert_eq!(
+        config.plugins.entries["agent"],
+        serde_json::json!({"max_steps":8,"confirm_tools":["web_fetch"],"retry_truncated":0,"max_tokens":0})
+    );
+}

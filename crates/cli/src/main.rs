@@ -52,6 +52,11 @@ enum Command {
         #[command(subcommand)]
         command: ConfigCommand,
     },
+    /// The memory holds a summary of the chat and facts about the character and the persona.
+    Memory {
+        #[command(subcommand)]
+        command: MemoryCommand,
+    },
     Plugin {
         #[command(subcommand)]
         command: PluginCommand,
@@ -324,6 +329,27 @@ enum SessionCommand {
     },
     Recover {
         session: String,
+    },
+}
+#[derive(Subcommand)]
+enum MemoryCommand {
+    Show {
+        session: String,
+    },
+    /// The command asks the chat model for a new summary and new facts.
+    Update {
+        session: String,
+        /// The flag updates the memory only after the memory interval of new messages.
+        #[arg(long)]
+        if_due: bool,
+    },
+    /// The command replaces the summary or the facts. The facts have one fact on each line.
+    Edit {
+        session: String,
+        #[arg(long)]
+        summary: Option<String>,
+        #[arg(long)]
+        facts: Option<String>,
     },
 }
 #[derive(Subcommand)]

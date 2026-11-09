@@ -210,25 +210,111 @@ impl Ui {
             }
             "/model" if app.config.providers.is_empty() => self.slash("/provider")?,
             "/model" => self.catalogs(app.config.providers.keys().cloned().collect()),
-            "/settings" => self.menu(
-                "Settings",
-                [
-                    ("Lorebooks for this chat", "/worldbook"),
-                    ("Messages and branches", "/messages"),
-                    ("Export this chat", "/export"),
-                    ("Inspect the next model request", "/prompt"),
+            "/settings" => {
+                let prompt = app.config.prompt.clone().unwrap_or_default();
+                let agent = agent_policy(&app.config)?;
+                let installed = app.config.plugins.installed()?;
+                let enabled = app.config.plugins.enabled();
+                let on = installed.keys().filter(|id| enabled.contains(*id)).count();
+                let model = self
+                    .model
+                    .as_ref()
+                    .map_or("none".into(), |[model, provider]| {
+                        format!("{} via {}", text(model), text(provider))
+                    });
+                let history = match prompt.history_limit {
+                    0 => "all that fit".into(),
+                    limit => format!("last {limit}"),
+                };
+                let confirm = match agent.confirm_tools.len() {
+                    0 => "no tool".into(),
+                    _ => agent
+                        .confirm_tools
+                        .into_iter()
+                        .collect::<Vec<_>>()
+                        .join(", "),
+                };
+                let mut items = vec![
+                    (format!("Model · {model}"), Choice::Slash("/model")),
                     (
-                        "Apply the current provider and plugins to this chat",
-                        "/adopt",
+                        format!(
+                            "Model providers and keys · {} connected",
+                            app.config.providers.len()
+                        ),
+                        Choice::Slash("/provider"),
                     ),
-                    ("Edit provider settings (advanced)", "/profile"),
-                    ("Plugins", "/plugins"),
-                    ("Show the configuration", "/config"),
-                ]
-                .into_iter()
-                .map(|(label, name)| (label.into(), Choice::Slash(name)))
-                .collect(),
-            ),
+                    (
+                        "Provider options · limits and sampling".into(),
+                        Choice::Slash("/profile"),
+                    ),
+                    (
+                        format!(
+                            "Prompt and memory · history: {history} · memory: {}",
+                            interval(prompt.memory_interval())
+                        ),
+                        Choice::Form(FormKind::Options),
+                    ),
+                    (
+                        format!(
+                            "Agent and tools · {} steps · approval: {confirm}",
+                            agent.max_steps
+                        ),
+                        Choice::Form(FormKind::Agent),
+                    ),
+                    (
+                        format!("Plugins · {on} of {} on", installed.len()),
+                        Choice::Slash("/plugins"),
+                    ),
+                ];
+                if let Some(id) = &self.preferences.session {
+                    let session = app.store.session(id)?;
+                    items.push((
+                        format!("Memory of this chat · {}", memory_status(&app, &session)?),
+                        Choice::Slash("/memory"),
+                    ));
+                    items.push((
+                        format!(
+                            "Lorebooks of this chat · {} on",
+                            session.worldbook_ids.len()
+                        ),
+                        Choice::Slash("/worldbook"),
+                    ));
+                    items.push((
+                        "Apply the current settings to this chat".into(),
+                        Choice::Slash("/adopt"),
+                    ));
+                }
+                items.push((
+                    "Show config.toml · keys hidden".into(),
+                    Choice::Slash("/config"),
+                ));
+                self.menu("Settings", items);
+                self.notice = "A change applies to new chats and to the open chat.".into();
+            }
+            "/memory" => {
+                let session = app.store.session(&self.active()?)?;
+                let update = MemoryCommand::Update {
+                    session: session.id.clone(),
+                    if_due: false,
+                };
+                self.menu(
+                    &format!("Memory of this chat · {}", memory_status(&app, &session)?),
+                    vec![
+                        (
+                            "Read or edit the summary and the facts...".into(),
+                            Choice::Form(FormKind::Memory),
+                        ),
+                        (
+                            "Update the memory now".into(),
+                            Choice::Command(Command::Memory { command: update }, After::Memory),
+                        ),
+                        (
+                            "Change the memory interval...".into(),
+                            Choice::Form(FormKind::Options),
+                        ),
+                    ],
+                );
+            }
             "/profile" => self.form(FormKind::Provider(
                 self.preferences
                     .provider
@@ -290,14 +376,17 @@ impl Ui {
                         .as_str()
                         .unwrap_or_default()
                         .to_owned();
-                    items.push((
-                        format!("Enable {id}"),
-                        Choice::Select(Selection::Enable, id.clone()),
-                    ));
-                    items.push((
-                        format!("Disable {id}"),
-                        Choice::Select(Selection::Disable, id.clone()),
-                    ));
+                    items.push(if installed["enabled"] == true {
+                        (
+                            format!("● {id} · on · select to turn it off"),
+                            Choice::Select(Selection::Disable, id.clone()),
+                        )
+                    } else {
+                        (
+                            format!("○ {id} · off · select to turn it on"),
+                            Choice::Select(Selection::Enable, id.clone()),
+                        )
+                    });
                     items.push((
                         format!("Uninstall {id}"),
                         Choice::Select(Selection::Uninstall, id),
@@ -662,4 +751,36 @@ impl Ui {
         );
         Ok(())
     }
+}
+
+/// The function returns the agent settings of `[plugins.agent]`.
+pub(super) fn agent_policy(
+    config: &rustytavern::config::Configuration,
+) -> Result<rustytavern::runtime::policy::AgentPolicy> {
+    let table = config.plugins.entries.get("agent").cloned();
+    serde_json::from_value(table.unwrap_or_else(|| serde_json::json!({}))).map_err(Error::context(
+        "invalid_plugin_configuration",
+        "The [plugins.agent] table is invalid.",
+    ))
+}
+
+fn interval(messages: usize) -> String {
+    match messages {
+        0 => "off".into(),
+        count => format!("update after {count} messages"),
+    }
+}
+
+/// The function describes the memory of a chat in one line.
+fn memory_status(app: &Application, session: &rustytavern::session::Session) -> Result<String> {
+    use rustytavern::runtime::memory::{Memory, visible};
+    let history = visible(app.store.as_ref(), session)?;
+    let memory = Memory::load(app.store.as_ref(), session)?.current(&history);
+    let covered = history.len() - memory.pending(&history).len();
+    Ok(format!(
+        "{} · {covered} of {} messages summarized · {} facts",
+        interval(session.options.memory_interval()),
+        history.len(),
+        memory.facts.len()
+    ))
 }
