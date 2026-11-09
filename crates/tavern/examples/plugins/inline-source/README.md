@@ -12,7 +12,7 @@ The plugin provides `card.source.example/1` through the `card.source/1` process 
 The command calls that service with the `fetch` operation.
 The source accepts HTTPS URLs on `example.com`. The accepted host list controls URL recognition only.
 The plugin requests no capabilities. The host still requires explicit process trust.
-The [Rust source](../../../../plugin/examples/source_plugin.rs) implements JSON-RPC over stdio.
+The [Rust source](../../plugin/source_plugin.rs) implements JSON-RPC over stdio.
 
 ```sh
 cargo build --locked --example source_plugin

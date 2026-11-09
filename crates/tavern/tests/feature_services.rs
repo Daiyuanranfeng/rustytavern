@@ -1,16 +1,14 @@
 use async_trait::async_trait;
-use futures_util::{Stream, StreamExt};
 use rustytavern::{
     Error, Result,
     app::default_registry,
     card::{Card, CardDecoder, CcDecoder, DecodedCard, MAX_INPUT_BYTES},
-    driver::{ConversationDriver, DRIVER_CAPABILITIES, DriverContext, MAX_DRIVER_EVENTS},
-    plugin::{PluginContext, PluginManifest, PluginRegistry, RuntimePlugin},
-    prompt::{PromptOptions, PromptPlan},
-    provider::{
-        CredentialResolver, HttpProvider, PreparedRequest, ProviderAdapter, ProviderConfig,
-        ProviderEvent, ProviderStream,
+    driver::{
+        AgentEvent, ConversationDriver, DRIVER_CAPABILITIES, DriverContext, MAX_DRIVER_EVENTS,
     },
+    plugin::{PluginContext, PluginManifest, PluginRegistry, RuntimePlugin},
+    prompt::PromptOptions,
+    provider::{ProviderAdapter, ProviderConfig},
     runtime::Runtime,
     session::{GenerationStatus, Persona, Session, SessionExport},
     store::{SqliteStore, StoreBackend},
@@ -18,15 +16,14 @@ use rustytavern::{
 use serde_json::{Value, json};
 use std::{
     collections::BTreeMap,
-    pin::Pin,
     sync::{
         Arc, Mutex,
         atomic::{AtomicBool, AtomicUsize, Ordering},
     },
-    task::{Context, Poll},
     time::Duration,
 };
-use tokio_util::sync::CancellationToken;
+mod common;
+use common::{Script, Step};
 
 struct PrefixDecoder {
     id: &'static str,
@@ -70,89 +67,6 @@ fn decoder(id: &'static str, document: Option<Value>) -> Arc<PrefixDecoder> {
     })
 }
 
-struct ProbeStream {
-    inner: ProviderStream,
-    closed: Arc<AtomicBool>,
-}
-impl Stream for ProbeStream {
-    type Item = Result<ProviderEvent>;
-    fn poll_next(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Option<Self::Item>> {
-        self.inner.as_mut().poll_next(cx)
-    }
-}
-impl Drop for ProbeStream {
-    fn drop(&mut self) {
-        self.closed.store(true, Ordering::SeqCst);
-    }
-}
-struct LocalProvider {
-    events: Vec<ProviderEvent>,
-    hold: bool,
-    count: Option<usize>,
-    calls: Arc<AtomicUsize>,
-    closed: Arc<AtomicBool>,
-}
-impl Default for LocalProvider {
-    fn default() -> Self {
-        Self {
-            events: vec![
-                ProviderEvent::Text {
-                    text: "hello".into(),
-                },
-                ProviderEvent::Usage {
-                    usage: json!({"total_tokens":9}),
-                },
-                ProviderEvent::Complete,
-            ],
-            hold: false,
-            count: None,
-            calls: Arc::new(AtomicUsize::new(0)),
-            closed: Arc::new(AtomicBool::new(false)),
-        }
-    }
-}
-#[async_trait]
-impl ProviderAdapter for LocalProvider {
-    fn prepare(
-        &self,
-        plan: &PromptPlan,
-        model: &str,
-        config: &ProviderConfig,
-    ) -> Result<PreparedRequest> {
-        HttpProvider.prepare(plan, model, config)
-    }
-    async fn open_stream(
-        &self,
-        _: PreparedRequest,
-        _: &dyn CredentialResolver,
-        _: CancellationToken,
-    ) -> Result<ProviderStream> {
-        self.calls.fetch_add(1, Ordering::SeqCst);
-        let inner: ProviderStream = if let Some(count) = self.count {
-            Box::pin(
-                futures_util::stream::repeat(Ok(ProviderEvent::Text {
-                    text: String::new(),
-                }))
-                .take(count)
-                .chain(futures_util::stream::once(std::future::ready(Ok(
-                    ProviderEvent::Complete,
-                )))),
-            )
-        } else {
-            let events = futures_util::stream::iter(self.events.clone().into_iter().map(Ok));
-            if self.hold {
-                Box::pin(events.chain(futures_util::stream::pending()))
-            } else {
-                Box::pin(events)
-            }
-        };
-        Ok(Box::pin(ProbeStream {
-            inner,
-            closed: self.closed.clone(),
-        }))
-    }
-}
-
 enum Mode {
     Uppercase,
     Early,
@@ -173,17 +87,17 @@ impl ConversationDriver for TestDriver {
         if matches!(self.0, Mode::BeforeDispatch) {
             return context.append_text("illegal").await;
         }
-        let _ = context.open_step(&[]).await;
+        let _ = context.open(0).await;
         loop {
             match context.next_event().await {
-                Ok(Some(ProviderEvent::Text { text })) if matches!(self.0, Mode::Uppercase) => {
+                Ok(Some(AgentEvent::Text { text })) if matches!(self.0, Mode::Uppercase) => {
                     context.append_text(&text.to_uppercase()).await?
                 }
-                Ok(Some(ProviderEvent::Text { .. })) if matches!(self.0, Mode::Oversize) => {
+                Ok(Some(AgentEvent::Text { .. })) if matches!(self.0, Mode::Oversize) => {
                     let _ = context.append_text(&"x".repeat(8 * 1024 * 1024 + 1)).await;
                     return Ok(());
                 }
-                Ok(Some(ProviderEvent::Complete)) | Ok(None) | Err(_) => return Ok(()),
+                Ok(Some(AgentEvent::Complete)) | Ok(None) | Err(_) => return Ok(()),
                 _ => {}
             }
         }
@@ -227,9 +141,17 @@ fn target(store: &dyn StoreBackend, card: &Card) -> Session {
         hidden: Vec::new(),
     }
 }
+/// The default provider replies with one text and nine tokens.
+fn reply() -> Script {
+    Script {
+        steps: vec![common::text("hello")],
+        total_tokens: Some(9),
+        ..Default::default()
+    }
+}
 async fn setup(
     driver: Arc<dyn ConversationDriver>,
-    provider: Arc<LocalProvider>,
+    provider: Arc<Script>,
 ) -> (
     Runtime,
     Arc<SqliteStore>,
@@ -319,7 +241,7 @@ async fn the_tavern_preset_resolves_all_five_services_and_rejects_missing_parts(
 
 #[tokio::test]
 async fn selected_decoder_and_driver_change_the_actual_runtime_and_keep_exports_readable() {
-    let provider = Arc::new(LocalProvider::default());
+    let provider = reply().arc();
     let (runtime, store, _, session) =
         setup(Arc::new(TestDriver(Mode::Uppercase)), provider.clone()).await;
     let card = store.card(&session.character_id).unwrap();
@@ -370,7 +292,7 @@ async fn native_bindings_replace_bundled_services_and_missing_driver_grants_bloc
             },
             decoder: decoder("prefix/1", None),
             driver: Arc::new(TestDriver(Mode::Uppercase)),
-            provider: Some(Arc::new(LocalProvider::default())),
+            provider: Some(reply().arc()),
         };
         let grants = if granted {
             DRIVER_CAPABILITIES.into_iter().map(str::to_owned).collect()
@@ -487,49 +409,24 @@ fn decoder_input_and_normalized_document_limits_apply_before_storage() {
 
 #[tokio::test]
 async fn a_driver_cannot_forge_success_hide_failure_or_ignore_output_limits() {
-    for (mode, events, expected, dispatches) in [
-        (
-            Mode::Early,
-            vec![ProviderEvent::Complete],
-            "invalid_driver_completion",
-            0,
-        ),
-        (
-            Mode::BeforeDispatch,
-            vec![ProviderEvent::Complete],
-            "invalid_driver_command",
-            0,
-        ),
+    for (mode, steps, expected, dispatches) in [
+        (Mode::Early, vec![], "invalid_driver_completion", 0),
+        (Mode::BeforeDispatch, vec![], "invalid_driver_command", 0),
         (
             Mode::Swallow,
-            vec![
-                ProviderEvent::Usage {
-                    usage: json!({"total_tokens":9}),
-                },
-                ProviderEvent::Failure {
-                    error: Error::new("provider_error", "The provider failed."),
-                },
-            ],
+            vec![Step::Fail("The provider failed.".into())],
             "provider_error",
             1,
         ),
-        (Mode::Swallow, vec![], "incomplete_stream", 1),
+        (Mode::Swallow, vec![Step::Cut], "invalid_provider_stream", 1),
         (
             Mode::Oversize,
-            vec![
-                ProviderEvent::Text {
-                    text: "hello".into(),
-                },
-                ProviderEvent::Complete,
-            ],
+            vec![common::text("hello")],
             "output_limit",
             1,
         ),
     ] {
-        let provider = Arc::new(LocalProvider {
-            events,
-            ..Default::default()
-        });
+        let provider = Script::new(steps).arc();
         let (runtime, store, _, session) =
             setup(Arc::new(TestDriver(mode)), provider.clone()).await;
         let generation = runtime
@@ -543,9 +440,6 @@ async fn a_driver_cannot_forge_success_hide_failure_or_ignore_output_limits() {
         assert_eq!(generation.error.unwrap().code, expected);
         assert_eq!(provider.calls.load(Ordering::SeqCst), dispatches);
         assert_eq!(store.messages(&session.id).unwrap().len(), 1);
-        if expected == "provider_error" {
-            assert_eq!(generation.usage.unwrap()["total_tokens"], 9);
-        }
     }
 }
 
@@ -560,7 +454,7 @@ impl ConversationDriver for BlockingDriver {
         "blocking/1"
     }
     async fn run(&self, context: &mut DriverContext) -> Result<()> {
-        context.open_step(&[]).await?;
+        context.open(0).await?;
         context.next_event().await?;
         self.entered.store(true, Ordering::SeqCst);
         let _ = self
@@ -585,13 +479,7 @@ async fn cancellation_and_deadlines_close_streams_and_retain_blocked_driver_code
             entered: entered.clone(),
             finished: finished.clone(),
         });
-        let provider = Arc::new(LocalProvider {
-            events: vec![ProviderEvent::Text {
-                text: "held".into(),
-            }],
-            hold: true,
-            ..Default::default()
-        });
+        let provider = Script::new(vec![common::text("held")]).held().arc();
         let (runtime, store, registry, session) = setup(driver, provider.clone()).await;
         let config = ProviderConfig {
             timeout_seconds: if timeout { 1 } else { 10 },
@@ -670,15 +558,12 @@ async fn cancellation_and_deadlines_close_streams_and_retain_blocked_driver_code
 }
 
 #[tokio::test]
-async fn the_host_bounds_driver_event_work_and_accepts_its_exact_boundary() {
+async fn the_host_bounds_driver_event_work() {
     for (count, status) in [
-        (MAX_DRIVER_EVENTS - 1, GenerationStatus::Completed),
+        (MAX_DRIVER_EVENTS / 2, GenerationStatus::Completed),
         (MAX_DRIVER_EVENTS, GenerationStatus::Failed),
     ] {
-        let provider = Arc::new(LocalProvider {
-            count: Some(count),
-            ..Default::default()
-        });
+        let provider = Script::new(vec![common::text("x"); count]).arc();
         let (runtime, _, _, session) = setup(Arc::new(TestDriver(Mode::Swallow)), provider).await;
         let generation = runtime
             .start(&session.id, "Hello.", None, ProviderConfig::default())

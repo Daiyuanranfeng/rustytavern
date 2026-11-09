@@ -5,14 +5,20 @@
 //! FAIL marks a stream or request error. WARN marks a model that skips a tool or gives no text.
 
 use futures_util::StreamExt;
+use rig_agent::agent::MultiTurnStreamItem;
+use rig_core::{
+    message::ToolName,
+    streaming::{Item, StreamEvent},
+    tool::{DynamicTool, ToolOutput},
+};
 use rustytavern::{
     card::Card,
     prompt::{ConservativeCounter, PromptInput, PromptOptions, PromptPlan},
     provider::*,
     session::Persona,
 };
-use serde_json::json;
-use tokio_util::sync::CancellationToken;
+use serde_json::{Value, json};
+use std::sync::{Arc, Mutex};
 
 const MODELS: &[&str] = &[
     "deepseek/deepseek-v4.1-flash-1017",
@@ -50,7 +56,7 @@ fn plan(message: &str) -> PromptPlan {
     .unwrap()
 }
 
-/// The tools copy the schemas of the `web_fetch`, `read_skill`, and sanitized MCP tools.
+/// The tools copy the schemas of the `web_fetch` and `read_skill` tools and a full MCP server schema.
 fn tools() -> Vec<ToolDefinition> {
     [
         ("roll_dice", "Roll one die and return the result.",
@@ -62,7 +68,9 @@ fn tools() -> Vec<ToolDefinition> {
         ("clock__now", "Return the current UTC time.",
             json!({"type":"object","properties":{},"required":[]})),
         ("notes__search", "Search the keeper's notes.",
-            json!({"type":"object","properties":{"query":{"type":"string"}},"required":["query"]})),
+            json!({"$schema":"https://json-schema.org/draft/2020-12/schema","type":"object","additionalProperties":false,
+                "properties":{"query":{"type":"string","default":"storm","format":"plain"},"limit":{"anyOf":[{"type":"integer"},{"type":"null"}]}},
+                "required":["query"]})),
     ]
     .into_iter()
     .map(|(name, description, parameters)| ToolDefinition {
@@ -74,14 +82,10 @@ fn tools() -> Vec<ToolDefinition> {
 }
 
 /// The function returns a fixed result for each tool.
-fn execute(call: &ToolCall) -> String {
-    match call.name.as_str() {
+fn execute(name: &str, arguments: &Value) -> String {
+    match name {
         "roll_dice" => "17".into(),
-        "web_fetch"
-            if call.arguments["url"]
-                .as_str()
-                .is_some_and(|u| u.ends_with("/a")) =>
-        {
+        "web_fetch" if arguments["url"].as_str().is_some_and(|u| u.ends_with("/a")) => {
             "Page A. The next page is https://example.com/b".into()
         }
         "web_fetch" => format!(
@@ -135,104 +139,94 @@ const SCENARIOS: &[(&str, &str, &[&str])] = &[
     ),
 ];
 
-/// The function returns the text, the tool calls, and the last error of one stream.
-async fn run(
-    model: &str,
-    message: &str,
-    agent: Option<&AgentRequest>,
-    key: &Key,
-) -> (String, Vec<ToolCall>, Option<String>) {
-    let config = ProviderConfig {
-        model: model.into(),
-        api_key_env: Some("config:live".into()),
-        output_limit: 512,
-        ..Default::default()
-    };
-    let request = HttpProvider
-        .prepare(&plan(message), model, &config)
-        .unwrap();
-    let request = HttpProvider
-        .prepare_agent(request, agent.unwrap_or(&AgentRequest::default()))
-        .unwrap();
-    let stream = HttpProvider
-        .open_stream(request, key, CancellationToken::new())
-        .await;
-    let (mut text, mut calls, mut error) = (String::new(), vec![], None);
-    let mut stream = match stream {
-        Ok(stream) => stream,
-        Err(e) => return (text, calls, Some(format!("{e:?}"))),
-    };
-    let mut complete = false;
-    while let Some(event) = stream.next().await {
-        match event {
-            Ok(ProviderEvent::Text { text: t }) => text.push_str(&t),
-            Ok(ProviderEvent::ToolCalls { calls: c }) => calls = c,
-            Ok(ProviderEvent::Failure { error: e }) => error = Some(format!("{e:?}")),
-            Ok(ProviderEvent::Complete) => complete = true,
-            Ok(ProviderEvent::Usage { .. } | ProviderEvent::Reasoning { .. }) => {}
-            Err(e) => error = Some(format!("{e:?}")),
-        }
-    }
-    if !complete && error.is_none() {
-        error = Some("The stream has no completion.".into());
-    }
-    (text, calls, error)
-}
-
 /// The function runs one scenario to its final text and returns an error or a warning.
+/// Rig runs the tool rounds. The tools record their names and return fixed results.
 async fn scenario(
     model: &str,
     prompt: &str,
     expected: &[&str],
     key: &Key,
 ) -> Result<String, String> {
-    if expected.is_empty() {
-        let (text, _, error) = run(model, prompt, None, key).await;
-        return match error {
-            Some(error) => Err(error),
-            None if text.is_empty() => Err("The reply is empty.".into()),
-            None => Ok(String::new()),
-        };
-    }
-    let mut agent = AgentRequest {
-        tools: tools(),
-        continuation: vec![],
+    let config = ProviderConfig {
+        model: model.into(),
+        api_key_env: Some("config:live".into()),
+        output_limit: 512,
+        ..Default::default()
     };
-    let mut names = vec![];
-    for _ in 0..4 {
-        let (text, calls, error) = run(model, prompt, Some(&agent), key).await;
-        if let Some(error) = error {
-            return Err(error);
+    let definitions = if expected.is_empty() { vec![] } else { tools() };
+    let request = HttpProvider.prepare(&plan(prompt), model, &config).unwrap();
+    let request = HttpProvider.prepare_agent(request, &definitions).unwrap();
+    let names = Arc::new(Mutex::new(Vec::<String>::new()));
+    let tools = definitions
+        .into_iter()
+        .map(|tool| {
+            let names = names.clone();
+            let name = tool.name.clone();
+            DynamicTool::new(
+                ToolName::new(tool.name).unwrap(),
+                tool.description,
+                tool.parameters,
+                move |arguments| {
+                    names.lock().unwrap().push(name.clone());
+                    let output = execute(&name, &arguments);
+                    Box::pin(async move { Ok(ToolOutput::text(output)) })
+                },
+            )
+        })
+        .collect::<Vec<_>>();
+    // The runtime repeats a failed first model call once without the web search tool.
+    // The test applies the same rule.
+    let (mut text, mut complete) = (String::new(), false);
+    'run: for web_search in [true, false] {
+        let rig = HttpProvider
+            .model(&request, key)
+            .map_err(|e| format!("{e:?}"))?;
+        let runner = agent(&request, rig, tools.clone(), 5, 0, web_search).unwrap();
+        let (mut stream, mut answered) = (runner.stream(), false);
+        while let Some(item) = stream.next().await {
+            let item = match item.map_err(map_error) {
+                Err(e)
+                    if web_search
+                        && !answered
+                        && text.is_empty()
+                        && search_fallback(&request, &e) =>
+                {
+                    continue 'run;
+                }
+                Err(e) if e.code == "tool_step_limit" => {
+                    return Ok("The model did not stop after four rounds.".into());
+                }
+                item => item.map_err(|e| format!("{e:?}"))?,
+            };
+            match item {
+                MultiTurnStreamItem::StreamAssistantItem(Item::Event(StreamEvent::Text {
+                    text: delta,
+                    ..
+                })) => text.push_str(&delta),
+                MultiTurnStreamItem::CompletionCall(_) => answered = true,
+                MultiTurnStreamItem::FinalResponse(_) => complete = true,
+                _ => {}
+            }
         }
-        if calls.is_empty() {
-            let mut missing: Vec<&str> = expected.to_vec();
-            missing.retain(|n| {
-                names
-                    .iter()
-                    .position(|c| c == n)
-                    .map(|i| names.remove(i))
-                    .is_none()
-            });
-            return Ok(match (text.is_empty(), missing.is_empty()) {
-                (true, _) => "The final reply is empty.".into(),
-                (false, false) => format!("The model skipped {missing:?}."),
-                _ => String::new(),
-            });
-        }
-        names.extend(calls.iter().map(|c| c.name.clone()));
-        agent.continuation.push(AgentTurn {
-            text,
-            results: calls
-                .iter()
-                .map(|c| ToolResult {
-                    call_id: c.id.clone(),
-                    content: execute(c),
-                })
-                .collect(),
-            calls,
-        });
+        break;
     }
-    Ok("The model did not stop after four rounds.".into())
+    if !complete {
+        return Err("The stream has no completion.".into());
+    }
+    let mut names = names.lock().unwrap().clone();
+    let mut missing: Vec<&str> = expected.to_vec();
+    missing.retain(|n| {
+        names
+            .iter()
+            .position(|c| c == n)
+            .map(|i| names.remove(i))
+            .is_none()
+    });
+    Ok(match (text.is_empty(), missing.is_empty()) {
+        (true, _) => "The final reply is empty.".into(),
+        (false, false) => format!("The model skipped {missing:?}."),
+        _ => String::new(),
+    })
 }
 
 #[tokio::test]

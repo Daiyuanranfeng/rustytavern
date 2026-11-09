@@ -16,7 +16,7 @@ The [plugin examples](plugins/README.md) contain the native and process implemen
 The [plugin guide](../../../docs/developer.md#runtime-plugins) defines native interfaces and lifecycle.
 The [installed plugin guide](../../../docs/developer.md#installed-plugins) defines plugin directories and commands.
 The [protocol guide](../../../docs/developer.md#external-card-source-protocol) defines process messages.
-The [plugin crate](../../plugins/README.md) holds the essential plugins and website adapters.
+The [plugins module](../README.md) holds the essential plugins and website adapters.
 
 ```sh
 cargo build --locked --examples

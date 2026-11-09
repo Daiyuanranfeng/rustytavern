@@ -10,7 +10,7 @@ The example makes no network request or paid request.
 The `Features` plugin provides `card.decoder/1`, `driver/1`, and `provider/1`.
 The `PrefixDecoder` implementation accepts `RT:` followed by a newline and a standard card.
 The `UppercaseDriver` implementation converts reply text to uppercase.
-The fixture provider returns one fixed reply.
+The fixture provider returns one fixed reply from a Rig mock model.
 The host records the normalized card and original bytes.
 The host also validates driver completion and persists reply text.
 

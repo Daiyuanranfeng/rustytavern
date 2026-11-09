@@ -5,19 +5,21 @@ use futures_util::StreamExt;
 use serde_json::Value;
 use tokio_util::sync::CancellationToken;
 
+use rig_agent::{agent::MultiTurnStreamItem, agent::StreamingResult};
+use rig_core::streaming::{Item, StreamEvent};
+
+use super::{
+    EventSink, Runtime, RuntimeEvent,
+    policy::{AgentPolicy, PolicyHook},
+};
 use crate::{
-    Error, EventSink, Result, Runtime, RuntimeEvent,
-    provider::{
-        AgentRequest, AgentTurn, PreparedRequest, ProviderEvent, ProviderStream, ToolCall,
-        ToolResult,
-    },
+    Error, Result,
+    provider::{self, PreparedRequest},
     session::Generation,
     store::now_ms,
 };
 
 pub const MAX_DRIVER_EVENTS: usize = 65_536;
-/// The host truncates each tool result to this byte count.
-pub const MAX_TOOL_RESULT_BYTES: usize = 65_536;
 pub const DRIVER_CAPABILITIES: [&str; 3] = [
     "session.read:current",
     "session.write:current",
@@ -30,7 +32,21 @@ pub trait ConversationDriver: Send + Sync {
     async fn run(&self, context: &mut DriverContext) -> Result<()>;
 }
 
-type StreamSlot = Arc<Mutex<Option<ProviderStream>>>;
+/// One event of the agent run that a driver acts on.
+/// The host runs the tools and records the usage itself.
+#[derive(Debug, Clone)]
+pub enum AgentEvent {
+    Text {
+        text: String,
+    },
+    /// The model streams its thinking text. The driver does not add it to the reply.
+    Reasoning {
+        text: String,
+    },
+    Complete,
+}
+
+type StreamSlot = Arc<Mutex<Option<StreamingResult>>>;
 pub(super) struct DriverControl {
     cancellation: CancellationToken,
     stream: StreamSlot,
@@ -55,6 +71,16 @@ pub struct DriverContext {
     complete: bool,
     failure: Option<Error>,
     events: usize,
+    /// The draft lengths at the start of the current and the previous model turn.
+    /// Rig reports a rejected turn before its retry, so a reset returns to the previous start.
+    turn_start: usize,
+    previous_start: usize,
+    draft: usize,
+    policy: AgentPolicy,
+    /// The run sends the provider web search tool. A failed first model call can drop it once.
+    searching: bool,
+    /// The run finished at least one model call.
+    answered: bool,
     usage: Option<Value>,
     view: Value,
 }
@@ -85,6 +111,12 @@ impl DriverContext {
                 complete: false,
                 failure: None,
                 events: 0,
+                turn_start: 0,
+                previous_start: 0,
+                draft: 0,
+                policy: AgentPolicy::default(),
+                searching: true,
+                answered: false,
                 usage: None,
                 view,
             },
@@ -112,63 +144,85 @@ impl DriverContext {
         }
         Ok(())
     }
-    /// The method dispatches one step with the composed tools and the continuation.
-    pub async fn open_step(&mut self, continuation: &[AgentTurn]) -> Result<()> {
-        let agent = self.runtime.agent_request(continuation.to_vec());
-        let result = self.open(&agent).await;
+    /// The method starts the Rig agent run with the composed tools and the run policy.
+    /// A number selects the step limit with the default policy.
+    pub async fn open(&mut self, policy: impl Into<AgentPolicy>) -> Result<()> {
+        let result = self.open_inner(policy.into()).await;
         if let Err(error) = &result {
             self.failure = Some(error.clone());
         }
         result
     }
-    pub async fn next_event(&mut self) -> Result<Option<ProviderEvent>> {
+    pub async fn next_event(&mut self) -> Result<Option<AgentEvent>> {
         let result = self.next_inner().await;
         if let Err(error) = &result {
             self.failure = Some(error.clone());
         }
         result
     }
-    async fn open(&mut self, agent: &AgentRequest) -> Result<()> {
+    async fn open_inner(&mut self, policy: AgentPolicy) -> Result<()> {
         self.active()?;
-        if self.opened && !self.complete {
+        if self.opened {
             return Err(Error::new(
                 "invalid_driver_command",
-                "The driver cannot open a step before the previous step completes.",
+                "The driver can open the agent run only once.",
             ));
         }
-        let stream = self
-            .runtime
-            .dispatch(
-                &self.generation,
-                self.request.clone(),
-                self.cancellation.clone(),
-                agent,
-            )
-            .await?;
+        self.runtime.renew(&self.generation).await?;
+        self.policy = policy;
+        let stream = self.start(true)?;
         *self
             .stream
             .lock()
             .map_err(|_| Error::new("driver_state", "The driver stream is unavailable."))? =
             Some(stream);
         self.opened = true;
-        self.complete = false;
         Ok(())
     }
-    async fn next_inner(&mut self) -> Result<Option<ProviderEvent>> {
+    /// The method builds the Rig agent run with or without the provider web search tool.
+    fn start(&self, web_search: bool) -> Result<StreamingResult> {
+        let policy = self.policy.clone();
+        let model = self
+            .runtime
+            .provider
+            .model(&self.request, self.runtime.credentials.as_ref())?;
+        let tools = self
+            .runtime
+            .tools
+            .iter()
+            .map(|tool| {
+                super::agent::bridge(
+                    tool.clone(),
+                    self.sink.clone(),
+                    self.generation.id.clone(),
+                    self.cancellation.clone(),
+                )
+            })
+            .collect::<Result<Vec<_>>>()?;
+        let turns = policy
+            .max_steps
+            .saturating_add(1)
+            .saturating_add(policy.retry_truncated);
+        let hook = PolicyHook {
+            policy,
+            sink: self.sink.clone(),
+            generation_id: self.generation.id.clone(),
+            approvals: self.sink.1.clone(),
+            cancellation: self.cancellation.clone(),
+        };
+        let retry = hook.policy.retry_truncated;
+        let runner = provider::agent(&self.request, model, tools, turns, retry, web_search)?;
+        Ok(runner.add_hook(hook).stream())
+    }
+    async fn next_inner(&mut self) -> Result<Option<AgentEvent>> {
         self.active()?;
         if self.complete {
             return Ok(None);
         }
-        if self.events >= MAX_DRIVER_EVENTS {
-            return Err(Error::new(
-                "output_limit",
-                "The driver phase exceeds its event limit.",
-            ));
-        }
         if !self.opened {
             return Err(Error::new(
                 "invalid_driver_command",
-                "The driver cannot read events before it opens a step.",
+                "The driver cannot read events before it opens the run.",
             ));
         }
         let mut stream = self
@@ -177,21 +231,63 @@ impl DriverContext {
             .map_err(|_| Error::new("driver_state", "The driver stream is unavailable."))?
             .take()
             .ok_or_else(|| Error::new("driver_state", "The driver stream is closed."))?;
-        let event = tokio::select! {
-            biased;
-            _ = self.cancellation.cancelled() => return Err(Error::new("cancelled", "The caller cancelled the driver phase.")),
-            event = stream.next() => event.ok_or_else(|| Error::new("incomplete_stream", "The provider ended without a completion event."))??,
+        let event = loop {
+            if self.events >= MAX_DRIVER_EVENTS {
+                return Err(Error::new(
+                    "output_limit",
+                    "The driver phase exceeds its event limit.",
+                ));
+            }
+            let item = tokio::select! {
+                biased;
+                _ = self.cancellation.cancelled() => return Err(Error::new("cancelled", "The caller cancelled the driver phase.")),
+                item = stream.next() => item.ok_or_else(|| Error::new("incomplete_stream", "The provider ended without a completion event."))?,
+            };
+            let item = match item.map_err(provider::map_error) {
+                Ok(item) => item,
+                // Some OpenRouter endpoints fail with the web search tool. The first model call
+                // repeats once without it when it fails before any output.
+                Err(error)
+                    if self.searching
+                        && !self.answered
+                        && self.draft == 0
+                        && provider::search_fallback(&self.request, &error) =>
+                {
+                    self.searching = false;
+                    stream = self.start(false)?;
+                    continue;
+                }
+                Err(error) => return Err(error),
+            };
+            match item {
+                MultiTurnStreamItem::StreamAssistantItem(Item::Event(StreamEvent::Text {
+                    text,
+                    ..
+                })) if !text.is_empty() => break AgentEvent::Text { text },
+                MultiTurnStreamItem::StreamAssistantItem(Item::Event(StreamEvent::Reasoning {
+                    text,
+                    ..
+                })) if !text.is_empty() => break AgentEvent::Reasoning { text },
+                MultiTurnStreamItem::CompletionCall(call) => {
+                    self.answered = true;
+                    self.record_usage(serde_json::to_value(call.usage)?).await?;
+                    self.runtime.renew(&self.generation).await?;
+                    self.previous_start = std::mem::replace(&mut self.turn_start, self.draft);
+                }
+                // Rig repeats a truncated turn. The text of that turn was provisional.
+                MultiTurnStreamItem::ModelTurnRetried { .. } => self.reset_turn().await?,
+                MultiTurnStreamItem::FinalResponse(_) => {
+                    self.complete = true;
+                    break AgentEvent::Complete;
+                }
+                _ => {}
+            }
         };
-        self.events += 1;
-        match &event {
-            ProviderEvent::Usage { usage } => self.record_usage(usage.clone()).await?,
-            ProviderEvent::Complete => self.complete = true,
-            ProviderEvent::Failure { error } => self.failure = Some(error.clone()),
-            ProviderEvent::Text { .. }
-            | ProviderEvent::Reasoning { .. }
-            | ProviderEvent::ToolCalls { .. } => {}
+        // The limit counts the text and thinking deltas that reach the driver.
+        if !matches!(event, AgentEvent::Complete) {
+            self.events += 1;
         }
-        if !self.complete && self.failure.is_none() {
+        if !self.complete {
             *self
                 .stream
                 .lock()
@@ -205,7 +301,7 @@ impl DriverContext {
         if !self.opened {
             return Err(Error::new(
                 "invalid_driver_command",
-                "The driver cannot append text before dispatch.",
+                "The driver cannot append text before it opens the run.",
             ));
         }
         let id = self.generation.id.clone();
@@ -221,50 +317,31 @@ impl DriverContext {
             return Err(error);
         }
         self.active()?;
+        self.draft += text.len();
         let mut event = RuntimeEvent::new("text_delta", &self.generation.id);
         event.text = Some(text);
         self.sink.emit(event);
         Ok(())
     }
+    /// The method cuts the draft back to the start of the current turn.
+    /// The `draft_reset` event carries the kept draft.
+    async fn reset_turn(&mut self) -> Result<()> {
+        let length = self.previous_start;
+        let (id, token) = (self.generation.id.clone(), self.generation.fencing_token);
+        let generation = self
+            .runtime
+            .store_call(move |store| store.truncate_draft(&id, token, length, now_ms()))
+            .await?;
+        (self.draft, self.turn_start) = (length, length);
+        self.active()?;
+        let mut event = RuntimeEvent::new("draft_reset", &self.generation.id);
+        event.text = Some(generation.draft);
+        self.sink.deliver(event).await;
+        Ok(())
+    }
     /// The method emits a `reasoning_delta` event. The draft does not keep the thinking text.
     pub fn append_reasoning(&self, text: &str) -> Result<()> {
         self.emit("reasoning_delta", text.to_owned())
-    }
-    /// The method emits `tool_call` without a result and `tool_result` with a result.
-    /// The host runs one tool call and emits `tool_call` and `tool_result` events.
-    /// A failed tool returns its error text to the model.
-    pub async fn call_tool(&mut self, call: &ToolCall) -> Result<ToolResult> {
-        self.emit("tool_call", format!("{} {}", call.name, call.arguments))?;
-        let tool = self
-            .runtime
-            .tools
-            .iter()
-            .find(|tool| tool.definition().name == call.name)
-            .cloned();
-        let result = match tool {
-            Some(tool) => {
-                tool.call(call.arguments.clone(), self.cancellation.clone())
-                    .await
-            }
-            None => Err(Error::new("unknown_tool", "The tool does not exist.")),
-        };
-        let mut content = match result {
-            Ok(content) => content,
-            Err(error) if error.code == "cancelled" => return Err(error),
-            Err(error) => format!("Error {}: {}", error.code, error.message),
-        };
-        if content.len() > MAX_TOOL_RESULT_BYTES {
-            let mut end = MAX_TOOL_RESULT_BYTES;
-            while !content.is_char_boundary(end) {
-                end -= 1;
-            }
-            content.truncate(end);
-        }
-        self.emit("tool_result", content.clone())?;
-        Ok(ToolResult {
-            call_id: call.id.clone(),
-            content,
-        })
     }
     fn emit(&self, kind: &str, text: String) -> Result<()> {
         self.active()?;
@@ -274,8 +351,18 @@ impl DriverContext {
         Ok(())
     }
     async fn record_usage(&mut self, next: Value) -> Result<()> {
+        // The usage of a reply is the sum of the usage of its model calls.
         if let (Some(Value::Object(current)), Value::Object(next)) = (self.usage.as_mut(), &next) {
-            current.extend(next.iter().map(|(k, v)| (k.clone(), v.clone())));
+            for (key, value) in next {
+                let sum = match (current.get(key), value) {
+                    (Some(Value::Number(a)), Value::Number(b)) => match (a.as_u64(), b.as_u64()) {
+                        (Some(a), Some(b)) => Value::from(a.saturating_add(b)),
+                        _ => Value::from(a.as_f64().unwrap_or(0.0) + b.as_f64().unwrap_or(0.0)),
+                    },
+                    _ => value.clone(),
+                };
+                current.insert(key.clone(), sum);
+            }
         } else {
             self.usage = Some(next);
         }

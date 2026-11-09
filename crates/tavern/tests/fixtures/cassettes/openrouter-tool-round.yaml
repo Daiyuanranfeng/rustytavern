@@ -1,0 +1,61 @@
+when:
+  path: /api/v1/chat/completions
+  method: POST
+  query_param: []
+  header:
+  - name: content-type
+    value: application/json
+  - name: accept
+    value: text/event-stream
+  body: '{"max_tokens":256,"messages":[{"content":"Call the lookup tool with the key a. Then reply with the value that it returns.","role":"user"}],"model":"deepseek/deepseek-v4.1-flash-1017","provider":{"allow_fallbacks":true,"require_parameters":true},"stream":true,"tools":[{"function":{"description":"The tool returns the value of a key.","name":"lookup","parameters":{"properties":{"key":{"type":"string"}},"required":["key"],"type":"object"}},"type":"function"},{"type":"openrouter:web_search"}]}'
+then:
+  status: 200
+  header:
+  - name: content-type
+    value: text/event-stream
+  body: |+
+    data: {"choices":[{"delta":{"content":"I","role":"assistant"},"finish_reason":null,"index":0,"native_finish_reason":null}],"created":0,"id":"gen-1794189981-tw60sc2WoFBh0cTwOGT8","model":"deepseek/deepseek-v4.1-flash-1017","object":"chat.completion.chunk","provider":"Particle AI"}
+
+    data: {"choices":[{"delta":{"content":"'ll look that","role":"assistant"},"finish_reason":null,"index":0,"native_finish_reason":null}],"created":0,"id":"gen-1794189981-tw60sc2WoFBh0cTwOGT8","model":"deepseek/deepseek-v4.1-flash-1017","object":"chat.completion.chunk","provider":"Particle AI"}
+
+    data: {"choices":[{"delta":{"content":" up for you.\n\n","role":"assistant"},"finish_reason":null,"index":0,"native_finish_reason":null}],"created":0,"id":"gen-1794189981-tw60sc2WoFBh0cTwOGT8","model":"deepseek/deepseek-v4.1-flash-1017","object":"chat.completion.chunk","provider":"Particle AI"}
+
+    data: {"choices":[{"delta":{"content":null,"role":"assistant","tool_calls":[{"function":{"arguments":"","name":"lookup"},"id":"chatcmpl-tool-8dd3d43818ccfd6f","index":0,"type":"function"}]},"finish_reason":null,"index":0,"native_finish_reason":null}],"created":0,"id":"gen-1794189981-tw60sc2WoFBh0cTwOGT8","model":"deepseek/deepseek-v4.1-flash-1017","object":"chat.completion.chunk","provider":"Particle AI"}
+
+    data: {"choices":[{"delta":{"content":null,"role":"assistant","tool_calls":[{"function":{"arguments":"{\"key\": \"a\"}"},"index":0}]},"finish_reason":null,"index":0,"native_finish_reason":null}],"created":0,"id":"gen-1794189981-tw60sc2WoFBh0cTwOGT8","model":"deepseek/deepseek-v4.1-flash-1017","object":"chat.completion.chunk","provider":"Particle AI"}
+
+    data: {"choices":[{"delta":{"content":"","role":"assistant"},"finish_reason":"tool_calls","index":0,"native_finish_reason":"tool_calls"}],"created":0,"id":"gen-1794189981-tw60sc2WoFBh0cTwOGT8","model":"deepseek/deepseek-v4.1-flash-1017","object":"chat.completion.chunk","provider":"DeepInfra"}
+
+    data: {"choices":[{"delta":{"content":"","role":"assistant"},"finish_reason":"tool_calls","index":0,"native_finish_reason":"tool_calls"}],"created":0,"id":"gen-1794189981-tw60sc2WoFBh0cTwOGT8","model":"deepseek/deepseek-v4.1-flash-1017","object":"chat.completion.chunk","provider":"DeepInfra","service_tier":null,"usage":{"completion_tokens":46,"completion_tokens_details":{"audio_tokens":0,"image_tokens":0,"reasoning_tokens":0},"cost":0.00003845128,"cost_details":{"upstream_inference_completions_cost":0.000013524,"upstream_inference_cost":0.00003845128,"upstream_inference_prompt_cost":0.00002492728},"prompt_tokens":751,"prompt_tokens_details":{"audio_tokens":0,"cache_write_tokens":0,"cached_tokens":512,"video_tokens":0},"total_tokens":797}}
+
+    data: [DONE]
+
+---
+when:
+  path: /api/v1/chat/completions
+  method: POST
+  query_param: []
+  header:
+  - name: content-type
+    value: application/json
+  - name: accept
+    value: text/event-stream
+  body: '{"max_tokens":256,"messages":[{"content":"Call the lookup tool with the key a. Then reply with the value that it returns.","role":"user"},{"content":"I''ll look that up for you.\n\n","role":"assistant","tool_calls":[{"function":{"arguments":"{\"key\":\"a\"}","name":"lookup"},"id":"chatcmpl-tool-8dd3d43818ccfd6f","type":"function"}]},{"content":"VALUE_A","role":"tool","tool_call_id":"chatcmpl-tool-8dd3d43818ccfd6f"}],"model":"deepseek/deepseek-v4.1-flash-1017","provider":{"allow_fallbacks":true,"require_parameters":true},"stream":true,"tools":[{"function":{"description":"The tool returns the value of a key.","name":"lookup","parameters":{"properties":{"key":{"type":"string"}},"required":["key"],"type":"object"}},"type":"function"},{"type":"openrouter:web_search"}]}'
+then:
+  status: 200
+  header:
+  - name: content-type
+    value: text/event-stream
+  body: |+
+    data: {"choices":[{"delta":{"content":"The lookup tool","role":"assistant"},"finish_reason":null,"index":0,"native_finish_reason":null}],"created":0,"id":"gen-1794189982-c2xhWeu2CHBmTDqWUgQw","model":"deepseek/deepseek-v4.1-flash-1017","object":"chat.completion.chunk","provider":"DeepInfra"}
+
+    data: {"choices":[{"delta":{"content":" returned:","role":"assistant"},"finish_reason":null,"index":0,"native_finish_reason":null}],"created":0,"id":"gen-1794189982-c2xhWeu2CHBmTDqWUgQw","model":"deepseek/deepseek-v4.1-flash-1017","object":"chat.completion.chunk","provider":"DeepInfra"}
+
+    data: {"choices":[{"delta":{"content":" **VALUE_A**","role":"assistant"},"finish_reason":null,"index":0,"native_finish_reason":null}],"created":0,"id":"gen-1794189982-c2xhWeu2CHBmTDqWUgQw","model":"deepseek/deepseek-v4.1-flash-1017","object":"chat.completion.chunk","provider":"DeepInfra"}
+
+    data: {"choices":[{"delta":{"content":"","role":"assistant"},"finish_reason":"stop","index":0,"native_finish_reason":"stop"}],"created":0,"id":"gen-1794189982-c2xhWeu2CHBmTDqWUgQw","model":"deepseek/deepseek-v4.1-flash-1017","object":"chat.completion.chunk","provider":"DeepInfra"}
+
+    data: {"choices":[{"delta":{"content":"","role":"assistant"},"finish_reason":"stop","index":0,"native_finish_reason":"stop"}],"created":0,"id":"gen-1794189982-c2xhWeu2CHBmTDqWUgQw","model":"deepseek/deepseek-v4.1-flash-1017","object":"chat.completion.chunk","provider":"DeepInfra","service_tier":null,"usage":{"completion_tokens":12,"completion_tokens_details":{"audio_tokens":0,"image_tokens":0,"reasoning_tokens":0},"cost":0.0000221676,"cost_details":{"upstream_inference_completions_cost":3.528e-6,"upstream_inference_cost":0.0000221676,"upstream_inference_prompt_cost":0.0000186396},"prompt_tokens":811,"prompt_tokens_details":{"audio_tokens":0,"cache_write_tokens":0,"cached_tokens":640,"video_tokens":0},"total_tokens":823}}
+
+    data: [DONE]
+

@@ -1,14 +1,18 @@
-use rustytavern_adapters::provider;
-use rustytavern_card as card;
-use rustytavern_conversation as session;
-use rustytavern_conversation::prompt;
+//! The crate runs durable character generations with the Rig agent loop.
+//! It owns the provider and source adapters, the plugin contracts, and prompt phases.
+pub mod plugin;
+pub mod provider;
+pub mod source;
+
+use rustytavern_core::card;
 use rustytavern_core::{Error, Result, digest};
-use rustytavern_plugin as plugin;
-use rustytavern_store as store;
+use rustytavern_session as session;
+use rustytavern_session::{prompt, store};
 
 pub mod agent;
 pub mod driver;
 pub mod phases;
+pub mod policy;
 
 use std::{
     sync::{Arc, Mutex},
@@ -25,8 +29,8 @@ use driver::{ConversationDriver, DRIVER_CAPABILITIES, DriverContext};
 use phases::{HookBinding, PhaseTrace, SavedEnrichment};
 use prompt::{ConservativeCounter, CoreProfile, PromptInput, PromptPlan, PromptProfile};
 use provider::{
-    AgentRequest, CredentialResolver, HttpProvider, NoCredentials, PreparedRequest,
-    ProviderAdapter, ProviderConfig, ProviderStream,
+    CredentialResolver, HttpProvider, NoCredentials, PreparedRequest, ProviderAdapter,
+    ProviderConfig,
 };
 use session::{Generation, GenerationMode, GenerationStatus, Role, Session, SessionConfiguration};
 use store::{Preparation, StoreBackend, Submit, now_ms};
@@ -57,6 +61,9 @@ pub struct RuntimeEvent {
     pub error: Option<Error>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub missed_events: Option<usize>,
+    /// The tool call that a `tool_approval` event asks about.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub call_id: Option<String>,
 }
 
 impl RuntimeEvent {
@@ -68,22 +75,26 @@ impl RuntimeEvent {
             usage: None,
             error: None,
             missed_events: None,
+            call_id: None,
         }
     }
 }
 
 #[derive(Clone)]
-struct EventSink(Arc<Mutex<EventState>>);
+struct EventSink(Arc<Mutex<EventState>>, Arc<policy::Approvals>);
 struct EventState {
     sender: Option<mpsc::Sender<RuntimeEvent>>,
     missed: usize,
 }
 impl EventSink {
-    fn new(sender: mpsc::Sender<RuntimeEvent>) -> Self {
-        Self(Arc::new(Mutex::new(EventState {
-            sender: Some(sender),
-            missed: 0,
-        })))
+    fn new(sender: mpsc::Sender<RuntimeEvent>, pending: Arc<policy::Approvals>) -> Self {
+        Self(
+            Arc::new(Mutex::new(EventState {
+                sender: Some(sender),
+                missed: 0,
+            })),
+            pending,
+        )
     }
     fn emit(&self, mut event: RuntimeEvent) {
         let Ok(mut state) = self.0.lock() else {
@@ -108,12 +119,22 @@ impl EventSink {
             state.sender.take();
         }
     }
+    /// The method delivers a control event and waits for room in the queue.
+    /// A lost control event can stall the run, so the method does not drop it.
+    async fn deliver(&self, event: RuntimeEvent) {
+        let sender = self.0.lock().ok().and_then(|state| state.sender.clone());
+        if let Some(sender) = sender {
+            let _ = sender.send(event).await;
+        }
+    }
 }
 
 /// The handle cancels unfinished work when its owner drops it.
 pub struct GenerationHandle {
     pub generation_id: String,
     pub events: mpsc::Receiver<RuntimeEvent>,
+    /// The approver answers the `tool_approval` events of this generation.
+    pub approver: policy::Approver,
     cancellation: CancellationToken,
     task: Option<JoinHandle<Result<Generation>>>,
 }
@@ -671,6 +692,8 @@ impl Runtime {
         let (sender, receiver) = mpsc::channel(64);
         let generation_id = preparation.generation.id.clone();
         let token = cancellation.clone();
+        let approver = policy::Approver::default();
+        let pending = approver.0.clone();
         let task = tokio::spawn(async move {
             if !preparation.created {
                 if !preparation.generation.status.terminal() {
@@ -683,11 +706,14 @@ impl Runtime {
                 let _ = sender.try_send(RuntimeEvent::new(kind, &preparation.generation.id));
                 return Ok(preparation.generation);
             }
-            runtime.drive(preparation, config, token, sender).await
+            runtime
+                .drive(preparation, config, token, sender, pending)
+                .await
         });
         Ok(GenerationHandle {
             generation_id,
             events: receiver,
+            approver,
             cancellation,
             task: Some(task),
         })
@@ -699,9 +725,10 @@ impl Runtime {
         config: ProviderConfig,
         cancellation: CancellationToken,
         sender: mpsc::Sender<RuntimeEvent>,
+        pending: Arc<policy::Approvals>,
     ) -> Result<Generation> {
         let generation = preparation.generation;
-        let sink = EventSink::new(sender);
+        let sink = EventSink::new(sender, pending);
         sink.emit(RuntimeEvent::new("prepared", &generation.id));
         let mut heartbeat = tokio::time::interval(Duration::from_secs(8));
         heartbeat.tick().await;
@@ -810,7 +837,7 @@ impl Runtime {
             let prepared = self.provider.prepare(&plan, &session.model, config)?;
             let prepared = self
                 .provider
-                .prepare_agent(prepared, &self.agent_request(Vec::new()))?;
+                .prepare_agent(prepared, &self.tool_definitions())?;
             let units = serde_json::to_vec(&prepared.body)?.len();
             if units <= 8 * 1024 * 1024
                 && units
@@ -878,7 +905,7 @@ impl Runtime {
         );
         let driver = self.driver.clone();
         let handle = tokio::runtime::Handle::current();
-        let deadline = tokio::time::Instant::now()
+        let start = tokio::time::Instant::now()
             .checked_add(Duration::from_secs(timeout_seconds))
             .ok_or_else(|| {
                 Error::new(
@@ -886,44 +913,34 @@ impl Runtime {
                     "The driver deadline exceeds the supported clock range.",
                 )
             })?;
-        let job = tokio::task::spawn_blocking(move || {
+        let approvals = sink.1.clone();
+        let mut job = tokio::task::spawn_blocking(move || {
             handle.block_on(async move {
                 let result = driver.run(&mut context).await;
                 context.finish(result)
             })
         });
-        tokio::time::timeout_at(deadline, job)
-            .await
-            .map_err(Error::context(
-                "driver_timeout",
-                "The driver phase exceeded its deadline.",
-            ))?
-            .map_err(Error::context(
-                "driver_failure",
-                "The driver worker failed.",
-            ))?
-    }
-
-    /// The method returns the composed tools and the continuation for one step.
-    fn agent_request(&self, continuation: Vec<provider::AgentTurn>) -> AgentRequest {
-        AgentRequest {
-            tools: self.tools.iter().map(|tool| tool.definition()).collect(),
-            continuation,
+        // The deadline excludes the time that the run waits for user approval.
+        loop {
+            let deadline = start + approvals.waited();
+            tokio::select! {
+                result = &mut job => {
+                    return result.map_err(Error::context("driver_failure", "The driver worker failed."))?;
+                }
+                _ = tokio::time::sleep_until(deadline) => {
+                    if approvals.waiting() {
+                        tokio::time::sleep(Duration::from_millis(250)).await;
+                    } else if tokio::time::Instant::now() >= start + approvals.waited() {
+                        return Err(Error::new("driver_timeout", "The driver phase exceeded its deadline."));
+                    }
+                }
+            }
         }
     }
 
-    async fn dispatch(
-        &self,
-        generation: &Generation,
-        request: PreparedRequest,
-        cancellation: CancellationToken,
-        agent: &AgentRequest,
-    ) -> Result<ProviderStream> {
-        self.renew(generation).await?;
-        let request = self.provider.prepare_agent(request, agent)?;
-        self.provider
-            .open_stream(request, self.credentials.as_ref(), cancellation)
-            .await
+    /// The method returns the definitions of the composed tools.
+    fn tool_definitions(&self) -> Vec<provider::ToolDefinition> {
+        self.tools.iter().map(|tool| tool.definition()).collect()
     }
 
     async fn save_enrichment(

@@ -18,43 +18,15 @@ use rustytavern::{
         Contribution, PluginContext, PluginManifest, PluginRegistry, Retention, RuntimePlugin,
     },
     prompt::PromptOptions,
-    provider::{
-        CredentialResolver, HttpProvider, PreparedRequest, ProviderAdapter, ProviderConfig,
-        ProviderEvent, ProviderStream,
-    },
+    provider::ProviderConfig,
     runtime::Runtime,
     session::{Generation, GenerationStatus, Persona, Role, Session},
     store::{SqliteStore, StoreBackend, now_ms},
 };
 use serde_json::{Value, json};
 use tokio_util::sync::CancellationToken;
+mod common;
 
-struct LocalProvider(Arc<Mutex<Vec<Value>>>);
-#[async_trait]
-impl ProviderAdapter for LocalProvider {
-    fn prepare(
-        &self,
-        plan: &rustytavern::prompt::PromptPlan,
-        model: &str,
-        config: &ProviderConfig,
-    ) -> Result<PreparedRequest> {
-        HttpProvider.prepare(plan, model, config)
-    }
-    async fn open_stream(
-        &self,
-        request: PreparedRequest,
-        _: &dyn CredentialResolver,
-        _: CancellationToken,
-    ) -> Result<ProviderStream> {
-        self.0.lock().unwrap().push(request.body);
-        Ok(Box::pin(futures_util::stream::iter([
-            Ok(ProviderEvent::Text {
-                text: "A reply.".into(),
-            }),
-            Ok(ProviderEvent::Complete),
-        ])))
-    }
-}
 #[derive(Default)]
 struct TestHook {
     policy: HookPolicy,
@@ -181,7 +153,14 @@ impl Fixture {
         let requests = Arc::new(Mutex::new(Vec::new()));
         let registry = Arc::new(tokio::sync::Mutex::new(PluginRegistry::default()));
         let runtime = Runtime::new(store.clone())
-            .with_provider(Arc::new(LocalProvider(requests.clone())))
+            .with_provider(
+                common::Script {
+                    steps: vec![common::text("A reply.")],
+                    requests: requests.clone(),
+                    ..Default::default()
+                }
+                .arc(),
+            )
             .with_plugins(registry.clone());
         Self {
             runtime,

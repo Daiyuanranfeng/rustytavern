@@ -1,20 +1,18 @@
 use std::sync::Arc;
 
-use async_trait::async_trait;
 use rustytavern::{
     Result,
     card::Card,
     prompt::PromptOptions,
     provider::{
-        CredentialResolver, HttpProvider, PreparedRequest, ProviderAdapter, ProviderConfig,
-        ProviderEvent, ProviderStream,
+        CompletionModel, CredentialResolver, PreparedRequest, ProviderAdapter, ProviderConfig,
     },
     runtime::Runtime,
     session::{GenerationStatus, Persona, PersonaExport, Role, Session, SessionExport},
     store::{SqliteStore, StoreBackend, Submit, now_ms},
 };
 use serde_json::{Value, json};
-use tokio_util::sync::CancellationToken;
+mod common;
 
 fn session(store: &dyn StoreBackend, card: &Card, persona: &Persona) -> Session {
     store.save_card(card).unwrap();
@@ -359,8 +357,7 @@ impl CredentialResolver for Credentials {
         Ok(CREDENTIAL_SENTINEL.into())
     }
 }
-struct SecretProvider;
-#[async_trait]
+struct SecretProvider(common::Script);
 impl ProviderAdapter for SecretProvider {
     fn prepare(
         &self,
@@ -368,24 +365,18 @@ impl ProviderAdapter for SecretProvider {
         model: &str,
         config: &ProviderConfig,
     ) -> Result<PreparedRequest> {
-        HttpProvider.prepare(plan, model, config)
+        self.0.prepare(plan, model, config)
     }
-    async fn open_stream(
+    fn model(
         &self,
-        request: PreparedRequest,
+        request: &PreparedRequest,
         credentials: &dyn CredentialResolver,
-        _: CancellationToken,
-    ) -> Result<ProviderStream> {
+    ) -> Result<CompletionModel> {
         assert_eq!(
             credentials.resolve(request.credential_reference.as_deref().unwrap())?,
             CREDENTIAL_SENTINEL
         );
-        Ok(Box::pin(futures_util::stream::iter([
-            Ok(ProviderEvent::Text {
-                text: "A reply.".into(),
-            }),
-            Ok(ProviderEvent::Complete),
-        ])))
+        self.0.model(request, credentials)
     }
 }
 #[tokio::test]
@@ -393,7 +384,9 @@ async fn both_export_modes_exclude_the_resolved_provider_credential() {
     let store = Arc::new(SqliteStore::memory().unwrap());
     let session = session(store.as_ref(), &card(), &persona());
     let runtime = Runtime::new(store.clone())
-        .with_provider(Arc::new(SecretProvider))
+        .with_provider(Arc::new(SecretProvider(common::Script::new(vec![
+            common::text("A reply."),
+        ]))))
         .with_credentials(Arc::new(Credentials));
     runtime
         .configure_session(&session, ProviderConfig::default())

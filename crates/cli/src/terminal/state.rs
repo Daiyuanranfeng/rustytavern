@@ -191,6 +191,10 @@ pub(super) struct Ui {
     pub reply: String,
     pub title: String,
     pub notice: String,
+    /// The approver of the running generation and the tool calls that wait for the user.
+    /// Each entry holds the call ID and the call text. Parallel calls can wait together.
+    pub approver: Option<rustytavern::runtime::policy::Approver>,
+    pub approvals: std::collections::VecDeque<(String, String)>,
     pub busy: bool,
     pub exit: bool,
     pub tick: usize,
@@ -253,19 +257,9 @@ const RECOMMENDED: &[(&str, &str)] = &[
     ("mistralai/mistral-nemo", ""),
 ];
 
-/// The function returns the release day as days since 1970-01-01. Catalogs supply `created` seconds or a `created_at` date.
+/// The function returns the release day as days since 1970-01-01. The Rig listing supplies `created_at` seconds.
 fn released(model: &rustytavern::provider::catalog::ModelMetadata) -> Option<i64> {
-    if let Some(seconds) = model.raw["created"].as_i64() {
-        return Some(seconds.div_euclid(86_400));
-    }
-    let date = model.raw["created_at"].as_str()?.get(..10)?;
-    let mut parts = date.split('-').map(|part| part.parse::<i64>().ok());
-    let (y, m, d) = (parts.next()??, parts.next()??, parts.next()??);
-    let y = if m <= 2 { y - 1 } else { y };
-    let era = y.div_euclid(400);
-    let year = y - era * 400;
-    let day = (153 * (m + if m > 2 { -3 } else { 9 }) + 2) / 5 + d - 1;
-    Some(era * 146_097 + (year * 365 + year / 4 - year / 100 + day) - 719_468)
+    Some(model.raw["created_at"].as_i64()?.div_euclid(86_400))
 }
 
 fn date(days: i64) -> String {
@@ -293,23 +287,24 @@ fn model_label(model: &rustytavern::provider::catalog::ModelMetadata, recommende
     if let Some(length) = advertised.context_length {
         parts.push(format!("{}K context", length / 1000));
     }
+    // The Rig catalog states prices in USD for one million tokens.
     let price = |key: &str| {
         advertised.pricing.as_ref()?[key]
-            .as_str()?
-            .parse::<f64>()
-            .ok()
-            .filter(|value| *value >= 0.0)
+            .as_f64()
+            .filter(|v| *v >= 0.0)
     };
-    match (price("prompt"), price("completion")) {
+    match (price("input"), price("output")) {
         (Some(0.0), Some(0.0)) => parts.push("free".into()),
-        (Some(input), Some(output)) => parts.push(format!(
-            "${:.2} in, ${:.2} out per 1M tokens",
-            input * 1e6,
-            output * 1e6
-        )),
+        (Some(input), Some(output)) => {
+            parts.push(format!("${input:.2} in, ${output:.2} out per 1M tokens"))
+        }
         _ => {}
     }
     parts.join(" · ")
+}
+
+fn approval_notice(call: &str) -> String {
+    format!("Allow the tool call {call}? Press y to allow or another key to decline.")
 }
 
 pub(super) fn text(source: &str) -> String {
@@ -379,6 +374,8 @@ impl Ui {
             reply: String::new(),
             title: "RustyTavern".into(),
             notice,
+            approver: None,
+            approvals: Default::default(),
             busy: false,
             exit: false,
             tick: 0,
@@ -535,6 +532,18 @@ impl Ui {
         }
     }
     pub fn key(&mut self, key: KeyEvent) -> Result<()> {
+        if let Some((call, _)) = self.approvals.pop_front() {
+            let allow = matches!(key.code, KeyCode::Char('y' | 'Y'));
+            if let Some(approver) = &self.approver {
+                approver.approve(&call, allow);
+            }
+            self.notice = match self.approvals.front() {
+                Some((_, text)) => approval_notice(text),
+                None if allow => "The tool call runs.".into(),
+                None => "The tool call is declined.".into(),
+            };
+            return Ok(());
+        }
         let escape = std::mem::take(&mut self.escape);
         if key.code == KeyCode::Esc {
             if self.overlay.take().is_none() && self.idle() {
@@ -1082,6 +1091,14 @@ impl Ui {
                     .for_each(|s| s.done = true);
                 self.reply.push_str(&value);
             }
+            "draft_reset" => self.reply = value,
+            "tool_approval" => {
+                if self.approvals.is_empty() {
+                    self.notice = approval_notice(&value);
+                }
+                self.approvals
+                    .push_back((event.call_id.clone().unwrap_or_default(), value));
+            }
             "reasoning_delta" => match self.steps.last_mut() {
                 Some(step) if thinking(step) && !step.done => {
                     if step.body.len() < 128 * 1024 {
@@ -1123,6 +1140,8 @@ impl Ui {
     }
     pub fn finish(&mut self, result: Result<Generation>) {
         self.streaming = false;
+        self.approver = None;
+        self.approvals.clear();
         self.steps.iter_mut().for_each(|step| step.done = true);
         let unsent = std::mem::take(&mut self.outgoing);
         self.reply.clear();

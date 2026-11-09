@@ -10,7 +10,7 @@ use crate::{
     prompt::PromptPlan,
 };
 
-pub use rustytavern_plugin::prompt::*;
+pub use crate::plugin::prompt::*;
 
 #[derive(Clone)]
 pub(crate) struct HookBinding {

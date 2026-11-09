@@ -4,27 +4,33 @@ version.workspace = true
 edition.workspace = true
 rust-version.workspace = true
 publish.workspace = true
-description = "The assembled RustyTavern product library and extension packages."
+description = "The assembled RustyTavern product: application, configuration, extensions, and bundled plugins."
+
+[features]
+default = ["mcp"]
+mcp = ["dep:rmcp", "dep:rig-rmcp"]
 
 [dependencies]
 rustytavern-core.workspace = true
-rustytavern-card.workspace = true
-rustytavern-conversation.workspace = true
-rustytavern-plugin = { workspace = true, features = ["process"] }
-rustytavern-adapters.workspace = true
+rustytavern-session.workspace = true
 rustytavern-runtime.workspace = true
-rustytavern-store = { workspace = true, features = ["sqlite"] }
 async-trait.workspace = true
-rustytavern-plugins.workspace = true
-semver.workspace = true
+rmcp = { workspace = true, optional = true }
+rig-core.workspace = true
+rig-rmcp = { workspace = true, optional = true }
 serde.workspace = true
 serde_json.workspace = true
-toml_edit.workspace = true
+semver.workspace = true
 tokio.workspace = true
 tokio-util.workspace = true
+toml_edit.workspace = true
 uuid.workspace = true
 
 [dev-dependencies]
+rig-core = { workspace = true, features = ["test-utils"] }
+rig-agent.workspace = true
+rig-cassette.workspace = true
+http = "1"
 async-trait.workspace = true
 clap.workspace = true
 crc32fast.workspace = true
@@ -43,3 +49,15 @@ path = "examples/plugins/feature_services.rs"
 [[example]]
 name = "conversation"
 path = "examples/library/conversation.rs"
+
+[[example]]
+name = "native_plugin"
+path = "examples/plugin/native_plugin.rs"
+
+[[example]]
+name = "source_plugin"
+path = "examples/plugin/source_plugin.rs"
+
+[[example]]
+name = "state_migration"
+path = "examples/plugin/state_migration.rs"

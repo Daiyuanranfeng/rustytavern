@@ -1,0 +1,13 @@
+[package]
+name = "rustytavern-session"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+publish.workspace = true
+description = "Sessions, prompt compilation, and durable SQLite storage."
+
+[dependencies]
+rustytavern-core = { workspace = true, features = ["sqlite"] }
+rusqlite.workspace = true
+serde.workspace = true
+serde_json.workspace = true

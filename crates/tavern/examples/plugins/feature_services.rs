@@ -1,16 +1,17 @@
 //! This example replaces bundled decoder, driver, and provider services.
 
 use async_trait::async_trait;
+use rig_core::test_utils::{MockCompletionModel, MockStreamEvent};
 use rustytavern::{
     Error, Result,
     app::default_registry,
     card::{CardDecoder, CcDecoder, DecodedCard},
-    driver::{ConversationDriver, DRIVER_CAPABILITIES, DriverContext},
+    driver::{AgentEvent, ConversationDriver, DRIVER_CAPABILITIES, DriverContext},
     plugin::{PluginContext, PluginManifest, RuntimePlugin},
     prompt::{PromptOptions, PromptPlan},
     provider::{
-        CredentialResolver, HttpProvider, PreparedRequest, ProviderAdapter, ProviderConfig,
-        ProviderEvent, ProviderStream,
+        CompletionModel, CredentialResolver, HttpProvider, PreparedRequest, ProviderAdapter,
+        ProviderConfig,
     },
     runtime::Runtime,
     session::{Persona, Session},
@@ -18,7 +19,6 @@ use rustytavern::{
 };
 use serde_json::json;
 use std::{collections::BTreeMap, sync::Arc};
-use tokio_util::sync::CancellationToken;
 
 struct PrefixDecoder;
 impl CardDecoder for PrefixDecoder {
@@ -41,20 +41,16 @@ impl ConversationDriver for UppercaseDriver {
         "uppercase-reply/1"
     }
     async fn run(&self, context: &mut DriverContext) -> Result<()> {
-        context.open_step(&[]).await?;
+        context.open(0).await?;
         while let Some(event) = context.next_event().await? {
-            match event {
-                ProviderEvent::Text { text } => context.append_text(&text.to_uppercase()).await?,
-                ProviderEvent::Complete => return Ok(()),
-                ProviderEvent::Failure { error } => return Err(error),
-                _ => {}
+            if let AgentEvent::Text { text } = event {
+                context.append_text(&text.to_uppercase()).await?
             }
         }
         Ok(())
     }
 }
 struct FixtureProvider;
-#[async_trait]
 impl ProviderAdapter for FixtureProvider {
     fn prepare(
         &self,
@@ -64,18 +60,13 @@ impl ProviderAdapter for FixtureProvider {
     ) -> Result<PreparedRequest> {
         HttpProvider.prepare(plan, model, config)
     }
-    async fn open_stream(
-        &self,
-        _: PreparedRequest,
-        _: &dyn CredentialResolver,
-        _: CancellationToken,
-    ) -> Result<ProviderStream> {
-        Ok(Box::pin(futures_util::stream::iter([
-            Ok(ProviderEvent::Text {
-                text: "hello, Alex".into(),
-            }),
-            Ok(ProviderEvent::Complete),
-        ])))
+    /// The Rig mock model returns one fixed reply.
+    fn model(&self, _: &PreparedRequest, _: &dyn CredentialResolver) -> Result<CompletionModel> {
+        Ok(MockCompletionModel::from_stream_turns([[
+            MockStreamEvent::text("hello, Alex"),
+            MockStreamEvent::final_response_with_default_usage(),
+        ]])
+        .into())
     }
 }
 struct Features(PluginManifest);

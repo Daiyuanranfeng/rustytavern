@@ -147,7 +147,10 @@ history_limit = 0                     # 0 keeps every message that fits the cont
 enabled = ["lighthouse-notes"]       # installed plugins only
 
 [plugins.agent]
-max_steps = 32
+max_steps = 32                       # the limit of tool rounds for one reply
+confirm_tools = ["web_fetch"]        # the tools that wait for approval; "*" selects every tool
+retry_truncated = 1                  # the repeats of a truncated reply; 0 disables them
+max_tokens = 0                       # the token budget of one reply; 0 disables it
 
 [plugins.skills]
 paths = ["/Users/me/.rustytavern/skills"]
@@ -207,14 +210,16 @@ The command validates the asset before it creates the output file.
 ### Provider profiles
 
 The `config provider` command writes one named profile. The `--api-key KEY` option stores the key in `config.toml`.
-The profile stores a provider kind, model ID, endpoint, API key, context limit, and output limit. A custom provider requires an explicit full endpoint URL.
+The profile stores a provider kind, model ID, endpoint, API key, context limit, and output limit. A custom provider requires an explicit endpoint: the API root or the full `/chat/completions` URL. Rig adds `/chat/completions` to an API root. An endpoint must not have a query string.
+A custom provider without a key sends no `Authorization` header.
 A custom provider can omit credentials for a local model. The native provider kinds are `openrouter`, `openai`, `anthropic`, `gemini`, and `custom`.
 The adapters use Chat Completions, Responses, Messages, or native Gemini SSE as appropriate. The `config capabilities` command prints the supported adapter subset for each kind.
-The `config provider --parameters JSON` option supplies validated sampling settings. The `--routing JSON` option supplies explicit OpenRouter provider preferences.
+The `config provider --parameters JSON` option supplies validated settings: `temperature`, `top_p`, `stop`, `reasoning`, and `cache`. The `--routing JSON` option supplies explicit OpenRouter provider preferences.
+The `reasoning` value is `off`, an effort (`minimal`, `low`, `medium`, `high`, `xhigh`, or `max`), or a token budget. The `cache` value is `none`, `short`, or `long`. Rig maps each setting to the protocol.
 The [provider contracts](compatibility.md#provider-contracts) define these settings and their model restrictions. Provider profile updates affect a session only after `session configure` adopts them.
 
-The adapter rejects unsupported requested parameters. The adapter does not switch a model or vendor automatically.
-The adapter does not retry a paid request automatically. The runtime records a failed generation when a stream closes without terminal success.
+Rig checks each parameter against the protocol and its model catalog when the profile is saved. The adapter rejects a refused parameter with `unsupported_provider_parameter`. The adapter does not switch a model or vendor automatically.
+The adapter retries a truncated reply only when `retry_truncated` is above zero. Each repeat doubles the output cap and replaces the partial text. The runtime records a failed generation when a stream closes without terminal success.
 
 ### Generation events
 
@@ -287,7 +292,7 @@ The provider runs its native web search: `openrouter:web_search` on OpenRouter, 
 A web search can add a cost at the provider.
 The essential plugins are always on. The agent loop is the only conversation mode.
 The `plugins.enabled` list in `config.toml` selects the installed plugins.
-The [plugin crate](../crates/plugins/README.md) lists each plugin ID, grant, and file location.
+The [plugins module](../crates/tavern/README.md) lists each plugin ID, grant, and file location.
 
 | Setting | Purpose |
 | --- | --- |
@@ -295,6 +300,14 @@ The [plugin crate](../crates/plugins/README.md) lists each plugin ID, grant, and
 | `plugins.mcp.servers.NAME` | One MCP server with `command`, `args`, and `env`, or one `url`. |
 
 The `chat --events` command prints a `tool_call` and a `tool_result` event for each tool call. The terminal shows each tool call as a step.
+A tool in `confirm_tools` waits for approval. The runtime emits a `tool_approval` event with the call name, its arguments, and a `call_id`.
+The terminal asks for the y key. Parallel calls wait together, and the terminal asks about each call in order. `GenerationHandle::approver` lists the calls that wait.
+The `chat` command declines the call unless the global `--approve-tools` option is present. The model receives a declined call as a skipped result. The provider timeout does not count the time that a call waits for approval.
+A call to an unknown tool, or a call with invalid arguments, returns its reason to the model as a skipped result. The model can then call the tool again or reply.
+A repeated truncated reply emits a `draft_reset` event. Its `text` holds the kept draft. The `chat` command starts a new line with the kept draft.
+The larger output cap applies only to the repeated turn and stays within the output limit of the model in the Rig catalog. A repeated turn does not count as a tool step.
+The `usage` of a reply is the sum of its model calls. The token budget uses the total, or the input and output tokens when a provider reports no total.
+The `max_tokens` budget stops the reply with `token_budget` before the next model call.
 
 The `plugin install PATH` command checks a plugin directory with a `plugin.json` file, activates it, and records it in `config.toml`.
 Each `--grant CAPABILITY` option approves one requested host capability. The `--trust-processes` option permits a plugin executable.
@@ -364,7 +377,7 @@ Direct store creation leaves a session unconfigured until `Runtime::configure_se
 
 ### Record and lock
 
-The [session module](../crates/conversation/src/session.rs) defines `SessionConfiguration`. The [configuration schema](schemas/session-configuration-v1.schema.json) defines its serialized fields.
+The [session module](../crates/session/src/records.rs) defines `SessionConfiguration`. The [configuration schema](schemas/session-configuration-v1.schema.json) defines its serialized fields.
 
 | Field | Content |
 | --- | --- |
@@ -485,7 +498,7 @@ The `--include-traces` flag retains the compiled plan, prepared request, and pha
 The flag controls compiled request traces only.
 
 The [version 3 session schema](schemas/session-v3.schema.json) documents the historical version 3 format. That schema does not describe version 4 worldbook archives.
-The version 4 reader and writer use the Rust types and runtime validation. The [session module](../crates/conversation/src/session.rs) defines the corresponding Rust types.
+The version 4 reader and writer use the Rust types and runtime validation. The [session module](../crates/session/src/records.rs) defines the corresponding Rust types.
 
 | Field | Content |
 | --- | --- |
@@ -574,6 +587,6 @@ rustytavern model discover PROVIDER --endpoint URL
 rustytavern model select PROVIDER MODEL
 ```
 
-Each discovery filter is optional. The `/model` command loads the catalogs of all connected providers and opens one model chooser.
+Each discovery filter is optional. Rig lists the models. The Rig model catalog supplies the modalities, parameters, prices, and limits. A custom endpoint gets the facts of a model that the catalog knows by ID. The `/model` command loads the catalogs of all connected providers and opens one model chooser.
 Selection updates the provider profile. An existing session still requires explicit configuration adoption.
 The [catalog contract](compatibility.md#model-catalog) distinguishes advertised capabilities from verified behavior. The integrated CLI and terminal gate remains pending.

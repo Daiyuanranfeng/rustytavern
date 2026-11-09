@@ -3,11 +3,8 @@ use rustytavern::{
     Error, Result,
     card::Card,
     plugin::{PluginContext, PluginManifest, PluginRegistry, RuntimePlugin},
-    prompt::{PromptOptions, PromptPlan},
-    provider::{
-        CredentialResolver, HttpProvider, PreparedRequest, ProviderAdapter, ProviderConfig,
-        ProviderEvent, ProviderKind, ProviderStream,
-    },
+    prompt::PromptOptions,
+    provider::{ProviderConfig, ProviderKind},
     runtime::Runtime,
     session::{GenerationStatus, Persona, Session, SessionExport},
     store::{SqliteStore, StoreBackend},
@@ -20,7 +17,7 @@ use std::{
         atomic::{AtomicUsize, Ordering},
     },
 };
-use tokio_util::sync::CancellationToken;
+mod common;
 
 const ID: &str = "example.state-counter";
 type StateAction = dyn Fn(&mut PluginContext) -> Result<()> + Send + Sync;
@@ -60,31 +57,6 @@ impl RuntimePlugin for StatePlugin {
     }
     async fn activate(&self, context: &mut PluginContext) -> Result<()> {
         (self.action)(context)
-    }
-}
-struct LocalProvider;
-#[async_trait]
-impl ProviderAdapter for LocalProvider {
-    fn prepare(
-        &self,
-        plan: &PromptPlan,
-        model: &str,
-        config: &ProviderConfig,
-    ) -> Result<PreparedRequest> {
-        HttpProvider.prepare(plan, model, config)
-    }
-    async fn open_stream(
-        &self,
-        _: PreparedRequest,
-        _: &dyn CredentialResolver,
-        _: CancellationToken,
-    ) -> Result<ProviderStream> {
-        Ok(Box::pin(futures_util::stream::iter([
-            Ok(ProviderEvent::Text {
-                text: "A local reply.".into(),
-            }),
-            Ok(ProviderEvent::Complete),
-        ])))
     }
 }
 fn session(store: &dyn StoreBackend) -> Session {
@@ -197,7 +169,7 @@ async fn native_upgrade_retains_history_and_pins_the_schema_in_a_real_generation
     let session = session(store.as_ref());
     let registry = Arc::new(tokio::sync::Mutex::new(registry));
     let runtime = Runtime::new(store.clone())
-        .with_provider(Arc::new(LocalProvider))
+        .with_provider(common::Script::new(vec![common::text("A local reply.")]).arc())
         .with_plugins(registry.clone());
     let config = ProviderConfig {
         kind: ProviderKind::Custom,

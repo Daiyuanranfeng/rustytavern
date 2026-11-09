@@ -259,10 +259,20 @@ fn cli_import_prompt_chat_resume_regenerate_branch_and_export_work() {
     );
     let requests = task.join().unwrap();
     assert_eq!(requests.len(), 2);
-    // The prepared body is protocol-neutral. The library sends the same messages in the wire format.
+    // The prepared body is protocol-neutral. Rig sends the same roles and text in the wire format.
+    let texts = |messages: &Value| {
+        let text = |content: &Value| match content.as_array() {
+            Some(parts) => parts.iter().filter_map(|p| p["text"].as_str()).collect(),
+            None => content.as_str().unwrap().to_owned(),
+        };
+        let messages = messages.as_array().unwrap().iter();
+        messages
+            .map(|m| (m["role"].clone(), text(&m["content"])))
+            .collect::<Vec<_>>()
+    };
     assert_eq!(
-        inspected["prepared"]["body"]["messages"],
-        requests[0]["messages"]
+        texts(&inspected["prepared"]["body"]["messages"]),
+        texts(&requests[0]["messages"])
     );
     assert_eq!(
         requests[0]["messages"].as_array().unwrap().last().unwrap()["content"],

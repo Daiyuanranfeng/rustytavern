@@ -36,6 +36,7 @@ use tokio_util::sync::CancellationToken;
 enum Update {
     Command(Result<Vec<Value>>, After),
     Event(RuntimeEvent),
+    Approver(rustytavern::runtime::policy::Approver),
     Finished(Box<Result<Generation>>),
 }
 
@@ -197,6 +198,7 @@ pub(super) async fn run(path: Option<PathBuf>) -> Result<()> {
                 update = updates.recv(), if ui.busy => {
                     match update {
                         Some(Update::Event(event)) => ui.event(event),
+                        Some(Update::Approver(approver)) => ui.approver = Some(approver),
                         Some(Update::Command(result, after)) => { ui.complete(result, after); ui.busy = false; }
                         Some(Update::Finished(result)) => { ui.finish(*result); ui.busy = false; }
                         None => return Err(Error::new("terminal_task", "The terminal operation ended without a result.")),
@@ -280,11 +282,14 @@ async fn generate(
         GenerationMode::Reply if retry => runtime.regenerate(&session, provider).await?,
         GenerationMode::Reply => runtime.start(&session, &message, None, provider).await?,
     };
+    let _ = sender.send(Update::Approver(handle.approver.clone())).await;
     loop {
         tokio::select! {
             biased;
             _ = cancellation.cancelled() => { handle.cancel(); return handle.wait().await; }
             event = handle.events.recv() => match event {
+                // A control event waits for room, because a lost approval stalls the run.
+                Some(event) if matches!(event.r#type.as_str(), "tool_approval" | "draft_reset") => { if sender.send(Update::Event(event)).await.is_err() { handle.cancel(); return handle.wait().await; } }
                 Some(event) => { if matches!(sender.try_send(Update::Event(event)),Err(mpsc::error::TrySendError::Closed(_))) { handle.cancel(); return handle.wait().await; } }
                 None => return handle.wait().await,
             }

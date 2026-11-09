@@ -1,7 +1,7 @@
 # Persistent state plugin example
 
 The example upgrades a native plugin from state schema 1 to schema 2.
-The [complete source](../../../plugin/examples/state_migration.rs) uses the public library API.
+The [complete source](../plugin/state_migration.rs) uses the public library API.
 The example makes no model or website request.
 
 ## Design and interface

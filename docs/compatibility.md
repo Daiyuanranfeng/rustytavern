@@ -10,7 +10,7 @@
 | Conversations | The product stores branches, alternatives, drafts, configuration revisions, and native exports. | The product needs broader reference workflow coverage. |
 | Providers | Five adapters stream text. OpenRouter has local and authorized live evidence. | Other direct vendor endpoints need live validation. |
 | Model discovery | The library fetches and filters advertised model capabilities. CLI and terminal selectors exist. | Integrated checks remain pending. Advertisements do not prove model behavior. |
-| Tools, MCP, and skills | The essential [agent driver](../crates/plugins/README.md#agent-and-tools) runs a bounded tool loop on OpenRouter and custom adapters. Separate tool plugins connect stdio and HTTP MCP servers through `rmcp` and add Agent Skills. | Durable tool records, saved continuations for each tool step, and per-character skill selection remain pending. |
+| Tools, MCP, and skills | The essential [agent driver](../crates/tavern/README.md#agent-and-tools) runs a bounded tool loop on OpenRouter and custom adapters. Separate tool plugins connect stdio and HTTP MCP servers through `rmcp` and add Agent Skills. | Durable tool records, saved continuations for each tool step, and per-character skill selection remain pending. |
 | Web search and fetch | The provider runs its native web search tool. The essential `web_fetch` tool reads public HTTPS pages through the scoped host fetcher. | A custom endpoint has no web search. |
 | Voice and image input | The provider contract accepts text only. | Typed media inputs, storage, permissions, and adapters remain pending. |
 | Speech and realtime audio | The runtime has no audio operation. | Recognition, synthesis, and realtime sessions remain pending. |
@@ -138,7 +138,7 @@ The importer never extracts an archive to the filesystem. The importer never exe
 | Card JSON | 8 MiB |
 | Path | 1024 UTF-8 bytes |
 
-The [archive tests](../crates/card/tests/charx.rs) cover preservation, edits, paths, corruption, and resource bounds.
+The [archive tests](../crates/core/tests/charx.rs) cover preservation, edits, paths, corruption, and resource bounds.
 
 ### Remaining format work
 
@@ -206,8 +206,9 @@ Older configuration records retain their identity when the option is absent.
 
 ### OpenRouter routing
 
-The default request includes `allow_fallbacks: false` and `require_parameters: true`. The profile can supply an explicit provider order.
-The profile can permit fallback only through an explicit routing setting. The runtime does not retry its own request or change its model automatically.
+The default request includes `allow_fallbacks: true` and `require_parameters: true`. The profile can supply an explicit provider order.
+OpenRouter then tries another endpoint of the same model when one endpoint fails, is rate limited, or needs another key. Each endpoint must support every requested parameter.
+A profile can pin one endpoint with `allow_fallbacks: false`. The runtime does not retry its own request or change its model automatically.
 The [OpenRouter routing reference](https://openrouter.ai/docs/guides/routing/provider-selection) defines the remote routing controls.
 
 ```sh
@@ -226,10 +227,11 @@ The Gemini adapter consolidates system sections in `systemInstruction`. The Gemi
 The prepared request records these logical-to-wire transformations.
 
 The stream must contain a terminal success signal before the runtime commits an assistant node. The runtime keeps partial output when a provider reports a limit or a failure.
-The runtime saves usage before it emits a usage event. The runtime retains that usage after cancellation or stream failure.
+The runtime saves the usage of each completed model call before it emits a usage event. A failed or cancelled model call reports no usage.
 The adapter never treats premature connection closure as success.
-The [`genai`](https://crates.io/crates/genai) library parses each wire protocol. The library ignores malformed content values and malformed tool items.
-The adapter streams recognized reasoning content as `ProviderEvent::Reasoning`. The reasoning content never enters the character reply. The adapter reports usage in one shape for every protocol.
+The [Rig](https://crates.io/crates/rig-core) library parses each wire protocol. Rig rejects malformed content values and malformed tool items as `invalid_provider_stream`.
+The runtime streams recognized reasoning content as `AgentEvent::Reasoning`. The reasoning content never enters the character reply. Rig reports usage in one shape for every protocol.
+Rig maps an Anthropic `model_context_window_exceeded` stop to an output limit, so the runtime reports `output_limit`.
 
 ### Error classification
 
@@ -238,6 +240,9 @@ The adapter recognizes `context_length_exceeded` as `context_exceeded`. The adap
 The Gemini signature requires `INVALID_ARGUMENT` and an input-token overflow message. An unknown or oversized error body retains `provider_http`.
 HTTP 401 and 403 retain `provider_auth` without an error-body read. HTTP 402 retains `provider_credit`.
 HTTP 429 retains `provider_rate_limit`. HTTP 413 retains `context_exceeded`.
+HTTP 502, 503, and 504 retain `provider_unavailable`.
+Some OpenRouter endpoints fail with an invalid upstream response when a request carries `openrouter:web_search` with function tools and system messages.
+When the first model call fails with `provider_unavailable` before any output, the runtime repeats it once without the web search tool.
 
 The stream classifier recognizes context, authentication, and rate-limit error markers. The library does not keep the error code of a Responses `response.failed` event.
 The adapter reports that event as `invalid_provider_stream`. The runtime retains earlier text and usage after these failures.
@@ -255,7 +260,7 @@ cargo run --locked -- --home ./home config provider \
   --endpoint http://127.0.0.1:8080/v1/chat/completions
 ```
 
-The custom adapter requires a complete endpoint URL. The local server must implement the documented Chat Completions SSE subset.
+The custom adapter requires the API root or the full `/chat/completions` URL. Rig adds `/chat/completions` to an API root. The local server must implement the documented Chat Completions SSE subset.
 The server must send a supported finish reason and the final `[DONE]` frame. The caller can use `--api-key-env NAME` when the server requires authentication.
 
 ## Complete request comparison
@@ -292,24 +297,24 @@ Lore, examples, overflow, overrides, and non-ASCII text remain outside that case
 
 ## Model catalog
 
-The [catalog module](../crates/adapters/src/provider/catalog.rs) supplies `CatalogClient::fetch` and `ModelCatalog::filter`. The client accepts provider configuration, an optional catalog endpoint, a credential resolver, and cancellation.
-The catalog retains provenance, raw pages, typed advertisements, and unknown values. Missing capability fields remain unknown.
-Filters match input modality, output modality, and supported parameter. A missing advertisement does not satisfy a requested filter.
-The evidence value is `advertised_unverified`. Provider advertisements do not prove successful model operations.
-The defaults limit responses to 16 MiB, 20000 models, and 100 pages. The client disables redirects and enforces cancellation and the provider timeout.
-Custom providers require an explicit catalog endpoint. Nine local HTTP tests and one public OpenRouter catalog fetch pass.
-The live fetch returns 698 models for its recorded run. Integrated CLI and terminal validation remains pending.
+The [catalog module](../crates/runtime/src/provider/catalog.rs) supplies `catalog::fetch` and `CatalogFilter`. The function accepts provider configuration, an optional catalog endpoint, a credential resolver, and cancellation.
+Rig lists the models of each protocol. The Rig model catalog adds input and output modalities, parameters, prices in USD for one million tokens, and limits that the listing omits.
+The catalog matches the vendor of the protocol first. Then it matches the model ID in any vendor, so a custom endpoint that serves a known model also gets its facts.
+The `raw` field holds the Rig listing entry. Rig lists the OpenRouter models that write text, because only those models can produce a chat reply.
+Filters match input modality, output modality, and supported parameter. A missing fact does not satisfy a requested filter.
+The evidence value is `advertised_unverified`. The facts do not prove successful model operations.
+The transport disables redirects. The function enforces cancellation and the provider timeout. Rig checks an OpenRouter key before it lists the public catalog.
+Custom providers require an explicit catalog endpoint. Four local HTTP tests cover listing, authentication, catalog facts, errors, and cancellation.
 
 ## Provider tool transport
 
-The [provider module](../crates/adapters/src/provider/mod.rs) has three parts:
-- [`request.rs`](../crates/adapters/src/provider/request.rs) builds one protocol-neutral `ChatBody` from the prompt plan. `PreparedRequest::body` stores that body.
-- [`tools.rs`](../crates/adapters/src/provider/tools.rs) checks tool definitions, continuation turns, and returned calls.
-- [`client.rs`](../crates/adapters/src/provider/client.rs) sends the body through the `genai` library and maps its events and errors.
+The [provider module](../crates/runtime/src/provider/mod.rs) has two parts:
+- [`request.rs`](../crates/runtime/src/provider/request.rs) builds one protocol-neutral `ChatBody` from the prompt plan. `PreparedRequest::body` stores that body.
+- [`client.rs`](../crates/runtime/src/provider/client.rs) builds the Rig model and the Rig agent run, and maps the Rig errors.
 
-`ProviderAdapter::prepare_agent` adds definitions and continuation turns. `ProviderAdapter::open_stream` returns text, thinking text, tool calls, usage, and terminal events.
-The [typed records](../crates/conversation/src/provider.rs) define `ToolDefinition`, `ToolCall`, `ToolResult`, `AgentTurn`, and `AgentRequest`.
-The library maps tools and continuation turns to each protocol. A call without arguments receives an empty object.
+`ProviderAdapter::prepare_agent` adds the tool definitions to the saved request. `ProviderAdapter::model` returns the Rig model.
+The Rig agent loop validates the tool calls, runs the tools, and sends the results back in the native format of each protocol.
+The [typed records](../crates/session/src/provider.rs) define `ToolDefinition`.
 
 The ignored `live_providers` test sends text and tool conversations to OpenRouter models:
 

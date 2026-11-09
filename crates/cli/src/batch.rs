@@ -21,7 +21,11 @@ use serde_json::{Value, json};
 
 use crate::*;
 
+/// The `--approve-tools` option of this process.
+static APPROVE_TOOLS: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
+
 pub(super) async fn run(cli: Cli) -> Result<()> {
+    APPROVE_TOOLS.get_or_init(|| cli.approve_tools);
     execute(
         cli,
         &mut Output::Terminal,
@@ -54,6 +58,7 @@ pub(super) async fn collect(
     execute(
         Cli {
             home: Some(home),
+            approve_tools: false,
             command: Some(command),
         },
         &mut output,
@@ -152,16 +157,11 @@ async fn execute(
                 output: modality,
                 parameter,
             } => {
-                use rustytavern::provider::catalog::{CatalogClient, CatalogFilter};
+                use rustytavern::provider::catalog::{CatalogFilter, fetch};
                 let config = app.config.provider(&provider)?;
-                let mut catalog = CatalogClient::default()
-                    .fetch(
-                        &config,
-                        endpoint.as_deref(),
-                        &app.credentials(),
-                        cancellation,
-                    )
-                    .await?;
+                let credentials = app.credentials();
+                let mut catalog =
+                    fetch(&config, endpoint.as_deref(), &credentials, cancellation).await?;
                 let filter = CatalogFilter {
                     input_modality: input,
                     output_modality: modality,
@@ -737,7 +737,14 @@ async fn render(mut handle: GenerationHandle, events: bool) -> Result<()> {
             event = handle.events.recv() => match event {
                 Some(event) => {
                     terminal_seen |= matches!(event.r#type.as_str(), "completed"|"failed"|"cancelled"|"interrupted");
+                    if let (Some(call), "tool_approval") = (&event.call_id, event.r#type.as_str()) {
+                        handle.approver.approve(call, APPROVE_TOOLS.get().copied().unwrap_or(false));
+                    }
                     if events { output(&event)?; }
+                    // A repeated truncated reply discards its text. The output starts a new line with the kept draft.
+                    else if event.r#type == "draft_reset" {
+                        let kept = event.text.unwrap_or_default(); println!(); print!("{kept}"); std::io::stdout().flush()?; rendered = kept;
+                    }
                     else if event.r#type == "text_delta" && event.missed_events.is_none() {
                         let text = event.text.unwrap_or_default(); print!("{text}"); std::io::stdout().flush()?; rendered.push_str(&text);
                     }

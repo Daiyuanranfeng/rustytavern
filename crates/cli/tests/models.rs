@@ -98,29 +98,23 @@ fn catalog_filters_and_selection_keep_generation_settings_and_saved_sessions() {
     );
     let catalog = cli(
         data,
-        &[
-            "model",
-            "discover",
-            "local",
-            "--endpoint",
-            &endpoint,
-            "--input",
-            "image",
-            "--output",
-            "text",
-            "--parameter",
-            "tools",
-        ],
+        &["model", "discover", "local", "--endpoint", &endpoint],
     );
-    assert_eq!(catalog["models"].as_array().unwrap().len(), 1);
-    assert_eq!(catalog["models"][0]["id"], "vision-model");
-    assert_eq!(catalog["models"][0]["raw"]["future"]["keep"], 42);
+    // A custom endpoint has no Rig catalog facts, so the listing has only the model IDs.
+    let ids: Vec<_> = catalog["models"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|m| m["id"].clone())
+        .collect();
+    assert_eq!(ids, [json!("text-model"), json!("vision-model")]);
+    assert!(catalog["models"][1]["advertised"]["input_modalities"].is_null());
     assert_eq!(catalog["provenance"]["evidence"], "advertised_unverified");
     assert!(
         server
             .join()
             .unwrap()
-            .starts_with("GET /catalog HTTP/1.1\r\n")
+            .starts_with("GET /catalog/models HTTP/1.1\r\n")
     );
     cli(data, &["model", "select", "local", "vision-model"]);
     let saved = cli(data, &["config", "show"]);
