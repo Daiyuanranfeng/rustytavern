@@ -112,7 +112,7 @@ fn the_screen_removes_controls_and_handles_small_terminals() {
     ui.notice = "Status\x1b[31m".into();
     ui.outgoing = text("Reply\x1b]52;c;secret\x07");
     ui.note("Note\x1b[2J");
-    let history = super::super::view::history(&ui.history, 40, ui.bubbles);
+    let history = super::super::view::history(&ui.history, 40, ui.bubbles, false);
     assert!(
         !history
             .iter()
@@ -708,25 +708,30 @@ fn thinking_and_tool_steps_render_as_collapsible_bubbles_before_the_reply() {
     assert!(!rows.iter().any(|row| row.contains("Sunny, 21")));
     ui.key(KeyEvent::new(KeyCode::Char('o'), KeyModifiers::CONTROL))
         .unwrap();
-    assert!(ui.steps.iter().all(|step| step.open));
+    assert!(ui.preferences.verbose);
     assert!(
         screen(&mut ui)
             .iter()
             .any(|row| row.contains("Sunny, 21 °C"))
     );
-    ui.key(KeyEvent::new(KeyCode::Char('o'), KeyModifiers::CONTROL))
-        .unwrap();
-    assert!(ui.steps.iter().all(|step| !step.open));
     ui.history.push(Message {
         user: false,
         label: "Character".into(),
         text: "It is sunny.".into(),
         steps: std::mem::take(&mut ui.steps),
     });
-    let history: Vec<String> = super::super::view::history(&ui.history, 80, ui.bubbles)
-        .iter()
-        .map(ToString::to_string)
-        .collect();
+    let history = |ui: &Ui| -> Vec<String> {
+        let verbose = ui.preferences.verbose;
+        super::super::view::history(&ui.history, 80, ui.bubbles, verbose)
+            .iter()
+            .map(ToString::to_string)
+            .collect()
+    };
+    assert!(history(&ui).iter().any(|row| row.contains("Sunny, 21")));
+    ui.slash("/verbose").unwrap();
+    assert!(!ui.preferences.verbose);
+    assert_eq!(ui.notice, "Verbose mode is off.");
+    let history = history(&ui);
     let thinking = history
         .iter()
         .position(|row| row.contains("▸ ✻ Thinking"))

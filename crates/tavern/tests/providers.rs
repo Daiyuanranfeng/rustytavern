@@ -461,3 +461,42 @@ fn an_endpoint_with_a_query_string_fails_because_rig_adds_the_route_path() {
         .unwrap_err();
     assert_eq!(error.code, "configuration");
 }
+
+#[test]
+fn provider_web_searches_become_tool_steps() {
+    use rustytavern::provider::web_searches;
+    // OpenRouter reports a search count and the cited pages. The title "1" is a citation number.
+    let openrouter = json!({
+        "choices": [{"message": {"annotations": [
+            {"type": "url_citation", "url_citation": {"url": "https://a.example", "title": "1"}},
+            {"type": "url_citation", "url_citation": {"url": "https://a.example", "title": "1"}},
+        ]}}],
+        "usage": {"server_tool_use_details": {"web_search_requests": 2}},
+    });
+    assert_eq!(
+        web_searches(&openrouter),
+        [("web_search ×2".into(), "https://a.example".into())]
+    );
+    let anthropic = json!({"content": [
+        {"type": "server_tool_use", "id": "s1", "name": "web_search", "input": {"query": "rust"}},
+        {"type": "web_search_tool_result", "tool_use_id": "s1", "content": [
+            {"type": "web_search_result", "url": "https://b.example", "title": "Rust"},
+        ]},
+        {"type": "text", "text": "Rust."},
+    ]});
+    assert_eq!(
+        web_searches(&anthropic),
+        [(
+            r#"web_search {"query":"rust"}"#.into(),
+            "Rust https://b.example".into()
+        )]
+    );
+    let openai = json!({"output": [
+        {"type": "web_search_call", "action": {"type": "search", "query": "rust"}},
+    ]});
+    assert_eq!(
+        web_searches(&openai)[0].0,
+        r#"web_search {"type":"search","query":"rust"}"#
+    );
+    assert!(web_searches(&json!({"choices": [], "usage": {}})).is_empty());
+}

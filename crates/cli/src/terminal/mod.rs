@@ -131,7 +131,12 @@ fn present(
         )?;
     }
     if !ui.history.is_empty() {
-        let lines = view::history(&std::mem::take(&mut ui.history), width, ui.bubbles);
+        let lines = view::history(
+            &std::mem::take(&mut ui.history),
+            width,
+            ui.bubbles,
+            ui.preferences.verbose,
+        );
         let count = lines.len().min(usize::from(u16::MAX)) as u16;
         terminal.insert_before(count, |buffer| {
             Paragraph::new(lines).render(buffer.area, buffer)

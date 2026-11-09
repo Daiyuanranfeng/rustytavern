@@ -80,11 +80,21 @@ impl Ui {
                 self.menu("Worldbooks for this conversation", items);
             }
             "/quit" => self.exit = true,
+            "/verbose" => {
+                self.preferences.verbose = !self.preferences.verbose;
+                self.save()?;
+                let state = if self.preferences.verbose {
+                    "on"
+                } else {
+                    "off"
+                };
+                self.notice = format!("Verbose mode is {state}.");
+            }
             "/help" => {
                 self.overlay = Some(Overlay::Document {
                     title: "Commands and keys".into(),
                     text: format!(
-                        "{}\n\nEnter sends. Alt+Enter inserts a newline.\nTab completes commands or changes fields. Escape closes dialogs.\nThe chat history stays in the terminal scrollback. Scroll and select it as usual.\nDialogs accept the mouse wheel and clicks.\nCtrl+O expands or collapses the steps of the active reply.\nCtrl+C cancels. Ctrl+D exits.\n\nThese keys work while the message box is empty:\n← and → show the alternatives of the last message. → after the newest reply generates another reply.\n↑ edits the last message. Ctrl+R regenerates the last reply.\nEsc twice lists the messages of this branch. Select a message to rewind, edit, regenerate, branch, hide, or copy it.",
+                        "{}\n\nEnter sends. Alt+Enter inserts a newline.\nTab completes commands or changes fields. Escape closes dialogs.\nThe chat history stays in the terminal scrollback. Scroll and select it as usual.\nDialogs accept the mouse wheel and clicks.\nCtrl+O or /verbose turns verbose mode on or off. Verbose mode shows the thinking text, the tool calls, and the web search sources.\nCtrl+C cancels. Ctrl+D exits.\n\nThese keys work while the message box is empty:\n← and → show the alternatives of the last message. → after the newest reply generates another reply.\n↑ edits the last message. Ctrl+R regenerates the last reply.\nEsc twice lists the messages of this branch. Select a message to rewind, edit, regenerate, branch, hide, or copy it.",
                         COMMANDS
                             .iter()
                             .map(|(a, b)| format!("{a}  {b}"))

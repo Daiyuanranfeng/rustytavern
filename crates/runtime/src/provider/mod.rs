@@ -6,7 +6,7 @@ pub mod catalog;
 
 mod client;
 mod request;
-pub use client::{agent, map_error, search_fallback};
+pub use client::{agent, map_error, search_fallback, web_searches};
 pub use request::{ChatBody, ChatMessage};
 
 use serde::{Deserialize, Serialize};
