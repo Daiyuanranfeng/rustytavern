@@ -248,6 +248,81 @@ pub fn search_fallback(request: &PreparedRequest, error: &Error) -> bool {
     request.protocol == ProviderKind::OpenRouter && error.code == "provider_unavailable"
 }
 
+/// The function reads the provider web searches of one model call from its raw response.
+/// Each entry holds the call text and the result text of one search.
+/// OpenRouter reports only a search count and the cited pages. It gives one entry.
+pub fn web_searches(raw: &Value) -> Vec<(String, String)> {
+    fn all(value: &Value) -> Vec<&Value> {
+        value.as_array().into_iter().flatten().collect()
+    }
+    let pages = |pages: Vec<&Value>| {
+        let mut list: Vec<String> = Vec::new();
+        for page in pages {
+            let Some(url) = page["url"].as_str().or(page["uri"].as_str()) else {
+                continue;
+            };
+            let line = match page["title"].as_str() {
+                // Some models give the citation number as the title.
+                Some(title) if title.parse::<u32>().is_err() => format!("{title} {url}"),
+                _ => url.to_owned(),
+            };
+            if !list.contains(&line) {
+                list.push(line);
+            }
+        }
+        list.join("\n")
+    };
+    let mut searches: Vec<(String, String)> = Vec::new();
+    // Anthropic sends server tool blocks. The OpenAI Responses API sends web search items.
+    for item in all(&raw["content"]).into_iter().chain(all(&raw["output"])) {
+        match item["type"].as_str().unwrap_or_default() {
+            "server_tool_use" => searches.push((
+                format!(
+                    "{} {}",
+                    item["name"].as_str().unwrap_or_default(),
+                    item["input"]
+                ),
+                String::new(),
+            )),
+            "web_search_tool_result" => {
+                if let Some(last) = searches.last_mut() {
+                    last.1 = pages(all(&item["content"]));
+                }
+            }
+            "web_search_call" => searches.push((
+                format!("web_search {}", item["action"]),
+                pages(all(&item["action"]["sources"])),
+            )),
+            _ => {}
+        }
+    }
+    let grounding = &raw["candidates"][0]["groundingMetadata"];
+    if grounding["webSearchQueries"].is_array() {
+        let chunks = all(&grounding["groundingChunks"]);
+        searches.push((
+            format!("web_search {}", grounding["webSearchQueries"]),
+            pages(chunks.into_iter().map(|chunk| &chunk["web"]).collect()),
+        ));
+    }
+    let count = raw
+        .pointer("/usage/server_tool_use_details/web_search_requests")
+        .and_then(Value::as_u64)
+        .unwrap_or_default();
+    if count > 0 {
+        let notes = all(&raw["choices"][0]["message"]["annotations"]);
+        searches.push((
+            format!("web_search ×{count}"),
+            pages(
+                notes
+                    .into_iter()
+                    .map(|note| &note["url_citation"])
+                    .collect(),
+            ),
+        ));
+    }
+    searches
+}
+
 /// The function maps a Rig run error to the provider contract.
 pub fn map_error(error: PromptError) -> Error {
     let report: ErrorReport = match error {

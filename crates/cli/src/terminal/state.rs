@@ -23,6 +23,7 @@ pub(super) const COMMANDS: &[(&str, &str)] = &[
         "/settings",
         "Lorebooks, branches, export, plugins, and more",
     ),
+    ("/verbose", "Show or hide the thinking and tool details"),
     ("/help", "Read commands and keys"),
     ("/quit", "Close the terminal"),
 ];
@@ -39,6 +40,8 @@ pub(super) struct Preferences {
     pub session: Option<String>,
     pub character: Option<String>,
     pub persona: Option<String>,
+    /// Verbose mode shows the text of the thinking and tool steps.
+    pub verbose: bool,
     /// The `default_provider` setting in `config.toml` holds this value.
     #[serde(skip)]
     pub provider: Option<String>,
@@ -166,7 +169,6 @@ pub(super) struct Step {
     pub tool: Option<String>,
     pub body: String,
     pub done: bool,
-    pub open: bool,
 }
 /// A message is one entry of the scrollback. The steps come before an assistant reply.
 pub(super) struct Message {
@@ -719,8 +721,7 @@ impl Ui {
             }
             None => match key.code {
                 KeyCode::Char('o') if key.modifiers.contains(KeyModifiers::CONTROL) => {
-                    let open = !self.steps.iter().any(|step| step.open);
-                    self.steps.iter_mut().for_each(|step| step.open = open);
+                    self.slash("/verbose")?;
                 }
                 KeyCode::Up | KeyCode::Down | KeyCode::Tab if self.typed_command().is_some() => {
                     let typed = self.typed_command().unwrap_or_default();
@@ -1109,7 +1110,6 @@ impl Ui {
                     tool: None,
                     body: value,
                     done: false,
-                    open: false,
                 }),
             },
             "tool_call" => {
@@ -1121,7 +1121,6 @@ impl Ui {
                     tool: Some(value),
                     body: String::new(),
                     done: false,
-                    open: false,
                 });
             }
             "tool_result" => {

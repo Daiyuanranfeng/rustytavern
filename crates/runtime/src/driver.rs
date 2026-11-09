@@ -269,6 +269,11 @@ impl DriverContext {
                     ..
                 })) if !text.is_empty() => break AgentEvent::Reasoning { text },
                 MultiTurnStreamItem::CompletionCall(call) => {
+                    // The provider runs its web search itself. The raw response reports it.
+                    for (search, result) in provider::web_searches(&call.raw) {
+                        self.emit("tool_call", search)?;
+                        self.emit("tool_result", result)?;
+                    }
                     self.answered = true;
                     self.record_usage(serde_json::to_value(call.usage)?).await?;
                     self.runtime.renew(&self.generation).await?;

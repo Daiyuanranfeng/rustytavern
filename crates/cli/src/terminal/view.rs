@@ -498,8 +498,8 @@ fn message(
     );
 }
 
-/// The function draws one small bubble for each step. A step in the scrollback stays collapsed.
-fn steps(lines: &mut Vec<Line<'static>>, steps: &[Step], tick: usize, width: usize) {
+/// The function draws one small bubble for each step. Verbose mode adds the text of each step.
+fn steps(lines: &mut Vec<Line<'static>>, steps: &[Step], tick: usize, width: usize, open: bool) {
     let dim = Style::default().fg(Color::DarkGray);
     for step in steps {
         let (icon, name) = match step.tool.as_deref() {
@@ -521,10 +521,7 @@ fn steps(lines: &mut Vec<Line<'static>>, steps: &[Step], tick: usize, width: usi
             (true, false) => "",
         };
         let mut body = vec![Line::from(vec![
-            Span::styled(
-                format!("{} {icon} ", if step.open { "▾" } else { "▸" }),
-                dim,
-            ),
+            Span::styled(format!("{} {icon} ", if open { "▾" } else { "▸" }), dim),
             Span::styled(
                 name,
                 Style::default()
@@ -533,7 +530,7 @@ fn steps(lines: &mut Vec<Line<'static>>, steps: &[Step], tick: usize, width: usi
             ),
             Span::styled(format!(" {state}"), dim),
         ])];
-        if step.open {
+        if open {
             body.extend(
                 step.body
                     .lines()
@@ -553,21 +550,16 @@ fn bubble_width(width: u16) -> usize {
 }
 
 /// The function renders queued messages for the scrollback. A blank line separates them from earlier output.
-pub(super) fn history(messages: &[Message], width: u16, colors: [Color; 2]) -> Vec<Line<'static>> {
+pub(super) fn history(
+    messages: &[Message],
+    width: u16,
+    colors: [Color; 2],
+    verbose: bool,
+) -> Vec<Line<'static>> {
     let width = bubble_width(width);
     let mut lines = Vec::new();
     for item in messages {
-        let collapsed: Vec<Step> = item
-            .steps
-            .iter()
-            .map(|step| Step {
-                tool: step.tool.clone(),
-                body: String::new(),
-                done: true,
-                open: false,
-            })
-            .collect();
-        steps(&mut lines, &collapsed, 0, width);
+        steps(&mut lines, &item.steps, 0, width, verbose);
         message(
             &mut lines,
             (width, colors),
@@ -593,7 +585,13 @@ fn live(ui: &Ui, width: u16) -> Vec<Line<'static>> {
             markdown(&ui.outgoing),
         );
     }
-    steps(&mut lines, &ui.steps, ui.tick, width);
+    steps(
+        &mut lines,
+        &ui.steps,
+        ui.tick,
+        width,
+        ui.preferences.verbose,
+    );
     if ui.streaming && ui.mode == GenerationMode::Impersonate {
         let body = markdown(&format!("{}▍", ui.reply));
         message(&mut lines, (width, ui.bubbles), true, &ui.names[1], body);
