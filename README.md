@@ -9,8 +9,6 @@ It runs on your computer. It has no web server and no web frontend.
 > [!WARNING]
 > RustyTavern is alpha software. The data formats and the plugin API can change in any release.
 
-![Product map](docs/assets/product-map.png)
-
 ## Features
 
 - Import character cards (PNG, JSON, CHARX) from a file, Chub, or RisuRealm.
