@@ -70,7 +70,8 @@ The current live test proves its recorded candidate workflow only.
 
 The investigation pins SillyTavern at `06bde939fb1e9c4c8d8641d810f0a916b5bce127`. The investigation pins RisuAI at `cb7f122d44089421b903197ef3f3e04e6706d5b6`.
 DeepSeek Harness supplies an architecture reference at `8bd073392eef6f54e921a093b95076248eb08cbb`. Research copies remain outside the tracked implementation.
-The project has no distribution license yet. The project must settle attribution and license requirements before it copies or adapts upstream code for distribution.
+RustyTavern uses the Apache License, Version 2.0. The tracked repository contains no copied upstream source files. The project makes no clean-room claim.
+A change that copies or adapts upstream code must first settle the attribution and license requirements of that code.
 
 ## Character cards and worldbooks
 

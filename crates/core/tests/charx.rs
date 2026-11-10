@@ -5,7 +5,9 @@ use zip::{CompressionMethod, ZipArchive, ZipWriter, write::SimpleFileOptions};
 
 fn archive(entries: &[(&str, &[u8])], method: CompressionMethod) -> Vec<u8> {
     let mut writer = ZipWriter::new(Cursor::new(Vec::new()));
-    writer.set_comment("The archive retains this comment, including PK\u{5}\u{6}.");
+    writer
+        .set_comment("The archive retains this comment, including PK\u{5}\u{6}.")
+        .unwrap();
     for (name, bytes) in entries {
         let options = SimpleFileOptions::default().compression_method(method);
         writer.start_file(*name, options).unwrap();

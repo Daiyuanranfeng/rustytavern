@@ -1,0 +1,48 @@
+name: Bug report
+description: Report a problem in RustyTavern.
+labels: ["bug"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Do not report a security problem here. Read SECURITY.md.
+        Do not paste an API key or a private card.
+  - type: textarea
+    id: what
+    attributes:
+      label: What happened?
+      description: Describe the problem and the expected result.
+    validations:
+      required: true
+  - type: textarea
+    id: steps
+    attributes:
+      label: Steps to reproduce
+      placeholder: |
+        1. Run `rustytavern ...`
+        2. Type `/new`
+        3. ...
+    validations:
+      required: true
+  - type: input
+    id: version
+    attributes:
+      label: Version or commit
+      placeholder: 0.1.0 or a commit hash
+    validations:
+      required: true
+  - type: input
+    id: platform
+    attributes:
+      label: Operating system and terminal
+      placeholder: macOS 26, iTerm2
+  - type: input
+    id: provider
+    attributes:
+      label: Provider and model
+      placeholder: openrouter, anthropic/claude-haiku-5.5
+  - type: textarea
+    id: logs
+    attributes:
+      label: Logs or output
+      render: text
