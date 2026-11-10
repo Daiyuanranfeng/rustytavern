@@ -35,7 +35,7 @@ Thank you for your help. This guide explains how to set up the project, change i
 
 ## Run the checks
 
-Run all four checks before you push. The CI runs the same checks.
+Run all four checks before you push. The CI runs only the format and lint checks.
 
 ```sh
 cargo fmt --all --check
