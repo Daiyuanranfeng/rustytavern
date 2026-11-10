@@ -86,7 +86,10 @@ pub fn apply_contributions(plan: &mut PromptPlan, contributions: &[Contribution]
                 .sections
                 .iter()
                 .position(|s| s.source == "history" || s.id == "current_user"),
-            _ => plan.sections.iter().position(|s| s.id == "post_history"),
+            _ => plan
+                .sections
+                .iter()
+                .position(|s| s.id == "post_history" || s.id == "prefill"),
         }
         .unwrap_or(plan.sections.len());
         plan.sections.splice(index..index, sections);

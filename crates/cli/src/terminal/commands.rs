@@ -256,6 +256,13 @@ impl Ui {
                     ),
                     (
                         format!(
+                            "Import a SillyTavern preset · {} custom blocks",
+                            prompt.blocks.len()
+                        ),
+                        Choice::Form(FormKind::Preset),
+                    ),
+                    (
+                        format!(
                             "Agent and tools · {} steps · approval: {confirm}",
                             agent.max_steps
                         ),

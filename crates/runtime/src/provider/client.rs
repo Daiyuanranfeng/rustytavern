@@ -114,9 +114,14 @@ pub fn agent(
 ) -> Result<AgentRunner> {
     let mut body = request.chat()?;
     let catalog = rig_core::catalog::Catalog::builtin();
-    let ceiling = super::catalog::spec(catalog, request.protocol, &body.model)
-        .and_then(|spec| spec.max_output_tokens)
-        .map(u64::from);
+    let spec = super::catalog::spec(catalog, request.protocol, &body.model);
+    let ceiling = spec.and_then(|spec| spec.max_output_tokens).map(u64::from);
+    // A model that refuses a prefill, such as Claude 4.6, gets the request without it.
+    if spec.is_some_and(|spec| !spec.compat.prefill)
+        && matches!(body.messages.last(), Some(ChatMessage::Assistant { .. }))
+    {
+        body.messages.pop();
+    }
     let mut messages: Vec<Message> = std::mem::take(&mut body.messages)
         .into_iter()
         .map(|message| match message {

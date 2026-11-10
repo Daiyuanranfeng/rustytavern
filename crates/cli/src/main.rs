@@ -395,6 +395,11 @@ enum ConfigCommand {
         #[arg(long)]
         merge_system_messages: bool,
     },
+    /// The command reads a SillyTavern chat completion preset into the `[prompt]` table.
+    /// Tavo and RisuAI read the same format.
+    Preset {
+        path: PathBuf,
+    },
 }
 /// An extension changes only the application appearance.
 #[derive(Subcommand)]

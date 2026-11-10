@@ -754,6 +754,16 @@ async fn execute(
                 app.save_config()?;
                 output.write(&json!({"provider":name}))?;
             }
+            ConfigCommand::Preset { path } => {
+                let preset = serde_json::from_slice(&std::fs::read(&path)?)?;
+                let base = app.config.prompt.clone().unwrap_or_default();
+                let prompt = rustytavern::prompt::import_sillytavern(&preset, base)?;
+                let summary =
+                    json!({"blocks":prompt.blocks.len(),"prefill":!prompt.prefill.is_empty()});
+                app.config.prompt = Some(prompt);
+                app.save_config()?;
+                output.write(&summary)?;
+            }
         },
         Command::Chat {
             session,

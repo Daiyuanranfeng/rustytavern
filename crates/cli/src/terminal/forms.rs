@@ -1,5 +1,6 @@
 use super::state::*;
 use super::*;
+use rustytavern::session::Role;
 
 impl Ui {
     pub(super) fn form(&mut self, kind: FormKind) {
@@ -19,6 +20,10 @@ impl Ui {
                 ("Connect a model provider", fields)
             }
             FormKind::WorldbookImport => ("Import a worldbook", vec![field("File path", "")]),
+            FormKind::Preset => (
+                "Import a SillyTavern preset · it replaces the instructions, the prefill, and the blocks",
+                vec![field("File path", "")],
+            ),
             FormKind::WorldbookExport => (
                 "Export a worldbook",
                 vec![
@@ -166,8 +171,24 @@ impl Ui {
                             "Main instruction · the system prompt of a card replaces it",
                             &prompt.main_instruction,
                         ),
-                        wrapped("Post-history instruction", &prompt.post_history_instruction),
-                        wrapped("Author's note: text after your persona", &prompt.note),
+                        wrapped(
+                            "Post-history instruction · other apps call it the jailbreak",
+                            &prompt.post_history_instruction,
+                        ),
+                        field(
+                            "Post-history role: system or user. Use user for Gemini.",
+                            role(&prompt.post_history_role),
+                        ),
+                        wrapped("Author's note", &prompt.note),
+                        field(
+                            "Author's note depth: the messages after it. Empty puts it after your persona.",
+                            &prompt.note_depth.map(|d| d.to_string()).unwrap_or_default(),
+                        ),
+                        field(
+                            "Author's note role: system, user, or assistant",
+                            role(&prompt.note_role),
+                        ),
+                        wrapped("Prefill: the start of each reply", &prompt.prefill),
                     ],
                 )
             }
@@ -264,6 +285,14 @@ impl Ui {
                 .map_err(|_| Error::new("invalid_input", "The field requires an unsigned number."))
         };
         let (command, after) = match kind {
+            FormKind::Preset => (
+                Command::Config {
+                    command: ConfigCommand::Preset {
+                        path: values[0].trim().into(),
+                    },
+                },
+                After::Say("The preset is saved in the prompt settings."),
+            ),
             FormKind::WorldbookImport => {
                 if values[0] == "-"
                     || !std::fs::metadata(&values[0]).is_ok_and(|metadata| metadata.is_file())
@@ -441,7 +470,14 @@ impl Ui {
                 prompt.example_budget = number(&values[5])?;
                 prompt.main_instruction = values[6].clone();
                 prompt.post_history_instruction = values[7].clone();
-                prompt.note = values[8].clone();
+                prompt.post_history_role = parse_role(&values[8])?;
+                prompt.note = values[9].clone();
+                prompt.note_depth = match values[10].trim() {
+                    "" => None,
+                    depth => Some(number(depth)?),
+                };
+                prompt.note_role = parse_role(&values[11])?;
+                prompt.prefill = values[12].clone();
                 if prompt.output_limit == 0 || prompt.context_limit <= prompt.output_limit {
                     return Err(Error::new(
                         "invalid_input",
@@ -626,6 +662,26 @@ impl Ui {
             tab: 0,
             scroll: 0,
         });
+    }
+}
+
+fn role(role: &Role) -> &'static str {
+    match role {
+        Role::System => "system",
+        Role::User => "user",
+        Role::Assistant => "assistant",
+    }
+}
+
+fn parse_role(value: &str) -> Result<Role> {
+    match value.trim() {
+        "system" => Ok(Role::System),
+        "user" => Ok(Role::User),
+        "assistant" => Ok(Role::Assistant),
+        _ => Err(Error::new(
+            "invalid_input",
+            "The role must be system, user, or assistant.",
+        )),
     }
 }
 
