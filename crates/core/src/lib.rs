@@ -91,7 +91,12 @@ pub fn native_artifact_hash() -> Result<String> {
     if let Some(hash) = HASH.get() {
         return Ok(hash.clone());
     }
-    let hash = digest(&bounded_read(&std::env::current_exe()?, 256 * 1024 * 1024)?);
+    let mut hasher = Sha256::new();
+    std::io::copy(
+        &mut std::fs::File::open(std::env::current_exe()?)?,
+        &mut hasher,
+    )?;
+    let hash = format!("{:x}", hasher.finalize());
     let _ = HASH.set(hash.clone());
     Ok(hash)
 }
