@@ -1074,3 +1074,53 @@ fn settings_forms_save_the_prompt_memory_and_agent_tables() {
         serde_json::json!({"max_steps":8,"confirm_tools":["web_fetch"],"retry_truncated":0,"max_tokens":0})
     );
 }
+
+#[test]
+fn prompt_field_supports_zoom_and_external_editor_round_trip() {
+    let directory = tempfile::tempdir().unwrap();
+    let mut ui = Ui::open(directory.path().into()).unwrap();
+    ui.form(FormKind::Options);
+    // Field 6 is the main instruction, the system prompt.
+    let control = |code| KeyEvent::new(code, KeyModifiers::CONTROL);
+    for _ in 0..6 {
+        ui.key(KeyEvent::new(KeyCode::Tab, KeyModifiers::NONE))
+            .unwrap();
+    }
+    // Ctrl+F toggles the zoom of the selected field.
+    ui.key(control(KeyCode::Char('f'))).unwrap();
+    assert!(matches!(
+        ui.overlay,
+        Some(Overlay::Form {
+            zoom: true,
+            selected: 6,
+            ..
+        })
+    ));
+    ui.key(control(KeyCode::Char('f'))).unwrap();
+    assert!(matches!(
+        ui.overlay,
+        Some(Overlay::Form { zoom: false, .. })
+    ));
+    // Ctrl+E requests the external editor for the selected field.
+    ui.key(control(KeyCode::Char('e'))).unwrap();
+    assert_eq!(ui.editor_request, Some(6));
+    // The run loop reads the field, runs the editor, and writes the result back.
+    let seed = ui.field_text(6).unwrap();
+    assert!(seed.contains("{{char}}"));
+    ui.set_field(6, "You are a pirate.\nYou speak in rhyme.");
+    assert_eq!(
+        ui.field_text(6).as_deref(),
+        Some("You are a pirate.\nYou speak in rhyme.")
+    );
+    ui.key(KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE))
+        .unwrap();
+    let prompt = Application::open(directory.path())
+        .unwrap()
+        .config
+        .prompt
+        .unwrap();
+    assert_eq!(
+        prompt.main_instruction,
+        "You are a pirate.\nYou speak in rhyme."
+    );
+}

@@ -259,6 +259,7 @@ impl Ui {
             kind,
             fields,
             selected: 0,
+            zoom: false,
         });
     }
     /// The method reads a text of the open chat. A missing chat or text gives an empty text.
