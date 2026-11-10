@@ -135,6 +135,143 @@ fn macros_use_one_pass_and_preserve_transcript_literals() {
 }
 
 #[test]
+fn custom_blocks_note_depth_and_prefill_take_their_places() {
+    let card = card();
+    let persona = persona();
+    let message = |id: &str, role: Role| rustytavern::session::Message {
+        id: id.into(),
+        parent_id: None,
+        role,
+        text: format!("{id}."),
+        generation_id: None,
+    };
+    let history = [message("a", Role::User), message("b", Role::Assistant)];
+    let block = |name: &str, position: &str, depth: usize| {
+        serde_json::from_value::<prompt::PromptBlock>(
+            json!({"name":name,"text":format!("{name} {{{{char}}}}"),"position":position,"depth":depth}),
+        )
+        .unwrap()
+    };
+    let mut off = block("off", "before_history", 0);
+    off.enabled = false;
+    let options = PromptOptions {
+        post_history_instruction: "Post.".into(),
+        post_history_role: Role::User,
+        note: "Note.".into(),
+        note_depth: Some(1),
+        prefill: "Sure,".into(),
+        blocks: vec![
+            block("first", "before_character", 0),
+            block("after", "after_character", 0),
+            block("before", "before_history", 0),
+            block("end", "after_history", 0),
+            block("deep", "depth", 0),
+            block("top", "depth", 99),
+            off,
+        ],
+        ..Default::default()
+    };
+    let plan = prompt::compile(&PromptInput {
+        card: &card,
+        persona: &persona,
+        history: &history,
+        message: "Now.",
+        options: &options,
+        accept_reduced: false,
+        counter: &ConservativeCounter,
+    })
+    .unwrap();
+    let ids = plan
+        .sections
+        .iter()
+        .map(|s| s.id.as_str())
+        .collect::<Vec<_>>();
+    let tail = &ids[ids.iter().position(|id| *id == "block:2").unwrap()..];
+    assert_eq!(
+        tail,
+        [
+            "block:2",
+            "block:5",
+            "history:a",
+            "history:b",
+            "note",
+            "current_user",
+            "block:4",
+            "block:3",
+            "post_history",
+            "prefill"
+        ]
+    );
+    assert_eq!(ids[1], "block:0");
+    assert!(
+        ids.iter().position(|id| *id == "persona") < ids.iter().position(|id| *id == "block:1")
+    );
+    assert!(!ids.contains(&"block:6"));
+    let text = |id: &str| plan.sections.iter().find(|s| s.id == id).unwrap();
+    assert_eq!(text("block:0").text, "first Lumen");
+    assert_eq!(text("post_history").role, Role::User);
+    assert_eq!(text("prefill").role, Role::Assistant);
+}
+
+#[test]
+fn default_prompt_options_keep_the_saved_configuration_hash() {
+    let value = serde_json::to_value(PromptOptions::default()).unwrap();
+    for key in [
+        "post_history_role",
+        "note_depth",
+        "note_role",
+        "prefill",
+        "blocks",
+    ] {
+        assert!(value.get(key).is_none(), "{key}");
+    }
+}
+
+#[test]
+fn sillytavern_presets_set_instructions_blocks_and_prefill() {
+    let preset = json!({
+        "assistant_prefill": "Sure,",
+        "prompts": [
+            {"identifier":"main","content":"Main."},
+            {"identifier":"nsfw","name":"Aux","content":"Aux."},
+            {"identifier":"charDescription","marker":true},
+            {"identifier":"custom","name":"Style","role":"user","content":"Style."},
+            {"identifier":"deep","name":"Deep","content":"Deep.","injection_position":1,"injection_depth":2},
+            {"identifier":"chatHistory","marker":true},
+            {"identifier":"jailbreak","role":"user","content":"Post."},
+            {"identifier":"unused","content":"Unused."}
+        ],
+        "prompt_order": [
+            {"character_id":100000,"order":[]},
+            {"character_id":100001,"order":[
+                {"identifier":"main","enabled":true},
+                {"identifier":"nsfw","enabled":false},
+                {"identifier":"charDescription","enabled":true},
+                {"identifier":"custom","enabled":true},
+                {"identifier":"deep","enabled":true},
+                {"identifier":"chatHistory","enabled":true},
+                {"identifier":"jailbreak","enabled":true}
+            ]}
+        ]
+    });
+    let options = prompt::import_sillytavern(&preset, PromptOptions::default()).unwrap();
+    assert_eq!(options.main_instruction, "Main.");
+    assert_eq!(options.post_history_instruction, "Post.");
+    assert_eq!(options.post_history_role, Role::User);
+    assert_eq!(options.prefill, "Sure,");
+    let blocks = serde_json::to_value(&options.blocks).unwrap();
+    assert_eq!(
+        blocks,
+        json!([
+            {"name":"Aux","text":"Aux.","position":"before_character","enabled":false},
+            {"name":"Style","text":"Style.","role":"user","position":"after_character"},
+            {"name":"Deep","text":"Deep.","position":"depth","depth":2}
+        ])
+    );
+    assert!(prompt::import_sillytavern(&json!({}), PromptOptions::default()).is_err());
+}
+
+#[test]
 fn lore_matches_keys_in_fixed_order_without_removing_spaces() {
     let book = json!({"entries":[
         {"id":"later","keys":["beacon"],"content":"Later.","insertion_order":2},

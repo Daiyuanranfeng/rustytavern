@@ -85,6 +85,8 @@ pub(super) enum After {
 pub(super) enum FormKind {
     WorldbookImport,
     WorldbookExport,
+    /// The form imports a SillyTavern preset into the `[prompt]` table.
+    Preset,
     Setup(String),
     Provider(String),
     Import,

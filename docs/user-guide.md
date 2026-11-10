@@ -37,7 +37,8 @@ Each `/settings` row shows its current value. The rows are:
 - **Model** opens the model list.
 - **Model providers and keys** connects a provider or replaces its key.
 - **Provider options** edits the limits and the sampling parameters of the selected provider.
-- **Prompt and memory** edits the `[prompt]` table: the history limit, the memory interval, the limits, the budgets, the instructions, and the author's note.
+- **Prompt and memory** edits the `[prompt]` table: the history limit, the memory interval, the limits, the budgets, the instructions, the roles, the author's note and its depth, and the prefill.
+- **Import a SillyTavern preset** reads a preset file into the `[prompt]` table. The row shows the number of custom blocks.
 - **Agent and tools** edits the `[plugins.agent]` table: the tool steps, the tools that wait for approval, the repeats of a cut-off reply, and the token budget.
 - **Plugins** shows one row for each installed plugin. Select the row to turn the plugin on or off.
 - **Memory of this chat**, **Lorebooks of this chat**, and **Apply the current settings to this chat** appear while a chat is open.
@@ -176,6 +177,21 @@ lore_budget = 32768
 example_budget = 8192
 history_limit = 0                     # 0 keeps every message that fits the context limit
 memory_interval = 20                  # the new messages between memory updates; 0 turns the memory off
+main_instruction = "You act as {{char}}."
+post_history_instruction = "..."      # the text after the chat; other apps call it the jailbreak
+post_history_role = "user"            # optional: system (default) or user
+note = "..."                          # the author's note
+note_depth = 4                        # optional: the chat messages after the note; no value puts it after the persona
+note_role = "system"                  # optional: system, user, or assistant
+prefill = "..."                       # optional: the start of each reply
+
+[[prompt.blocks]]                     # optional: custom blocks in this order
+name = "Style"
+text = "{{char}} writes short replies."
+role = "system"                       # system (default), user, or assistant
+position = "depth"                    # before_character, after_character, before_history (default), after_history, or depth
+depth = 2                             # the chat messages after the block; only the depth position uses it
+enabled = true
 
 [plugins]
 enabled = ["lighthouse-notes"]       # installed plugins only
@@ -517,6 +533,31 @@ The runtime rejects that execution even when the session accepts reduced behavio
 A replacement profile implements `PromptProfile::draft_with_worldbooks` to execute other rules. The default trait method rejects a nonempty selection.
 
 The [worldbook tests](../crates/tavern/tests/worldbooks.rs) check requests, replay, restart, limits, export validation, and migration. The [database figure](architecture.md#db-model) shows SQL and logical references.
+
+### Custom prompts
+
+The `[prompt]` table holds the text that the user adds to every request. The request has this order:
+
+1. The main instruction. The card `system_prompt` replaces it. `{{original}}` in the card text inserts the main instruction.
+2. The `before_character` blocks, the lore, the character fields, the persona, and the author's note without a depth.
+3. The `after_character` blocks, the examples, and the `before_history` blocks.
+4. The chat and the new message. A `depth` block or a note with `note_depth` goes before the last N chat messages. Depth 0 puts it after the new message.
+5. The `after_history` blocks.
+6. The post-history instruction. The card `post_history_instructions` replaces it. `{{original}}` in the card text inserts the post-history instruction.
+7. The prefill, as an assistant message.
+
+Each block, the note, and the prefill expand `{{char}}` and `{{user}}`.
+
+The post-history instruction is the jailbreak slot of SillyTavern, RisuAI, and Tavo. The app ships no jailbreak text. Paste your own text there.
+Gemini and some Claude models move every system message to the start of the request. Set `post_history_role = "user"` to keep the text after the chat.
+
+The prefill makes the model continue your text. A model that refuses a prefill, such as Claude 4.6 and later, gets the request without it. The reply does not show the prefill.
+
+`rustytavern config preset FILE` reads a SillyTavern chat completion preset. Tavo and community presets use the same format.
+The command replaces the main instruction, the post-history instruction and its role, the prefill, and the blocks.
+The `main` prompt sets the main instruction. The `jailbreak` prompt sets the post-history instruction.
+Each other prompt with text becomes a block. The markers before it set its position. An absolute prompt becomes a `depth` block.
+The command reads the global prompt order. It keeps disabled prompts as disabled blocks.
 
 ## Native records and exports
 

@@ -1037,6 +1037,9 @@ fn settings_forms_save_the_prompt_memory_and_agent_tables() {
     if let Some(Overlay::Form { fields, .. }) = &mut ui.overlay {
         fields[0].editor = editor("40");
         fields[1].editor = editor(" 0 ");
+        fields[8].editor = editor("user");
+        fields[10].editor = editor("4");
+        fields[12].editor = editor("Sure,");
     }
     ui.key(KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE))
         .unwrap();
@@ -1047,6 +1050,11 @@ fn settings_forms_save_the_prompt_memory_and_agent_tables() {
         .prompt
         .unwrap();
     assert_eq!((prompt.history_limit, prompt.memory_interval()), (40, 0));
+    assert_eq!(prompt.post_history_role, rustytavern::session::Role::User);
+    assert_eq!(
+        (prompt.note_depth, prompt.prefill.as_str()),
+        (Some(4), "Sure,")
+    );
     ui.form(FormKind::Agent);
     if let Some(Overlay::Form { fields, .. }) = &mut ui.overlay {
         fields[0].editor = editor("65");

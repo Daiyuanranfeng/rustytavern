@@ -1,6 +1,8 @@
 mod contribution;
 pub mod phases;
+mod preset;
 pub use contribution::{Contribution, Retention, apply_contributions};
+pub use preset::import_sillytavern;
 
 use std::collections::BTreeSet;
 
@@ -29,8 +31,51 @@ pub struct PromptOptions {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub memory_interval: Option<usize>,
     pub main_instruction: String,
+    /// The post-history instruction goes after the chat. Other apps call it the jailbreak.
     pub post_history_instruction: String,
+    /// Some providers move every system message to the start. The user role keeps this text after the chat.
+    #[serde(skip_serializing_if = "is_system")]
+    pub post_history_role: Role,
     pub note: String,
+    /// The number of chat messages after the note. No value puts the note after the persona.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub note_depth: Option<usize>,
+    #[serde(skip_serializing_if = "is_system")]
+    pub note_role: Role,
+    /// The prefill starts the model reply as a final assistant message.
+    #[serde(skip_serializing_if = "String::is_empty")]
+    pub prefill: String,
+    /// The custom blocks go into the prompt in this order.
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub blocks: Vec<PromptBlock>,
+}
+
+/// A custom block adds the user's text to the prompt.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(deny_unknown_fields)]
+pub struct PromptBlock {
+    pub name: String,
+    pub text: String,
+    #[serde(default = "system", skip_serializing_if = "is_system")]
+    pub role: Role,
+    #[serde(default)]
+    pub position: BlockPosition,
+    /// The number of chat messages after the block. Only the `depth` position uses it.
+    #[serde(default, skip_serializing_if = "is_zero")]
+    pub depth: usize,
+    #[serde(default = "enabled", skip_serializing_if = "is_enabled")]
+    pub enabled: bool,
+}
+
+#[derive(Debug, Clone, Copy, Default, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum BlockPosition {
+    BeforeCharacter,
+    AfterCharacter,
+    #[default]
+    BeforeHistory,
+    AfterHistory,
+    Depth,
 }
 
 impl Default for PromptOptions {
@@ -46,7 +91,12 @@ impl Default for PromptOptions {
             main_instruction: "You act as {{char}}. You keep the character's identity and voice."
                 .into(),
             post_history_instruction: String::new(),
+            post_history_role: Role::System,
             note: String::new(),
+            note_depth: None,
+            note_role: Role::System,
+            prefill: String::new(),
+            blocks: Vec::new(),
         }
     }
 }
@@ -60,6 +110,22 @@ impl PromptOptions {
 
 fn is_zero(value: &usize) -> bool {
     *value == 0
+}
+
+fn system() -> Role {
+    Role::System
+}
+
+fn is_system(role: &Role) -> bool {
+    *role == Role::System
+}
+
+fn enabled() -> bool {
+    true
+}
+
+fn is_enabled(value: &bool) -> bool {
+    *value
 }
 
 pub trait TokenCounter: Send + Sync {
@@ -573,15 +639,45 @@ fn build_core(input: &PromptInput<'_>, books: &[WorldBook]) -> Result<PromptPlan
         "persona",
         true,
     ));
-    if !options.note.is_empty() {
-        sections.push(make(
+    let note = (!options.note.is_empty()).then(|| {
+        make(
             "note",
-            Role::System,
-            options.note.clone(),
+            options.note_role.clone(),
+            expand(&options.note, name, user, None),
             "manual_note",
             true,
-        ));
+        )
+    });
+    let mut deep = Vec::new();
+    match (note, options.note_depth) {
+        (Some(note), Some(depth)) => deep.push((depth, note)),
+        (Some(note), None) => sections.push(note),
+        _ => {}
     }
+    let mut blocks: [Vec<Section>; 4] = Default::default();
+    for (i, block) in options.blocks.iter().enumerate().filter(|(_, b)| b.enabled) {
+        let text = expand(&block.text, name, user, None);
+        let section = make(
+            &format!("block:{i}"),
+            block.role.clone(),
+            text,
+            "block",
+            true,
+        );
+        match block.position {
+            BlockPosition::BeforeCharacter => blocks[0].push(section),
+            BlockPosition::AfterCharacter => blocks[1].push(section),
+            BlockPosition::BeforeHistory => blocks[2].push(section),
+            BlockPosition::AfterHistory => blocks[3].push(section),
+            BlockPosition::Depth => deep.push((block.depth, section)),
+        }
+    }
+    let [
+        before_character,
+        after_character,
+        before_history,
+        after_history,
+    ] = blocks;
     let post = instruction(
         &options.post_history_instruction,
         card.text("post_history_instructions"),
@@ -591,7 +687,7 @@ fn build_core(input: &PromptInput<'_>, books: &[WorldBook]) -> Result<PromptPlan
     if !post.is_empty() {
         sections.push(make(
             "post_history",
-            Role::System,
+            options.post_history_role.clone(),
             post,
             "instruction",
             true,
@@ -702,11 +798,14 @@ fn build_core(input: &PromptInput<'_>, books: &[WorldBook]) -> Result<PromptPlan
         .position(|s| s.id == "persona")
         .unwrap_or(sections.len());
     sections.splice(persona_index + 1..persona_index + 1, after);
+    sections.splice(main_index..main_index, before_character);
     let post = sections
         .iter()
         .position(|s| s.id == "post_history")
         .map(|i| sections.remove(i));
+    sections.extend(after_character);
     sections.extend(examples);
+    sections.extend(before_history);
     let mut history_ids = Vec::new();
     let mut omissions = Vec::new();
     let skip = match options.history_limit {
@@ -719,9 +818,10 @@ fn build_core(input: &PromptInput<'_>, books: &[WorldBook]) -> Result<PromptPlan
             reason: "history_limit".into(),
         });
     }
+    let mut chat = Vec::new();
     for node in &history[skip..] {
         history_ids.push(node.id.clone());
-        sections.push(make(
+        chat.push(make(
             &format!("history:{}", node.id),
             node.role.clone(),
             node.text.clone(),
@@ -729,9 +829,26 @@ fn build_core(input: &PromptInput<'_>, books: &[WorldBook]) -> Result<PromptPlan
             false,
         ));
     }
-    sections.push(current);
+    chat.push(current);
+    // Depth 0 puts a section after the last chat message. A larger depth counts back from it.
+    let count = chat.len();
+    deep.sort_by_key(|(depth, _)| count - (*depth).min(count));
+    let mut deep = deep.into_iter().peekable();
+    for (i, section) in chat.into_iter().enumerate() {
+        while let Some((_, inserted)) = deep.next_if(|(depth, _)| count - (*depth).min(count) == i)
+        {
+            sections.push(inserted);
+        }
+        sections.push(section);
+    }
+    sections.extend(deep.map(|(_, section)| section));
+    sections.extend(after_history);
     if let Some(post) = post {
         sections.push(post);
+    }
+    if !options.prefill.is_empty() {
+        let text = expand(&options.prefill, name, user, None);
+        sections.push(make("prefill", Role::Assistant, text, "instruction", true));
     }
     let input_units = sections.iter().map(|s| s.units).sum();
     let hash = digest(&serde_json::to_vec(&sections)?);
