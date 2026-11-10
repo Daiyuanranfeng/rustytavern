@@ -116,7 +116,7 @@ A replacement decoder must preserve original bytes, unknown fields, envelope rul
 
 ### ZIP adapter
 
-The card crate uses `zip` version `7.3` with Deflate on Rust 1.85. The adapter reads bounded entries in memory and checks counts before index allocation.
+The card crate uses `zip` version `9` with Deflate. The adapter reads bounded entries in memory and checks counts before index allocation.
 The adapter rejects special files and never extracts files to disk. The project must reassess extraction advisories before it adds filesystem extraction.
 
 ### Further candidates

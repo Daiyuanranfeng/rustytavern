@@ -175,7 +175,7 @@ fn open(bytes: &[u8]) -> Result<ZipArchive<Cursor<&[u8]>>> {
         return Err(invalid());
     }
     for name in archive.file_names() {
-        path(name)?;
+        path(&name.map_err(|_| invalid())?)?;
     }
     Ok(archive)
 }
@@ -189,7 +189,7 @@ pub(super) fn document(bytes: &[u8]) -> Result<Vec<u8>> {
             "invalid_charx",
             "The archive entry is invalid.",
         ))?;
-        let card = file.name() == "card.json";
+        let card = file.name().is_ok_and(|name| name == "card.json");
         let maximum = if card {
             MAX_JSON_BYTES as u64
         } else {
@@ -209,7 +209,7 @@ pub(super) fn document(bytes: &[u8]) -> Result<Vec<u8>> {
             "invalid_charx",
             "The archive entry is invalid.",
         ))?;
-        let card = file.name() == "card.json";
+        let card = file.name().is_ok_and(|name| name == "card.json");
         let maximum = if card {
             MAX_JSON_BYTES as u64
         } else {
@@ -274,13 +274,18 @@ pub(super) fn edit(bytes: &[u8], json: &[u8]) -> Result<Vec<u8>> {
     document(bytes)?;
     let mut archive = open(bytes)?;
     let mut writer = ZipWriter::new(Cursor::new(Vec::new()));
-    writer.set_raw_comment(archive.comment().into());
+    writer
+        .set_raw_comment(archive.comment().into())
+        .map_err(Error::context(
+            "invalid_charx",
+            "The archive comment is invalid.",
+        ))?;
     for index in 0..archive.len() {
         let file = archive.by_index(index).map_err(Error::context(
             "invalid_charx",
             "The archive entry is invalid.",
         ))?;
-        if file.name() == "card.json" {
+        if file.name().is_ok_and(|name| name == "card.json") {
             writer
                 .start_file("card.json", file.options())
                 .map_err(Error::context(
