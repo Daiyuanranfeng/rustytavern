@@ -10,7 +10,7 @@ Each reader uses the same host contracts for durable state, permissions, cancell
 | Library embedder | The [architecture](architecture.md#current-implementation) and [library configuration interface](user-guide.md#library-interface). | The developer assembles services, creates sessions, calls typed operations, and supplies optional adapters. |
 | Plugin developer | The [native interface](#native-interface) and [standard services](#essential-plugins). | The developer implements behavior, declares grants and dependencies, registers services, and verifies cleanup. |
 | Extension author | The [extension interface](#extensions). | The author changes the application appearance. An extension cannot change agent behavior or agent context. |
-| Contributor | The [workspace boundaries](architecture.md#workspace-boundaries) and [root checks](../README.md#build-and-check). | The contributor changes the owning crate, preserves public contracts, and runs checks for the change. |
+| Contributor | The [workspace boundaries](architecture.md#workspace-boundaries) and [root checks](../CONTRIBUTING.md#run-the-checks). | The contributor changes the owning crate, preserves public contracts, and runs checks for the change. |
 
 The current native API remains experimental. A roadmap requirement does not create an implemented service contract.
 The [product roadmap](product.md#required-target) identifies required features beyond the current interfaces.

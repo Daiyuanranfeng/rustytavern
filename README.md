@@ -1,121 +1,120 @@
 # RustyTavern
 
-RustyTavern provides a Rust library and CLI for persistent character conversations.
-The project targets a local character-agent harness.
-The project has no web backend or frontend.
+[![CI](https://github.com/SebastianElvis/rustytavern/actions/workflows/ci.yml/badge.svg)](https://github.com/SebastianElvis/rustytavern/actions/workflows/ci.yml)
+[![License: Apache-2.0](https://img.shields.io/badge/license-Apache--2.0-blue.svg)](LICENSE)
 
-The implementation is in progress.
-The current CLI supports cards, worldbooks, personas, prompt inspection, streaming, sessions, alternatives, and branches.
-The product supports native runtime plugins and external card-source processes.
-A plugin changes agent behavior or adds content to the agent context.
-The essential plugins include the agent loop, web fetch, skills, MCP tools, and the Chub and RisuRealm sources.
-The CLI installs, enables, inspects, and removes third-party plugins.
-An extension changes only the application appearance, such as the bubble colors.
-The project does not claim full SillyTavern or RisuAI parity.
+RustyTavern is a terminal app and Rust library for persistent character conversations.
+It runs on your computer. It has no web server and no web frontend.
 
-The [workspace guide](docs/architecture.md#workspace-boundaries) defines the component crates and their dependency direction.
+> [!WARNING]
+> RustyTavern is alpha software. The data formats and the plugin API can change in any release.
 
-## Build and check
+![Product map](docs/assets/product-map.png)
 
-The `rust-toolchain.toml` file pins Rust 1.99.1.
-The declared minimum is Rust 1.99.
-The build uses the resolved Cargo.lock file.
+## Features
+
+- Import character cards (PNG, JSON, CHARX) from a file, Chub, or RisuRealm.
+- Use worldbooks, personas, and custom prompt blocks.
+- Chat with OpenRouter, Anthropic, Google Gemini, OpenAI, or a local OpenAI-compatible server.
+- Regenerate, edit, and branch a conversation. Export a session with its full history.
+- Keep chat memory across sessions.
+- Add behavior through plugins: tools, MCP servers, skills, web fetch, and card sources.
+- Script every action through the CLI. Inspect the exact request before you send it.
+
+RustyTavern reads the same card formats as SillyTavern and RisuAI.
+It does not claim full parity with them.
+The [compatibility guide](docs/compatibility.md) lists the supported formats and providers.
+
+## Install
+
+RustyTavern requires Rust 1.99 or later.
+
+```sh
+cargo install --locked --git https://github.com/SebastianElvis/rustytavern rustytavern-cli
+```
+
+The command installs the `rustytavern` binary.
+Prebuilt binaries for macOS and Linux are on the [releases page](https://github.com/SebastianElvis/rustytavern/releases).
+
+## Quick start
+
+1. Start the terminal app:
+
+   ```sh
+   rustytavern
+   ```
+
+2. Paste an API key in the provider menu. The menu opens on the first start.
+3. Type `/character` to import a card. Type `/new` to start a chat.
+
+Other useful commands:
+
+| Command | Action |
+| --- | --- |
+| `/provider` | Connect a model provider. |
+| `/model` | Select a model. |
+| `/persona` | Select your persona. |
+| `/settings` | Open all other settings. |
+
+RustyTavern keeps its data in `~/.rustytavern`.
+The `config.toml` file holds every setting, including API keys.
+The `rustytavern.db` file holds cards, personas, sessions, and plugin state.
+RustyTavern does not read API keys from environment variables.
+
+The [user guide](docs/user-guide.md) explains the terminal, the script commands, and the configuration file.
+
+## Script example
+
+```sh
+rustytavern --home ./home card import crates/tavern/examples/lumen.json --json
+rustytavern --home ./home persona create --name Alex --description "Alex charts the coast."
+rustytavern --home ./home session new \
+  --character CHARACTER_ID --persona PERSONA_ID --provider openrouter
+rustytavern --home ./home chat SESSION_ID --message "Hello." --events
+```
+
+The import and create commands print the IDs as JSON.
+The [CLI reference](docs/user-guide.md#cli-reference) lists all commands.
+
+## For developers
 
 ```sh
 cargo build --locked --workspace
 cargo test --locked --workspace --all-targets
-cargo fmt --all --check
-cargo clippy --locked --workspace --all-targets -- -D warnings
 ```
 
-The tests use local model endpoints.
-The tests do not require an API key.
-The tests do not make paid model calls.
+The tests use local model endpoints. The tests do not need an API key.
 
-## Start a conversation
+| Document | Content |
+| --- | --- |
+| [CONTRIBUTING.md](CONTRIBUTING.md) | Setup, checks, and the pull request process. |
+| [AGENTS.md](AGENTS.md) | Instructions for AI coding agents. |
+| [Architecture](docs/architecture.md) | Crates, dependency direction, and figures. |
+| [Developer guide](docs/developer.md) | Plugins, extensions, prompt hooks, and the process protocol. |
+| [Product roadmap](docs/product.md) | Target features and current support. |
+| [Compatibility guide](docs/compatibility.md) | Formats, providers, and reference comparisons. |
 
-The binary opens an interactive terminal without a subcommand.
+The workspace has five crates:
 
-```sh
-cargo run --locked -p rustytavern-cli
-```
+| Crate | Role |
+| --- | --- |
+| [`rustytavern-core`](crates/core/README.md) | Errors, identities, and card and worldbook formats. |
+| [`rustytavern-session`](crates/session/README.md) | Sessions, prompt compilation, and SQLite storage. |
+| [`rustytavern-runtime`](crates/runtime/README.md) | Providers, the agent runtime, and plugin contracts. |
+| [`rustytavern`](crates/tavern/README.md) | The assembled library and the essential plugins. |
+| [`rustytavern-cli`](crates/cli/README.md) | The terminal app and the script interface. |
 
-The `/provider` command connects a model provider. The `/model` command selects a model.
-The `/character` and `/persona` commands select identities.
-The `/new` command starts a chat. The `/settings` command opens the other controls.
-The [terminal guide](docs/user-guide.md#interactive-terminal) defines commands, keys, and persistence.
+## Contributing
 
-## Script commands
+Contributions are welcome. Read [CONTRIBUTING.md](CONTRIBUTING.md) before you open a pull request.
+Report security problems as described in [SECURITY.md](SECURITY.md).
 
-The default home directory is `~/.rustytavern`. The examples use `./home` instead.
-The home directory holds `config.toml` for every setting and `rustytavern.db` for durable records.
-The `--api-key KEY` option stores the key in `config.toml`. RustyTavern does not read keys from environment variables.
-The [configuration guide](docs/user-guide.md#configuration-file) shows the complete file.
+## License
 
-```sh
-cargo run -- --home ./home config provider \
-  --name openrouter --kind openrouter \
-  --model openai/gpt-4.1-nano --output-limit 256 --api-key sk-or-...
-cargo run -- --home ./home card import crates/tavern/examples/lumen.json --json
-cargo run -- --home ./home persona create \
-  --name Alex --description "Alex charts the coast."
-```
+RustyTavern is licensed under the [Apache License, Version 2.0](LICENSE).
 
-The import and persona commands print their IDs as JSON.
-The next command uses those IDs.
-
-```sh
-rustytavern --home ./home session new \
-  --character CHARACTER_ID --persona PERSONA_ID --provider openrouter
-rustytavern --home ./home prompt inspect SESSION_ID \
-  --message "Hello." --request
-rustytavern --home ./home chat SESSION_ID \
-  --message "Hello." --events --idempotency-key first-message
-rustytavern --home ./home session show SESSION_ID --json
-```
-
-The last commands require the built binary on PATH.
-The same commands work through `cargo run --`.
-A later process can continue the same session.
-The caller should reuse an idempotency key only for the same submission.
-
-## Inspect, branch, and export
-
-```sh
-rustytavern --home ./home session regenerate SESSION_ID --events
-rustytavern --home ./home session branch SESSION_ID --at MESSAGE_ID
-rustytavern --home ./home session edit SESSION_ID \
-  --at MESSAGE_ID --message "Another direction."
-rustytavern --home ./home session export SESSION_ID --output session.json
-rustytavern --home ./home card export CHARACTER_ID --output original.png
-```
-
-An original card export returns the exact imported bytes.
-The output filename does not convert the card format.
-An edited export accepts an explicit JSON merge patch through `--patch PATH`.
-The export keeps unknown JSON values unless the patch changes them.
-The native session export retains branches, generations, drafts, revision archives, and plugin state.
-The `--include-traces` flag adds compiled request snapshots.
-The [native format guide](docs/user-guide.md#native-records-and-exports) defines session and persona exports.
-
-## Documentation
-
-- The [product guide](docs/product.md) defines required features and current support.
-- The [architecture guide](docs/architecture.md) defines components, host ownership, dependencies, and figures.
-- The [user guide](docs/user-guide.md) defines terminal commands, scripts, configuration, worldbooks, and exports.
-- The [developer guide](docs/developer.md) defines plugins, extensions, prompt hooks, state, and process frames.
-- The [compatibility guide](docs/compatibility.md) defines formats, providers, reference comparisons, and evidence.
-
-Each [component](docs/architecture.md#current-implementation) retains its README.
-The [plugins module](crates/tavern/README.md) and each [example plugin](crates/tavern/examples/README.md) retain their interface documents.
-
-## License and source use
-
-The repository remains private.
-The project has no distribution license yet.
-The investigation reads pinned SillyTavern and RisuAI sources.
-The implementation does not copy their source files into the tracked repository.
-The project makes no clean-room claim.
-Research copies, comparison captures, and temporary plans remain in ignored `.rustify/`.
-
-The [worldbook guide](docs/user-guide.md#worldbooks) defines archive import, export, session bindings, and profile limits.
+RustyTavern is an independent project.
+It is not affiliated with SillyTavern, RisuAI, Chub, or RisuRealm.
+The authors studied pinned SillyTavern and RisuAI sources for format compatibility.
+The repository contains no source files copied from those projects.
+The [compatibility guide](docs/compatibility.md#source-identity-and-license) records the pinned versions.

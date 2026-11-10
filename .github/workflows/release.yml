@@ -1,0 +1,60 @@
+name: Release
+
+on:
+  push:
+    tags: ["v*"]
+
+permissions:
+  contents: read
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  build:
+    name: Build (${{ matrix.target }})
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - { os: ubuntu-latest, target: x86_64-unknown-linux-gnu }
+          - { os: ubuntu-24.04-arm, target: aarch64-unknown-linux-gnu }
+          - { os: macos-latest, target: aarch64-apple-darwin }
+          - { os: macos-latest, target: x86_64-apple-darwin }
+    steps:
+      - uses: actions/checkout@v4
+      - run: rustup target add ${{ matrix.target }}
+      - uses: Swatinem/rust-cache@v2
+        with:
+          key: ${{ matrix.target }}
+      - run: cargo build --locked --release -p rustytavern-cli --target ${{ matrix.target }}
+      - name: Package
+        shell: bash
+        run: |
+          name="rustytavern-${GITHUB_REF_NAME}-${{ matrix.target }}"
+          mkdir "$name"
+          cp "target/${{ matrix.target }}/release/rustytavern" README.md LICENSE "$name/"
+          tar -czf "$name.tar.gz" "$name"
+          shasum -a 256 "$name.tar.gz" > "$name.tar.gz.sha256"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: ${{ matrix.target }}
+          path: rustytavern-*.tar.gz*
+
+  publish:
+    name: Publish
+    needs: build
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          merge-multiple: true
+      - name: Create the release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release create "$GITHUB_REF_NAME" rustytavern-*.tar.gz* \
+            --repo "$GITHUB_REPOSITORY" --generate-notes --prerelease

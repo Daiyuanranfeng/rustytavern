@@ -7,6 +7,8 @@ version = "0.1.0"
 edition = "2024"
 rust-version = "1.99"
 publish = false
+license = "Apache-2.0"
+repository = "https://github.com/SebastianElvis/rustytavern"
 
 [workspace.dependencies]
 rustytavern = { path = "crates/tavern" }

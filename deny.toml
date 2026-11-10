@@ -1,0 +1,46 @@
+# The cargo-deny policy. Run it with `cargo deny check`.
+
+[graph]
+all-features = true
+
+[advisories]
+# The check fails on each vulnerability and each yanked crate.
+yanked = "deny"
+ignore = [
+  # These crates have no maintained release. No upgrade path exists yet.
+  { id = "RUSTSEC-2025-0141", reason = "syntect uses bincode 1 to load its bundled syntax sets." },
+  { id = "RUSTSEC-2024-0449", reason = "rig-cassette uses serde_yaml only in tests." },
+]
+
+[licenses]
+# Each license must be compatible with Apache-2.0 distribution.
+allow = [
+  "0BSD",
+  "Apache-2.0",
+  "Apache-2.0 WITH LLVM-exception",
+  "BSD-2-Clause",
+  "BSD-3-Clause",
+  "BSL-1.0",
+  "CC0-1.0",
+  "CDLA-Permissive-2.0",
+  "ISC",
+  "MIT",
+  "MIT-0",
+  "Unicode-3.0",
+  "Unlicense",
+  "Zlib",
+]
+confidence-threshold = 0.9
+
+[licenses.private]
+ignore = true
+
+[bans]
+multiple-versions = "allow"
+wildcards = "deny"
+allow-wildcard-paths = true
+
+[sources]
+unknown-registry = "deny"
+unknown-git = "deny"
+allow-registry = ["https://github.com/rust-lang/crates.io-index"]
