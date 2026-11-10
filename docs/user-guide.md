@@ -584,7 +584,7 @@ The default export sets `includes_prompt_traces` to `false`. The exporter sets e
 The `--include-traces` flag retains the compiled plan, prepared request, and phase trace. Both modes retain conversation text, input snapshots, saved enrichment, and plugin state.
 The flag controls compiled request traces only.
 
-The [version 3 session schema](schemas/session-v3.schema.json) documents the historical version 3 format. That schema does not describe version 4 worldbook archives.
+The [version 3 session schema](schemas/session-v3.schema.json) documents the historical version 3 format. The [version 4 session schema](schemas/session-v4.schema.json) adds the worldbook archives.
 The version 4 reader and writer use the Rust types and runtime validation. The [session module](../crates/session/src/records.rs) defines the corresponding Rust types.
 
 | Field | Content |

@@ -60,7 +60,7 @@ Selected assertions do not close the full requirement audit. Isolated Linux chec
 Those checks use a public DNS snapshot and the unchanged source policy. The local host DNS returns restricted addresses that the source policy rejects.
 Unix process tests cover cancellation, shutdown, child cleanup, queues, frames, callbacks, and blocked pipes. Windows process cleanup still needs validation.
 Database tests cover upgrades from versions 1 through 4 to version 5, rollback, and future-marker rejection. Worldbook tests cover bindings, immutable snapshots, replay, restart, limits, and version 4 archives.
-The historical version 3 JSON schema does not validate version 4 worldbook archives.
+The version 4 JSON schema validates version 4 worldbook archives. The historical version 3 schema does not.
 
 The private corpus contains 31 frozen public card artifacts from six repository publishers. The corpus includes 30 syntactically valid JSON documents from GitHub hosting.
 The sample does not estimate community usage. The project must capture complete reference workflows and audit each required feature.

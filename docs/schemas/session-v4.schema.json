@@ -1,0 +1,699 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "urn:rustytavern:session-export:4",
+  "title": "RustyTavern session export version 4",
+  "type": "object",
+  "required": [
+    "schema_version",
+    "includes_prompt_traces",
+    "session",
+    "characters",
+    "personas",
+    "messages",
+    "generations",
+    "plugin_state"
+  ],
+  "properties": {
+    "schema_version": {
+      "const": 4
+    },
+    "includes_prompt_traces": {
+      "type": "boolean"
+    },
+    "session": {
+      "$ref": "#/$defs/session"
+    },
+    "characters": {
+      "type": "array",
+      "minItems": 1,
+      "items": {
+        "$ref": "#/$defs/card"
+      }
+    },
+    "personas": {
+      "type": "array",
+      "minItems": 1,
+      "items": {
+        "$ref": "#/$defs/persona"
+      }
+    },
+    "messages": {
+      "type": "array",
+      "items": {
+        "$ref": "#/$defs/message"
+      }
+    },
+    "generations": {
+      "type": "array",
+      "items": {
+        "$ref": "#/$defs/generation"
+      }
+    },
+    "plugin_state": {
+      "type": "array",
+      "items": {
+        "$ref": "#/$defs/state"
+      }
+    },
+    "worldbooks": {
+      "type": "array",
+      "maxItems": 16,
+      "items": {
+        "$ref": "#/$defs/worldbook"
+      }
+    }
+  },
+  "allOf": [
+    {
+      "if": {
+        "properties": {
+          "includes_prompt_traces": {
+            "const": false
+          }
+        }
+      },
+      "then": {
+        "properties": {
+          "generations": {
+            "items": {
+              "properties": {
+                "request": {
+                  "type": "null"
+                }
+              }
+            }
+          }
+        }
+      }
+    }
+  ],
+  "$defs": {
+    "worldbook": {
+      "type": "object",
+      "required": [
+        "id",
+        "original",
+        "document"
+      ],
+      "properties": {
+        "id": {
+          "type": "string",
+          "pattern": "^worldbook-[0-9a-f]{64}$"
+        },
+        "original": {
+          "type": "string",
+          "minLength": 1,
+          "contentEncoding": "base64"
+        },
+        "document": {
+          "type": "object"
+        }
+      },
+      "additionalProperties": false
+    },
+    "session": {
+      "type": "object",
+      "required": [
+        "id",
+        "character_id",
+        "persona_id",
+        "provider",
+        "model",
+        "version",
+        "accept_reduced",
+        "options"
+      ],
+      "properties": {
+        "id": {
+          "type": "string",
+          "minLength": 1
+        },
+        "character_id": {
+          "type": "string"
+        },
+        "persona_id": {
+          "type": "string"
+        },
+        "provider": {
+          "type": "string"
+        },
+        "model": {
+          "type": "string"
+        },
+        "head": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "version": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "accept_reduced": {
+          "type": "boolean"
+        },
+        "worldbook_ids": {
+          "type": "array",
+          "maxItems": 16,
+          "uniqueItems": true,
+          "items": {
+            "type": "string",
+            "pattern": "^worldbook-[0-9a-f]{64}$"
+          }
+        },
+        "options": {
+          "type": "object"
+        },
+        "composition": {
+          "type": [
+            "object",
+            "null"
+          ],
+          "properties": {
+            "configuration_schema": {
+              "const": 1
+            },
+            "session_configurations": {
+              "type": "array",
+              "minItems": 1,
+              "maxItems": 128,
+              "items": {
+                "$ref": "#/$defs/session_configuration"
+              }
+            }
+          },
+          "dependentRequired": {
+            "configuration_schema": [
+              "session_configurations"
+            ],
+            "session_configurations": [
+              "configuration_schema"
+            ]
+          }
+        }
+      }
+    },
+    "card": {
+      "type": "object",
+      "required": [
+        "id",
+        "source_hash",
+        "format",
+        "conflicting_envelopes",
+        "document",
+        "diagnostics",
+        "original"
+      ],
+      "properties": {
+        "id": {
+          "type": "string",
+          "pattern": "^card-[0-9a-f]{24}$"
+        },
+        "source_hash": {
+          "type": "string",
+          "pattern": "^[0-9a-f]{64}$"
+        },
+        "format": {
+          "type": "string",
+          "minLength": 1
+        },
+        "selected_envelope": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "conflicting_envelopes": {
+          "type": "boolean"
+        },
+        "document": {
+          "type": "object"
+        },
+        "diagnostics": {
+          "type": "array",
+          "items": {
+            "type": "object"
+          }
+        },
+        "original": {
+          "oneOf": [
+            {
+              "type": "string",
+              "contentEncoding": "base64"
+            },
+            {
+              "type": "array",
+              "minItems": 1,
+              "maxItems": 33554432,
+              "items": {
+                "type": "integer",
+                "minimum": 0,
+                "maximum": 255
+              }
+            }
+          ]
+        },
+        "provenance": {
+          "type": [
+            "object",
+            "null"
+          ]
+        },
+        "decoder": {
+          "oneOf": [
+            {
+              "type": "object",
+              "required": [
+                "id",
+                "normalized_hash"
+              ],
+              "properties": {
+                "id": {
+                  "type": "string",
+                  "minLength": 1
+                },
+                "normalized_hash": {
+                  "type": "string",
+                  "pattern": "^[0-9a-f]{64}$"
+                }
+              },
+              "additionalProperties": false
+            },
+            {
+              "type": "null"
+            }
+          ]
+        }
+      },
+      "anyOf": [
+        {
+          "properties": {
+            "format": {
+              "enum": [
+                "json",
+                "png"
+              ]
+            }
+          }
+        },
+        {
+          "required": [
+            "decoder"
+          ],
+          "properties": {
+            "decoder": {
+              "type": "object",
+              "required": [
+                "id",
+                "normalized_hash"
+              ],
+              "properties": {
+                "id": {
+                  "type": "string",
+                  "minLength": 1
+                },
+                "normalized_hash": {
+                  "type": "string",
+                  "pattern": "^[0-9a-f]{64}$"
+                }
+              },
+              "additionalProperties": false
+            }
+          }
+        }
+      ]
+    },
+    "persona": {
+      "type": "object",
+      "required": [
+        "id",
+        "name",
+        "description"
+      ],
+      "properties": {
+        "id": {
+          "type": "string",
+          "pattern": "^persona-[0-9a-f]{24}$"
+        },
+        "name": {
+          "type": "string",
+          "minLength": 1
+        },
+        "description": {
+          "type": "string"
+        }
+      }
+    },
+    "message": {
+      "type": "object",
+      "required": [
+        "id",
+        "role",
+        "text"
+      ],
+      "properties": {
+        "id": {
+          "type": "string",
+          "minLength": 1
+        },
+        "parent_id": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "role": {
+          "enum": [
+            "system",
+            "user",
+            "assistant"
+          ]
+        },
+        "text": {
+          "type": "string"
+        },
+        "generation_id": {
+          "type": [
+            "string",
+            "null"
+          ]
+        }
+      }
+    },
+    "generation": {
+      "type": "object",
+      "required": [
+        "id",
+        "session_id",
+        "user_node",
+        "status",
+        "draft",
+        "snapshot",
+        "fencing_token",
+        "session_version"
+      ],
+      "properties": {
+        "id": {
+          "type": "string",
+          "minLength": 1
+        },
+        "session_id": {
+          "type": "string"
+        },
+        "user_node": {
+          "type": "string"
+        },
+        "status": {
+          "enum": [
+            "prepared",
+            "streaming",
+            "completed",
+            "failed",
+            "cancelled",
+            "interrupted"
+          ]
+        },
+        "draft": {
+          "type": "string"
+        },
+        "accepted_message": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "snapshot": {
+          "type": "object"
+        },
+        "enrichment": {
+          "type": [
+            "object",
+            "null"
+          ]
+        },
+        "request": {},
+        "usage": {},
+        "error": {
+          "type": [
+            "object",
+            "null"
+          ],
+          "properties": {
+            "code": {
+              "type": "string"
+            },
+            "message": {
+              "type": "string"
+            }
+          },
+          "required": [
+            "code",
+            "message"
+          ],
+          "additionalProperties": false
+        },
+        "fencing_token": {
+          "type": "integer"
+        },
+        "session_version": {
+          "type": "integer"
+        }
+      }
+    },
+    "state": {
+      "type": "object",
+      "required": [
+        "namespace",
+        "key",
+        "revision",
+        "payload"
+      ],
+      "properties": {
+        "namespace": {
+          "type": "string",
+          "minLength": 1
+        },
+        "key": {
+          "type": "string"
+        },
+        "revision": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "payload": {}
+      }
+    },
+    "session_configuration": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "revision",
+        "identity",
+        "character_id",
+        "persona_id",
+        "provider",
+        "model",
+        "accept_reduced",
+        "options",
+        "profile",
+        "provider_config",
+        "composition"
+      ],
+      "properties": {
+        "revision": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "identity": {
+          "type": "string",
+          "pattern": "^[0-9a-f]{64}$"
+        },
+        "character_id": {
+          "type": "string",
+          "minLength": 1
+        },
+        "persona_id": {
+          "type": "string",
+          "minLength": 1
+        },
+        "provider": {
+          "type": "string",
+          "minLength": 1
+        },
+        "model": {
+          "type": "string",
+          "minLength": 1
+        },
+        "profile": {
+          "type": "string",
+          "minLength": 1
+        },
+        "accept_reduced": {
+          "type": "boolean"
+        },
+        "worldbook_ids": {
+          "type": "array",
+          "maxItems": 16,
+          "uniqueItems": true,
+          "items": {
+            "type": "string",
+            "pattern": "^worldbook-[0-9a-f]{64}$"
+          }
+        },
+        "options": {
+          "type": "object",
+          "required": [
+            "context_limit",
+            "output_limit",
+            "protocol_margin",
+            "lore_budget",
+            "example_budget",
+            "main_instruction",
+            "post_history_instruction",
+            "note"
+          ],
+          "properties": {
+            "context_limit": {
+              "type": "integer",
+              "minimum": 1
+            },
+            "output_limit": {
+              "type": "integer",
+              "minimum": 1
+            },
+            "protocol_margin": {
+              "type": "integer",
+              "minimum": 0
+            },
+            "lore_budget": {
+              "type": "integer",
+              "minimum": 0
+            },
+            "example_budget": {
+              "type": "integer",
+              "minimum": 0
+            },
+            "history_limit": {
+              "type": "integer",
+              "minimum": 0
+            },
+            "memory_interval": {
+              "type": "integer",
+              "minimum": 0
+            },
+            "main_instruction": {
+              "type": "string"
+            },
+            "post_history_instruction": {
+              "type": "string"
+            },
+            "note": {
+              "type": "string"
+            }
+          }
+        },
+        "provider_config": {
+          "type": "object",
+          "required": [
+            "kind",
+            "model",
+            "endpoint",
+            "api_key_env",
+            "context_limit",
+            "output_limit",
+            "parameters",
+            "routing",
+            "timeout_seconds"
+          ],
+          "properties": {
+            "kind": {
+              "enum": [
+                "openrouter",
+                "openai",
+                "anthropic",
+                "gemini",
+                "custom"
+              ]
+            },
+            "model": {
+              "type": "string"
+            },
+            "endpoint": {
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "api_key_env": {
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "context_limit": {
+              "type": "integer",
+              "minimum": 1
+            },
+            "output_limit": {
+              "type": "integer",
+              "minimum": 1
+            },
+            "timeout_seconds": {
+              "type": "integer",
+              "minimum": 1
+            },
+            "parameters": {
+              "type": "object"
+            },
+            "routing": {
+              "type": [
+                "object",
+                "null"
+              ]
+            },
+            "merge_system_messages": {
+              "type": "boolean",
+              "default": false
+            }
+          }
+        },
+        "composition": {
+          "type": "object",
+          "required": [
+            "identity",
+            "native",
+            "plugins",
+            "bindings",
+            "contributions",
+            "service_identity"
+          ],
+          "properties": {
+            "identity": {
+              "type": "string",
+              "pattern": "^[0-9a-f]{64}$"
+            },
+            "native": {
+              "type": "object"
+            },
+            "plugins": {
+              "type": "array"
+            },
+            "bindings": {
+              "type": "object"
+            },
+            "contributions": {
+              "type": "array"
+            },
+            "service_identity": {
+              "type": "string"
+            },
+            "extensions": {
+              "type": "array"
+            }
+          }
+        }
+      }
+    }
+  }
+}

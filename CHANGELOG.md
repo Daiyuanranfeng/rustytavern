@@ -11,6 +11,7 @@ The project uses [Semantic Versioning](https://semver.org/). Before version 1.0.
 - The Apache-2.0 license.
 - Contributor, agent, and security documents.
 - Continuous integration, a dependency policy, and release builds.
+- A version 4 session export schema that describes worldbook archives.
 
 ### Security
 

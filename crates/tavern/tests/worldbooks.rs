@@ -138,6 +138,21 @@ async fn revisions_pin_books_in_requests_replay_and_exports_after_restart() {
     assert_eq!(export.worldbooks.len(), 2);
     let bytes = export.encode().unwrap();
     SessionExport::decode(&bytes).unwrap();
+    let document: Value = serde_json::from_slice(&bytes).unwrap();
+    let v3_schema: Value =
+        serde_json::from_str(include_str!("../../../docs/schemas/session-v3.schema.json")).unwrap();
+    let v4_schema: Value =
+        serde_json::from_str(include_str!("../../../docs/schemas/session-v4.schema.json")).unwrap();
+    let v3 = jsonschema::validator_for(&v3_schema).unwrap();
+    assert!(
+        !v3.is_valid(&document),
+        "the version 3 schema must reject a version 4 export"
+    );
+    let v4 = jsonschema::validator_for(&v4_schema).unwrap();
+    if !v4.is_valid(&document) {
+        let errors: Vec<String> = v4.iter_errors(&document).map(|e| e.to_string()).collect();
+        panic!("the version 4 schema rejected the export: {errors:#?}");
+    }
     for corruption in ["missing", "document", "snapshot", "schema"] {
         let mut invalid: Value = serde_json::from_slice(&bytes).unwrap();
         match corruption {
