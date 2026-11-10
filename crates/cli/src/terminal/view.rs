@@ -975,8 +975,9 @@ pub(super) fn draw(frame: &mut Frame<'_>, ui: &mut Ui) {
             kind,
             fields,
             selected,
+            zoom,
         } => {
-            let tall = matches!(kind, FormKind::Edit(_));
+            let tall = matches!(kind, FormKind::Edit(_)) || *zoom;
             let block = Block::default().borders(Borders::ALL).title(format!(
                 " {} · field {}/{} ",
                 text(title),
@@ -985,8 +986,16 @@ pub(super) fn draw(frame: &mut Frame<'_>, ui: &mut Ui) {
             ));
             let inner = block.inner(popup);
             frame.render_widget(block, popup);
-            let count = (usize::from(inner.height.saturating_sub(2)) / 4).max(1);
-            let first = selected.saturating_sub(count - 1);
+            let count = if tall {
+                1
+            } else {
+                (usize::from(inner.height.saturating_sub(2)) / 4).max(1)
+            };
+            let first = if tall {
+                *selected
+            } else {
+                selected.saturating_sub(count - 1)
+            };
             for (index, field) in fields.iter_mut().enumerate().skip(first).take(count) {
                 let y = inner.y + ((index - first) * 4) as u16;
                 if y + 3 >= inner.bottom() {
@@ -1051,7 +1060,9 @@ pub(super) fn draw(frame: &mut Frame<'_>, ui: &mut Ui) {
                         "[ Cancel ]",
                         Style::default().fg(Color::Black).bg(Color::Gray),
                     ),
-                    Span::raw("  Tab changes fields · Enter applies · Alt+Enter adds a line"),
+                    Span::raw(
+                        "  Tab changes fields · Enter applies · Alt+Enter adds a line · Ctrl+E editor · Ctrl+F zoom",
+                    ),
                 ])),
                 Rect::new(inner.x, footer, inner.width, 1),
             );

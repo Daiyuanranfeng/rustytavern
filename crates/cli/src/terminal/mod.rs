@@ -28,7 +28,8 @@ use rustytavern::{
     session::{Generation, GenerationMode},
 };
 use state::{After, Ui};
-use std::io::{IsTerminal, stdout};
+use std::io::{IsTerminal, Write, stdout};
+use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
 use tokio::sync::mpsc;
 use tokio_util::sync::CancellationToken;
@@ -67,10 +68,15 @@ fn inline(height: u16) -> std::io::Result<DefaultTerminal> {
     )
 }
 /// The function reads terminal input on a thread. Each short poll releases the input lock, so cursor queries can run.
-fn input() -> mpsc::UnboundedReceiver<std::io::Result<Event>> {
+/// The pause flag stops the reads while an external editor owns the terminal.
+fn input(pause: Arc<AtomicBool>) -> mpsc::UnboundedReceiver<std::io::Result<Event>> {
     let (sender, receiver) = mpsc::unbounded_channel();
     std::thread::spawn(move || {
         while !sender.is_closed() {
+            if pause.load(Ordering::SeqCst) {
+                std::thread::sleep(std::time::Duration::from_millis(50));
+                continue;
+            }
             let event = match crossterm::event::poll(std::time::Duration::from_millis(50)) {
                 Ok(false) => continue,
                 Ok(true) => crossterm::event::read(),
@@ -174,7 +180,8 @@ pub(super) async fn run(path: Option<PathBuf>) -> Result<()> {
     let mut terminal = inline(1)?;
     let mut screen: Option<DefaultTerminal> = None;
     let (sender, mut updates) = mpsc::channel(64);
-    let mut events = input();
+    let pause = Arc::new(AtomicBool::new(false));
+    let mut events = input(pause.clone());
     let mut tick = tokio::time::interval(std::time::Duration::from_millis(80));
     let mut job: Option<tokio::task::JoinHandle<()>> = None;
     let mut cancellation = CancellationToken::new();
@@ -228,6 +235,15 @@ pub(super) async fn run(path: Option<PathBuf>) -> Result<()> {
                     }
                 }
             }
+            if let Some(index) = ui.editor_request.take()
+                && let Some(seed) = ui.field_text(index)
+            {
+                match external_edit(&seed, &mut screen, &pause) {
+                    Ok(Some(edited)) => ui.set_field(index, &edited),
+                    Ok(None) => ui.notice = "Set $EDITOR to edit a field in your editor.".into(),
+                    Err(error) => ui.notice = error.to_string(),
+                }
+            }
             if let Some(request) = ui.pending.take() {
                 cancellation = CancellationToken::new();
                 ui.busy = true;
@@ -267,6 +283,65 @@ pub(super) async fn run(path: Option<PathBuf>) -> Result<()> {
         let _ = task.await;
     }
     result
+}
+
+/// The function edits one text in the external editor. It returns the new text.
+/// It returns `None` when neither `$VISUAL` nor `$EDITOR` is set.
+/// The function suspends the terminal, runs the editor, and restores the terminal.
+fn external_edit(
+    seed: &str,
+    screen: &mut Option<DefaultTerminal>,
+    pause: &AtomicBool,
+) -> Result<Option<String>> {
+    let io = |source: std::io::Error| {
+        Error::new("external_editor", "The external editor failed.").with_source(source)
+    };
+    let Some(editor) = std::env::var_os("VISUAL")
+        .filter(|value| !value.is_empty())
+        .or_else(|| std::env::var_os("EDITOR").filter(|value| !value.is_empty()))
+    else {
+        return Ok(None);
+    };
+    let file = std::env::temp_dir().join(format!("rustytavern-{}.md", std::process::id()));
+    std::fs::write(&file, seed).map_err(io)?;
+    // The pause stops the input thread, so the editor owns standard input.
+    pause.store(true, Ordering::SeqCst);
+    std::thread::sleep(std::time::Duration::from_millis(60));
+    let _ = execute!(
+        stdout(),
+        DisableBracketedPaste,
+        DisableMouseCapture,
+        LeaveAlternateScreen,
+        crossterm::cursor::Show
+    );
+    let _ = disable_raw_mode();
+    let _ = stdout().flush();
+    let status = std::process::Command::new(&editor).arg(&file).status();
+    let _ = enable_raw_mode();
+    let _ = execute!(
+        stdout(),
+        EnterAlternateScreen,
+        EnableMouseCapture,
+        EnableBracketedPaste,
+        Clear(ClearType::All)
+    );
+    if let Some(full) = screen.as_mut() {
+        let _ = full.clear();
+    }
+    pause.store(false, Ordering::SeqCst);
+    let status = status.map_err(io)?;
+    if !status.success() {
+        let _ = std::fs::remove_file(&file);
+        return Err(Error::new(
+            "external_editor",
+            "The external editor exited with an error.",
+        ));
+    }
+    let edited = std::fs::read_to_string(&file).map_err(io)?;
+    let _ = std::fs::remove_file(&file);
+    Ok(Some(
+        edited.strip_suffix('\n').unwrap_or(&edited).to_owned(),
+    ))
 }
 
 async fn generate(

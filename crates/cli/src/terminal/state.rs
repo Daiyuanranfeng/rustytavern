@@ -162,6 +162,8 @@ pub(super) enum Overlay {
         kind: FormKind,
         fields: Vec<Field>,
         selected: usize,
+        /// The zoom shows the selected field across the whole dialog.
+        zoom: bool,
     },
     Document {
         title: String,
@@ -214,6 +216,8 @@ pub(super) struct Ui {
     pub exit: bool,
     pub tick: usize,
     pub pending: Option<Job>,
+    /// The index of the form field that waits for the external editor.
+    pub editor_request: Option<usize>,
     pub new_requested: bool,
     pub hits: Vec<(Rect, Hit)>,
     pub slash: usize,
@@ -395,6 +399,7 @@ impl Ui {
             exit: false,
             tick: 0,
             pending: None,
+            editor_request: None,
             new_requested: false,
             hits: Vec::new(),
             slash: 0,
@@ -528,6 +533,24 @@ impl Ui {
     pub fn clear_input(&mut self) {
         self.overlay = None;
         self.composer = editor("");
+    }
+    /// The method reads one form field for the external editor.
+    pub fn field_text(&self, index: usize) -> Option<String> {
+        if let Some(Overlay::Form { fields, .. }) = &self.overlay {
+            fields
+                .get(index)
+                .map(|field| field.editor.lines().join("\n"))
+        } else {
+            None
+        }
+    }
+    /// The method replaces one form field with the text from the external editor.
+    pub fn set_field(&mut self, index: usize, value: &str) {
+        if let Some(Overlay::Form { fields, .. }) = &mut self.overlay
+            && let Some(field) = fields.get_mut(index)
+        {
+            field.editor = editor(value);
+        }
     }
     pub fn paste(&mut self, value: &str) {
         let target = if let Some(Overlay::Form {
@@ -693,8 +716,12 @@ impl Ui {
                 kind,
                 mut fields,
                 mut selected,
+                mut zoom,
             }) => {
+                let control = key.modifiers.contains(KeyModifiers::CONTROL);
                 match key.code {
+                    KeyCode::Char('e') if control => self.editor_request = Some(selected),
+                    KeyCode::Char('f') if control => zoom = !zoom,
                     KeyCode::Tab => selected = (selected + 1) % fields.len(),
                     KeyCode::BackTab => selected = (selected + fields.len() - 1) % fields.len(),
                     KeyCode::Enter
@@ -730,6 +757,7 @@ impl Ui {
                     kind,
                     fields,
                     selected,
+                    zoom,
                 });
             }
             None => match key.code {
