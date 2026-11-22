@@ -11,6 +11,7 @@ The crate defines shared values, errors, and the character card and worldbook fo
 
 The card importer keeps the original bytes and unknown JSON values. The decoder enforces envelope precedence and input bounds.
 The CHARX adapter keeps embedded assets and unknown archive files.
+The JPEG importer reads the card JSON from the EXIF UserComment.
 The optional `sqlite` feature supplies the SQLite error conversion.
 
 ## Formats and example

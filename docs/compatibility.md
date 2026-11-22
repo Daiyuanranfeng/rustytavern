@@ -5,7 +5,7 @@
 
 | Feature | Implemented support | Remaining work |
 | --- | --- | --- |
-| Cards and personas | The product imports CCv2 and CCv3 JSON, PNG, and bounded CHARX cards. The product stores personas. | The product needs remaining container compatibility checks. |
+| Cards and personas | The product imports CCv2 and CCv3 JSON, PNG, CHARX cards, and JPEG cards with an EXIF UserComment. The product stores personas. | The product needs remaining container compatibility checks. |
 | Worldbooks | The product stores portable books, lorebook envelopes, and native World Info archives. The core profile executes portable books. | The core profile does not execute native World Info rules. |
 | Conversations | The product stores branches, alternatives, drafts, configuration revisions, and native exports. | The product needs broader reference workflow coverage. |
 | Providers | Five adapters stream text. OpenRouter has local and authorized live evidence. | Other direct vendor endpoints need live validation. |
@@ -45,7 +45,7 @@ Other direct vendor endpoints have no live credential test yet. Private records 
 
 ### Declared profile rules
 
-The importer accepts CCv2 and CCv3 JSON, PNG, and bounded CHARX. The importer selects exact `ccv3` before exact `chara` and rejects malformed selected envelopes.
+The importer accepts CCv2 and CCv3 JSON, PNG, bounded CHARX, and JPEG cards with an EXIF `UserComment`. The importer selects exact `ccv3` before exact `chara` and rejects malformed selected envelopes.
 The archive importer rejects legacy card envelopes. The typed JSON reader supplies a legacy V1 model.
 Unknown JSON survives import. The runtime never executes imported scripts.
 Reduced-profile acceptance preserves unsupported fields without execution or capability grants.
@@ -141,10 +141,15 @@ The importer never extracts an archive to the filesystem. The importer never exe
 
 The [archive tests](../crates/core/tests/charx.rs) cover preservation, edits, paths, corruption, and resource bounds.
 
+### JPEG cards
+
+`Card::import` accepts a JPEG image when its EXIF `UserComment` contains a base64 CCv2 or CCv3 JSON document. The importer accepts an `ASCII\0\0\0` UserComment prefix and checks JPEG segment lengths and TIFF offsets before it reads the comment.
+The decoded JSON uses the same 8 MiB limit as the other containers. An edited export returns JSON because the importer does not rewrite the JPEG EXIF segment. The original bytes stay available for exact export.
+
 ### Remaining format work
 
-The archive importer accepts CCv2 and CCv3 JSON, PNG, and CHARX. The typed JSON reader supplies the legacy V1 model.
-JPEG-prefixed archives and legacy PNG asset chunks still need implementation. The standalone worldbook API provides archive storage and session bindings.
+The archive importer accepts CCv2 and CCv3 JSON, PNG, CHARX, and JPEG cards. The typed JSON reader supplies the legacy V1 model.
+Legacy PNG asset chunks still need implementation. The standalone worldbook API provides archive storage and session bindings.
 The core-v1 profile executes portable books. Native World Info execution remains open.
 The project keeps these gaps open before it claims comprehensive format support.
 

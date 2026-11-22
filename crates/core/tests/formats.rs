@@ -1,3 +1,4 @@
+use base64::{Engine, engine::general_purpose::STANDARD};
 use rustytavern_core::card::{
     Card, CardDocument, CardVersion, CharacterCard, CharacterData, OptionalField, WorldBook,
     WorldBookDocument,
@@ -206,4 +207,69 @@ fn new_cards_select_the_version_header_and_group_greetings() {
         );
         assert!(Card::import(&serde_json::to_vec(&value).unwrap()).is_ok());
     }
+}
+
+#[test]
+fn jpeg_cards_read_the_exif_user_comment() {
+    let mut comment = b"ASCII\0\0\0".to_vec();
+    comment.extend_from_slice(
+        STANDARD
+            .encode(include_bytes!("fixtures/full-v2.json"))
+            .as_bytes(),
+    );
+    let bytes = jpeg_with_user_comment(&comment);
+    let card = Card::import(&bytes).unwrap();
+    assert_eq!(card.format, "jpeg");
+    assert_eq!(card.name(), "Aster");
+    assert_eq!(card.export_original(), bytes);
+}
+
+#[test]
+fn jpeg_cards_without_a_user_comment_are_rejected() {
+    let bytes = vec![0xFF, 0xD8, 0xFF, 0xD9];
+    assert_eq!(
+        Card::import(&bytes).unwrap_err().code,
+        "missing_card_envelope"
+    );
+}
+
+#[test]
+fn jpeg_cards_with_invalid_base64_are_rejected() {
+    let mut comment = b"ASCII\0\0\0".to_vec();
+    comment.extend_from_slice(b"not-base64!");
+    let bytes = jpeg_with_user_comment(&comment);
+    assert_eq!(
+        Card::import(&bytes).unwrap_err().code,
+        "invalid_card_base64"
+    );
+}
+
+fn jpeg_with_user_comment(comment: &[u8]) -> Vec<u8> {
+    let mut tiff = Vec::new();
+    tiff.extend_from_slice(b"II");
+    tiff.extend_from_slice(&42u16.to_le_bytes());
+    tiff.extend_from_slice(&8u32.to_le_bytes());
+    tiff.extend_from_slice(&1u16.to_le_bytes());
+    tiff.extend_from_slice(&0x8769u16.to_le_bytes());
+    tiff.extend_from_slice(&4u16.to_le_bytes());
+    tiff.extend_from_slice(&1u32.to_le_bytes());
+    tiff.extend_from_slice(&26u32.to_le_bytes());
+    tiff.extend_from_slice(&0u32.to_le_bytes());
+    tiff.extend_from_slice(&1u16.to_le_bytes());
+    tiff.extend_from_slice(&0x9286u16.to_le_bytes());
+    tiff.extend_from_slice(&7u16.to_le_bytes());
+    tiff.extend_from_slice(&(comment.len() as u32).to_le_bytes());
+    tiff.extend_from_slice(&44u32.to_le_bytes());
+    tiff.extend_from_slice(&0u32.to_le_bytes());
+    assert_eq!(tiff.len(), 44);
+    tiff.extend_from_slice(comment);
+
+    let mut app1 = Vec::new();
+    app1.extend_from_slice(b"Exif\0\0");
+    app1.extend_from_slice(&tiff);
+    let mut jpeg = vec![0xFF, 0xD8, 0xFF, 0xE1];
+    jpeg.extend_from_slice(&((app1.len() + 2) as u16).to_be_bytes());
+    jpeg.extend_from_slice(&app1);
+    jpeg.extend_from_slice(&[0xFF, 0xD9]);
+    jpeg
 }

@@ -19,6 +19,8 @@ pub const MAX_JSON_BYTES: usize = 8 * 1024 * 1024;
 pub const MAX_STRING_BYTES: usize = 1024 * 1024;
 pub const MAX_CHUNKS: usize = 4096;
 const PNG: &[u8] = b"\x89PNG\r\n\x1a\n";
+const JPEG: &[u8] = b"\xFF\xD8";
+const EXIF_HEADER: &[u8] = b"Exif\0\0";
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "snake_case")]
@@ -137,6 +139,21 @@ impl Card {
                 )
             })?;
             ("png", Some(key.to_owned()), conflicting, decoded)
+        } else if bytes.starts_with(JPEG) {
+            let payload = jpeg_user_comment(bytes)?;
+            if payload.len() > (MAX_JSON_BYTES.div_ceil(3) * 4) {
+                return Err(Error::new(
+                    "invalid_card_size",
+                    "The decoded card exceeds the JSON limit.",
+                ));
+            }
+            let decoded = STANDARD.decode(payload).map_err(|_| {
+                Error::new(
+                    "invalid_card_base64",
+                    "The card metadata is not valid base64.",
+                )
+            })?;
+            ("jpeg", None, false, decoded)
         } else if bytes.starts_with(b"PK\x03\x04") || bytes.starts_with(b"PK\x05\x06") {
             (
                 "charx",
@@ -749,6 +766,126 @@ fn png_chunks(bytes: &[u8]) -> Result<Vec<(&[u8], &[u8])>> {
         return Err(invalid());
     }
     Ok(chunks)
+}
+
+fn jpeg_user_comment(bytes: &[u8]) -> Result<&[u8]> {
+    let invalid = || Error::new("invalid_jpeg", "The JPEG segment structure is invalid.");
+    if !bytes.starts_with(JPEG) {
+        return Err(invalid());
+    }
+    let mut pos = 2usize;
+    let mut segments = 0usize;
+    while pos + 1 < bytes.len() {
+        if bytes[pos] != 0xFF {
+            return Err(invalid());
+        }
+        let mut marker_pos = pos;
+        while marker_pos < bytes.len() && bytes[marker_pos] == 0xFF {
+            marker_pos += 1;
+        }
+        if marker_pos + 1 >= bytes.len() {
+            break;
+        }
+        let marker = bytes[marker_pos];
+        pos = marker_pos + 1;
+        if marker == 0xD9 || marker == 0xDA {
+            break;
+        }
+        if marker == 0x01 || (0xD0..=0xD7).contains(&marker) {
+            continue;
+        }
+        if pos + 2 > bytes.len() {
+            return Err(invalid());
+        }
+        let length = u16::from_be_bytes([bytes[pos], bytes[pos + 1]]) as usize;
+        if length < 2 || pos + length > bytes.len() {
+            return Err(invalid());
+        }
+        let payload = &bytes[pos + 2..pos + length];
+        pos += length;
+        segments += 1;
+        if segments > MAX_CHUNKS {
+            return Err(invalid());
+        }
+        if marker == 0xE1
+            && payload.starts_with(EXIF_HEADER)
+            && let Some(comment) = tiff_user_comment(&payload[EXIF_HEADER.len()..])
+        {
+            return Ok(comment);
+        }
+    }
+    Err(Error::new(
+        "missing_card_envelope",
+        "The JPEG has no EXIF UserComment.",
+    ))
+}
+
+fn tiff_u16(data: &[u8], offset: usize, little_endian: bool) -> Option<u16> {
+    let raw = data.get(offset..offset.checked_add(2)?)?;
+    Some(if little_endian {
+        u16::from_le_bytes([raw[0], raw[1]])
+    } else {
+        u16::from_be_bytes([raw[0], raw[1]])
+    })
+}
+
+fn tiff_u32(data: &[u8], offset: usize, little_endian: bool) -> Option<u32> {
+    let raw = data.get(offset..offset.checked_add(4)?)?;
+    Some(if little_endian {
+        u32::from_le_bytes([raw[0], raw[1], raw[2], raw[3]])
+    } else {
+        u32::from_be_bytes([raw[0], raw[1], raw[2], raw[3]])
+    })
+}
+
+fn tiff_entry(data: &[u8], ifd: usize, tag: u16, little_endian: bool) -> Option<(usize, usize)> {
+    let count = tiff_u16(data, ifd, little_endian)? as usize;
+    if count > MAX_CHUNKS {
+        return None;
+    }
+    for index in 0..count {
+        let entry = ifd.checked_add(2)?.checked_add(index.checked_mul(12)?)?;
+        if tiff_u16(data, entry, little_endian)? == tag {
+            return Some((
+                tiff_u32(data, entry + 4, little_endian)? as usize,
+                entry + 8,
+            ));
+        }
+    }
+    None
+}
+
+fn tiff_user_comment(tiff: &[u8]) -> Option<&[u8]> {
+    if tiff.len() < 8 {
+        return None;
+    }
+    let little_endian = match &tiff[..2] {
+        b"II" => true,
+        b"MM" => false,
+        _ => return None,
+    };
+    let ifd0 = tiff_u32(tiff, 4, little_endian)? as usize;
+    let exif_ifd = match tiff_entry(tiff, ifd0, 0x8769, little_endian) {
+        Some((_, value_field)) => tiff_u32(tiff, value_field, little_endian)? as usize,
+        None => ifd0,
+    };
+    let (count, value_field) = tiff_entry(tiff, exif_ifd, 0x9286, little_endian)?;
+    if count == 0 || count > MAX_JSON_BYTES.div_ceil(3) * 4 + 8 {
+        return None;
+    }
+    let start = if count <= 4 {
+        value_field
+    } else {
+        tiff_u32(tiff, value_field, little_endian)? as usize
+    };
+    let raw = tiff.get(start..start.checked_add(count)?)?;
+    if raw.starts_with(b"ASCII\0\0\0") {
+        raw.get(8..)
+    } else if raw.starts_with(b"UNICODE\0") {
+        None
+    } else {
+        Some(raw)
+    }
 }
 
 fn write_chunk(output: &mut Vec<u8>, kind: &[u8], data: &[u8]) {
