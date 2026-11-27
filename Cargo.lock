@@ -1726,7 +1726,6 @@ dependencies = [
  "fancy-regex 0.20.1",
  "fraction",
  "getrandom 0.3.4",
- "idna",
  "itoa",
  "jsonschema-regex",
  "jsonschema-value",
@@ -1735,8 +1734,6 @@ dependencies = [
  "percent-encoding",
  "referencing",
  "regex",
- "reqwest",
- "rustls",
  "serde",
  "serde_json",
  "strum",
@@ -2886,7 +2883,6 @@ dependencies = [
  "base64 0.23.1",
  "bytes",
  "encoding_rs",
- "futures-channel",
  "futures-core",
  "futures-util",
  "h2",
@@ -3290,6 +3286,7 @@ dependencies = [
  "tokio-util",
  "toml_edit",
  "uuid",
+ "zip",
 ]
 
 [[package]]

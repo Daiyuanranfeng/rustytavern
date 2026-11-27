@@ -99,3 +99,5 @@ cargo test --locked -p rustytavern-cli --test agent
 cargo run --locked -p rustytavern --example feature_services
 cargo run --locked -p rustytavern --example native_plugin
 ```
+
+The version 4 session export schema accepts the worldbook archives retained across session revisions and CHARX cards that use the default decoder.
